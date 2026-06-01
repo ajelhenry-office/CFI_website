@@ -97,6 +97,11 @@ export default function ActivityLog({ logs }) {
                 <div style={styles.actionLine(log.success)}>
                   → {log.action} {log.success ? "" : "(FAILED)"}
                 </div>
+                {log.errorMsg && (
+                  <div style={{ fontSize: "11px", color: "#ef4444", marginTop: "4px", lineHeight: "1.4" }}>
+                    {log.errorMsg}
+                  </div>
+                )}
                 <div style={styles.time}>{log.time}</div>
               </div>
             </div>

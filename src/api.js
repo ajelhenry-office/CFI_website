@@ -6,8 +6,13 @@ export async function toggleStore(location_id, action, brand) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ location_id, action, brand })
   });
-  if (!res.ok) throw new Error("Toggle failed");
-  return res.json();
+  
+  const data = await res.json();
+  if (!res.ok) {
+    // Extract the exact error message from the backend
+    throw new Error(data.error || "Toggle failed");
+  }
+  return data;
 }
 
 export async function updateTiming(location_id, store_name, opening_time, closing_time) {

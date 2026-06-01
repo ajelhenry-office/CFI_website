@@ -16,7 +16,7 @@ app.use(express.json());
 // The API key below is already set from your sheet.
 
 const UP_LOCATION_URL = "https://api.urbanpiper.com/hub/api/v1/location/";
-const UP_PLATFORMS    = ["zomato", "swiggy"];
+const UP_PLATFORMS    = ["swiggy", "zomato", "urbanpiper", "masalabox", "bitsila", "magicpin", "ownly"];
 
 // One entry per brand. Add more brands here later.
 const UP_BRANDS = {
@@ -42,9 +42,9 @@ const UP_BRANDS = {
 // ─── GITHUB ACTIONS CONFIG (for store timing) ────────────────
 // Add these in Railway env vars:
 //   GITHUB_TOKEN = your GitHub personal access token
-//   GITHUB_REPO  = ajelhenry-office/CFI_website (from your script)
+//   GITHUB_REPO  = ajelhenry-office/zomato-store-timing (where your workflow is)
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN || "";
-const GITHUB_REPO  = process.env.GITHUB_REPO  || "ajelhenry-office/CFI_website";
+const GITHUB_REPO  = process.env.GITHUB_REPO  || "ajelhenry-office/zomato-store-timing";
 
 // ─── HEALTH CHECK ─────────────────────────────────────────────
 app.get("/health", (req, res) => {
@@ -171,6 +171,47 @@ app.get("/api/locations", async (req, res) => {
     }
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ─── VERIFY API KEY ENDPOINT ──────────────────────────────────
+// GET /api/verify-keys
+// Tests if the current UrbanPiper API key in your .env file is valid
+app.get("/api/verify-keys", async (req, res) => {
+  const creds = UP_BRANDS["ovenfresh"];
+
+  if (!creds) {
+    return res.status(400).json({ error: "No credentials found for ovenfresh" });
+  }
+
+  try {
+    // Send a deliberate dummy location to test authentication
+    const response = await fetch(UP_LOCATION_URL, {
+      method  : "POST",
+      headers : {
+        "Authorization" : `apikey ${creds.username}:${creds.apikey}`,
+        "x-upr-biz-id"  : creds.biz_id,
+        "Content-Type"  : "application/json",
+      },
+      body: JSON.stringify({
+        location_ref_id: "DUMMY_TEST_LOCATION",
+        action: "enable",
+        platforms: UP_PLATFORMS
+      }),
+    });
+
+    const responseText = await response.text();
+
+    if (response.status === 401 || response.status === 403) {
+      return res.json({ status: "❌ FAILED", message: `API Key is INVALID or your IP address is NOT WHITELISTED by UrbanPiper. (Status: ${response.status})` });
+    } else if (response.status === 400) {
+      return res.json({ status: "✅ SUCCESS", message: "API Key is VALID! (UrbanPiper authenticated us, but rejected the dummy location as expected).", raw_error: responseText });
+    } else {
+      return res.json({ status: "❓ UNKNOWN", message: `Received status ${response.status}`, raw_response: responseText });
+    }
+
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
   }
 });
 
