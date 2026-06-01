@@ -42,9 +42,9 @@ const UP_BRANDS = {
 // ─── GITHUB ACTIONS CONFIG (for store timing) ────────────────
 // Add these in Railway env vars:
 //   GITHUB_TOKEN = your GitHub personal access token
-//   GITHUB_REPO  = ajelhenry-office/zomato-store-timing (from your script)
+//   GITHUB_REPO  = ajelhenry-office/CFI_website (from your script)
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN || "";
-const GITHUB_REPO  = process.env.GITHUB_REPO  || "ajelhenry-office/zomato-store-timing";
+const GITHUB_REPO  = process.env.GITHUB_REPO  || "ajelhenry-office/CFI_website";
 
 // ─── HEALTH CHECK ─────────────────────────────────────────────
 app.get("/health", (req, res) => {
