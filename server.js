@@ -125,10 +125,51 @@ app.post("/api/toggle", async (req, res) => {
       } catch (_) {}
     }
 
-    return res.status(response.status).json({ success: false, error: `UrbanPiper returned ${response.status}` });
+    let upErrorMsg = `UrbanPiper returned ${response.status}`;
+    try {
+      const errObj = JSON.parse(responseText);
+      if (errObj.message) upErrorMsg += ` - ${errObj.message}`;
+    } catch (e) {}
+
+    return res.status(response.status).json({ success: false, error: upErrorMsg });
 
   } catch (err) {
     console.error("[TOGGLE ERROR]", err.message);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ─── GET LOCATIONS ENDPOINT (UTILITY) ─────────────────────────
+// GET /api/locations?brand=ovenfresh
+// Fetches all stores and their exact location_ref_ids from UrbanPiper
+app.get("/api/locations", async (req, res) => {
+  const brand = req.query.brand || "ovenfresh";
+  const brandKey = brand.toLowerCase().replace(/[^a-z]/g, "_");
+  const creds    = UP_BRANDS[brandKey];
+
+  if (!creds) {
+    return res.status(400).json({ error: `Unknown brand: ${brand}` });
+  }
+
+  try {
+    const response = await fetch(UP_LOCATION_URL, {
+      method  : "GET",
+      headers : {
+        "Authorization" : `apikey ${creds.username}:${creds.apikey}`,
+        "x-upr-biz-id"  : creds.biz_id,
+      }
+    });
+
+    const responseText = await response.text();
+
+    try {
+      const data = JSON.parse(responseText);
+      return res.json({ success: true, locations: data });
+    } catch (parseError) {
+      // UrbanPiper returned a non-JSON string (like "POST method not allowed")
+      return res.status(response.status).json({ success: false, error: `UrbanPiper responded: ${responseText}` });
+    }
+  } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
   }
 });
