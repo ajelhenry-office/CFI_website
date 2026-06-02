@@ -183,7 +183,8 @@ def update_store_ui(page, store: dict) -> bool:
             btn = page.get_by_role("button", name=pattern).first
             if btn.is_visible(timeout=2000):
                 btn.click()
-                page.wait_for_timeout(2000)
+                # Give Zomato extra time to process the save request before closing
+                page.wait_for_timeout(4000)
                 saved = True
                 break
         except Exception:
@@ -201,8 +202,14 @@ def run_updates(stores: list[dict]) -> list[dict]:
 
     ok_stores = []
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=HEADLESS, args=["--disable-http2"])
-        ctx = browser.new_context()
+        browser = p.chromium.launch(
+            headless=HEADLESS, 
+            args=["--disable-http2", "--disable-blink-features=AutomationControlled"]
+        )
+        ctx = browser.new_context(
+            user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/147.0.0.0 Safari/537.36",
+            viewport={"width": 1280, "height": 800}
+        )
         if cookies:
             for c in _pw_cookies_to_playwright(cookies):
                 try:
@@ -210,6 +217,9 @@ def run_updates(stores: list[dict]) -> list[dict]:
                 except Exception as e:
                     pass # Silently skip any invalid individual cookies
         page = ctx.new_page()
+        
+        # Hide the webdriver footprint so Zomato doesn't know it's a bot
+        page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
 
         if not cookies:
             log.info("No cookies found. Attempting initial automated login...")
