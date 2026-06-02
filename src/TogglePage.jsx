@@ -6,10 +6,13 @@ import { toggleStore } from "./api";
 export default function TogglePage({ stores, setStores, logs, setLogs }) {
   const [filterBrand, setFilterBrand] = useState("All Brands");
   const [searchQuery, setSearchQuery] = useState("");
+  const [isBulking, setIsBulking] = useState(false);
 
-  const handleToggle = async (store) => {
+  const handleToggle = async (store, forceStatus = null) => {
     const currentStatus = store.status;
-    const newStatus = currentStatus === "online" ? "offline" : "online";
+    const newStatus = forceStatus || (currentStatus === "online" ? "offline" : "online");
+    if (currentStatus === newStatus) return;
+
     const actionStr = newStatus === "online" ? "enable" : "disable";
     
     // Optimistic UI update
@@ -32,9 +35,25 @@ export default function TogglePage({ stores, setStores, logs, setLogs }) {
         store: store.name,
         action: newStatus.toUpperCase(),
         time: new Date().toLocaleTimeString("en-IN"),
-        success: false
+        success: false,
+        errorMsg: error.message
       }, ...prev]);
     }
+  };
+
+  const handleBulkToggle = async (desiredStatus) => {
+    const storesToChange = filteredStores.filter(s => s.status !== desiredStatus);
+    if (storesToChange.length === 0) return;
+    
+    if (!window.confirm(`Are you sure you want to turn ${storesToChange.length} stores ${desiredStatus.toUpperCase()}?`)) return;
+
+    setIsBulking(true);
+    for (const store of storesToChange) {
+      await handleToggle(store, desiredStatus);
+      // Small delay to prevent UrbanPiper rate limiting
+      await new Promise(res => setTimeout(res, 300));
+    }
+    setIsBulking(false);
   };
 
   const filteredStores = stores.filter(s => {
@@ -61,8 +80,9 @@ export default function TogglePage({ stores, setStores, logs, setLogs }) {
     },
     statsRow: {
       display: "flex",
-      gap: "24px",
-      marginBottom: "32px"
+      gap: "16px",
+      marginBottom: "24px",
+      alignItems: "center"
     },
     statText: (color) => ({
       fontSize: "14px",
@@ -73,9 +93,21 @@ export default function TogglePage({ stores, setStores, logs, setLogs }) {
       borderRadius: "8px",
       border: "1px solid rgba(255, 255, 255, 0.1)"
     }),
+    bulkBtn: (color) => ({
+      fontSize: "13px",
+      fontWeight: "600",
+      color: "#ffffff",
+      backgroundColor: color,
+      padding: "10px 20px",
+      borderRadius: "8px",
+      border: "none",
+      cursor: isBulking ? "not-allowed" : "pointer",
+      opacity: isBulking ? 0.6 : 1,
+      transition: "opacity 0.2s"
+    }),
     controlsRow: {
       display: "flex",
-      justifyContent: "space-between",
+      justifyContent: "flex-end",
       marginBottom: "24px"
     },
     searchBox: {

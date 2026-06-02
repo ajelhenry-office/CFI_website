@@ -1,14 +1,16 @@
 import React, { useState } from "react";
 import Sidebar from "./Sidebar";
 import TogglePage from "./TogglePage";
-import TimingPage from "./TimingPage";
 import RatingsPage from "./RatingsPage";
 import { STORES } from "./stores";
+import TimingPage from "./TimingPage";
+import { ZOMATO_STORES } from "../zomato_data";
 
 export default function App() {
   const [activeTab, setActiveTab] = useState("automation");
   const [activeSubTab, setActiveSubTab] = useState("toggle");
   const [stores, setStores] = useState(STORES);
+  const [zomatoStores, setZomatoStores] = useState(ZOMATO_STORES);
   const [logs, setLogs] = useState([]);
 
   const styles = {
@@ -109,7 +111,7 @@ export default function App() {
           </div>
         </div>
         <div style={styles.contentArea}>
-          {activeTab === "automation" ? (activeSubTab === "toggle" ? <TogglePage stores={stores} setStores={setStores} logs={logs} setLogs={setLogs} /> : <TimingPage stores={stores} />) : <RatingsPage />}
+          {activeTab === "automation" ? (activeSubTab === "toggle" ? <TogglePage stores={stores} setStores={setStores} logs={logs} setLogs={setLogs} /> : <TimingPage stores={zomatoStores} />) : <RatingsPage />}
         </div>
       </div>
     </div>
