@@ -2,6 +2,7 @@ import os
 import logging
 import re
 import zomato_playwright
+import zomato_api
 import sys
 
 logging.basicConfig(
@@ -19,6 +20,16 @@ def parse_time_to_dict(t_str):
         h, m, p = match.groups()
         return {"hour": str(int(h)), "min": m, "period": p}
     return {"hour": "12", "min": "00", "period": "AM"}
+
+def to_24h(t_str, parsed):
+    if not t_str or str(t_str).lower() == "none":
+        return ""
+    h = int(parsed["hour"])
+    if parsed["period"] == "PM" and h < 12:
+        h += 12
+    if parsed["period"] == "AM" and h == 12:
+        h = 0
+    return f"{h:02d}:{parsed['min']}"
 
 def main():
     zomato_id = os.getenv("ZOMATO_ID")
@@ -50,6 +61,8 @@ def main():
         "c_hour": parsed_close["hour"],
         "c_min": parsed_close["min"],
         "c_period": parsed_close["period"],
+        "opening_24h": to_24h(target_open, parsed_open),
+        "closing_24h": to_24h(target_close, parsed_close),
         "kitchen_id": store_name
     }
     
@@ -60,8 +73,15 @@ def main():
         if ok_stores:
             log.info(f"Successfully updated {store_name} via Playwright")
         else:
-            log.error(f"Failed to update {store_name} via Playwright")
-            sys.exit(1)
+            log.warning(f"Playwright failed for {store_name}. Attempting API fallback...")
+            store["opening_raw"] = store["opening_24h"]
+            store["closing_raw"] = store["closing_24h"]
+            ok_api = zomato_api.run_updates([store])
+            if ok_api:
+                log.info(f"Successfully updated {store_name} via API fallback!")
+            else:
+                log.error(f"Failed to update {store_name} via both Playwright and API")
+                sys.exit(1)
     except Exception as e:
         log.error(f"Playwright automation error: {e}")
         sys.exit(1)

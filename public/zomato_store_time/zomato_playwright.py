@@ -123,7 +123,10 @@ def automated_google_login(page):
         raise PermissionError("No cookies found and ZOMATO_EMAIL/ZOMATO_PASSWORD are not set. Cannot login.")
         
     log.info("Starting automated Google SSO login...")
-    page.goto(DASHBOARD_URL, wait_until="domcontentloaded", timeout=45000)
+    try:
+        page.goto(DASHBOARD_URL, wait_until="domcontentloaded", timeout=25000)
+    except Exception as e:
+        log.warning("Dashboard page load timeout, proceeding anyway: %s", e)
     
     if "login" in page.url:
         try:
@@ -161,14 +164,20 @@ def update_store_ui(page, store: dict) -> bool:
         res_id, last4, store["opening_raw"], store["closing_raw"], store["kitchen_id"],
     )
 
-    page.goto(DASHBOARD_URL, wait_until="domcontentloaded", timeout=45000)
+    try:
+        page.goto(DASHBOARD_URL, wait_until="domcontentloaded", timeout=25000)
+    except Exception as e:
+        log.warning("Dashboard page load timeout, proceeding anyway: %s", e)
     if "login" in page.url:
         log.warning("Session expired. Attempting automated re-login...")
         automated_google_login(page)
 
     searched = select_outlet_by_last4(page, last4)
 
-    page.goto(TIMINGS_URL.format(res_id=res_id), wait_until="domcontentloaded", timeout=45000)
+    try:
+        page.goto(TIMINGS_URL.format(res_id=res_id), wait_until="domcontentloaded", timeout=25000)
+    except Exception as e:
+        log.warning("Timings page load timeout, proceeding anyway: %s", e)
     page.wait_for_timeout(2000)
 
     body = page.inner_text("body")
