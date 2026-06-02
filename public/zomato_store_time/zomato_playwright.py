@@ -57,12 +57,12 @@ def select_outlet_by_last4(page, last4: str, _depth: int = 0) -> bool:
             inp.click()
             inp.fill("")
             inp.fill(last4)
-            page.wait_for_timeout(1500)
+            page.wait_for_timeout(500)
             # Click first result that contains the last 4 digits
             option = page.get_by_text(re.compile(re.escape(last4))).first
-            if option.is_visible(timeout=3000):
+            if option.is_visible(timeout=1500):
                 option.click()
-                page.wait_for_timeout(1000)
+                page.wait_for_timeout(500)
                 log.info("Selected outlet via search last4=%s", last4)
                 return True
         except Exception:
@@ -102,7 +102,7 @@ def _fill_timing_selects(page, store: dict) -> None:
             group[3].select_option(c_h)
             group[4].select_option(c_m)
             group[5].select_option(c_p)
-            time.sleep(0.15)
+            time.sleep(0.02)
         return
 
     day_rows = page.locator("[class*='day'], [class*='timing-row'], [data-testid*='day']").all()
@@ -115,7 +115,7 @@ def _fill_timing_selects(page, store: dict) -> None:
             row_selects[3].select_option(c_h)
             row_selects[4].select_option(c_m)
             row_selects[5].select_option(c_p)
-            time.sleep(0.15)
+            time.sleep(0.02)
 
 
 def automated_google_login(page):
@@ -124,7 +124,7 @@ def automated_google_login(page):
         
     log.info("Starting automated Google SSO login...")
     try:
-        page.goto(DASHBOARD_URL, wait_until="domcontentloaded", timeout=10000)
+        page.goto(DASHBOARD_URL, wait_until="domcontentloaded", timeout=5000)
     except Exception as e:
         log.warning("Dashboard page load timeout, proceeding anyway: %s", e)
     
@@ -165,7 +165,7 @@ def update_store_ui(page, store: dict) -> bool:
     )
 
     try:
-        page.goto(DASHBOARD_URL, wait_until="domcontentloaded", timeout=10000)
+        page.goto(DASHBOARD_URL, wait_until="domcontentloaded", timeout=5000)
     except Exception as e:
         log.warning("Dashboard page load timeout, proceeding anyway: %s", e)
     if "login" in page.url:
@@ -175,10 +175,10 @@ def update_store_ui(page, store: dict) -> bool:
     searched = select_outlet_by_last4(page, last4)
 
     try:
-        page.goto(TIMINGS_URL.format(res_id=res_id), wait_until="domcontentloaded", timeout=10000)
+        page.goto(TIMINGS_URL.format(res_id=res_id), wait_until="domcontentloaded", timeout=5000)
     except Exception as e:
         log.warning("Timings page load timeout, proceeding anyway: %s", e)
-    page.wait_for_timeout(2000)
+    page.wait_for_timeout(500)
 
     body = page.inner_text("body")
     if last4 not in body:
