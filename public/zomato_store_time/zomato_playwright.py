@@ -201,7 +201,7 @@ def run_updates(stores: list[dict]) -> list[dict]:
 
     ok_stores = []
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=HEADLESS)
+        browser = p.chromium.launch(headless=HEADLESS, args=["--disable-http2"])
         ctx = browser.new_context()
         if cookies:
             for c in _pw_cookies_to_playwright(cookies):
