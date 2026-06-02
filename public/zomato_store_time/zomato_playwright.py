@@ -124,7 +124,7 @@ def automated_google_login(page):
         
     log.info("Starting automated Google SSO login...")
     try:
-        page.goto(DASHBOARD_URL, wait_until="domcontentloaded", timeout=25000)
+        page.goto(DASHBOARD_URL, wait_until="domcontentloaded", timeout=10000)
     except Exception as e:
         log.warning("Dashboard page load timeout, proceeding anyway: %s", e)
     
@@ -165,7 +165,7 @@ def update_store_ui(page, store: dict) -> bool:
     )
 
     try:
-        page.goto(DASHBOARD_URL, wait_until="domcontentloaded", timeout=25000)
+        page.goto(DASHBOARD_URL, wait_until="domcontentloaded", timeout=10000)
     except Exception as e:
         log.warning("Dashboard page load timeout, proceeding anyway: %s", e)
     if "login" in page.url:
@@ -175,7 +175,7 @@ def update_store_ui(page, store: dict) -> bool:
     searched = select_outlet_by_last4(page, last4)
 
     try:
-        page.goto(TIMINGS_URL.format(res_id=res_id), wait_until="domcontentloaded", timeout=25000)
+        page.goto(TIMINGS_URL.format(res_id=res_id), wait_until="domcontentloaded", timeout=10000)
     except Exception as e:
         log.warning("Timings page load timeout, proceeding anyway: %s", e)
     page.wait_for_timeout(2000)
