@@ -2,6 +2,7 @@ import os
 import logging
 import re
 import zomato_playwright
+import sys
 
 logging.basicConfig(
     level=logging.INFO,
@@ -60,8 +61,10 @@ def main():
             log.info(f"Successfully updated {store_name} via Playwright")
         else:
             log.error(f"Failed to update {store_name} via Playwright")
+            sys.exit(1)
     except Exception as e:
         log.error(f"Playwright automation error: {e}")
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()
