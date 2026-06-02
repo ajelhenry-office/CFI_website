@@ -36,7 +36,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install requests playwright
+          pip install requests playwright python-dotenv
           playwright install chromium
 
       - name: Run Zomato Update Script
