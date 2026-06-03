@@ -52,4 +52,4 @@ jobs:
           CLOSING_TIME_2: ${{ github.event.inputs.closing_time_2 }}
           ZOMATO_SLOT: ${{ github.event.inputs.slot }}
           STORE_NAME: ${{ github.event.inputs.store_name }}
-        run: python website_update.py
+        run: timeout 90s python website_update.py
