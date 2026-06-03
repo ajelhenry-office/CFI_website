@@ -54,14 +54,14 @@ def select_outlet_by_last4(page, last4: str, _depth: int = 0) -> bool:
         try:
             if inp.count() == 0 or not inp.is_visible(timeout=2000):
                 continue
-            inp.click()
-            inp.fill("")
-            inp.fill(last4)
+            inp.click(timeout=2000)
+            inp.fill("", timeout=2000)
+            inp.fill(last4, timeout=2000)
             page.wait_for_timeout(500)
             # Click first result that contains the last 4 digits
             option = page.get_by_text(re.compile(re.escape(last4))).first
             if option.is_visible(timeout=1500):
-                option.click()
+                option.click(timeout=2000)
                 page.wait_for_timeout(500)
                 log.info("Selected outlet via search last4=%s", last4)
                 return True
@@ -78,7 +78,7 @@ def select_outlet_by_last4(page, last4: str, _depth: int = 0) -> bool:
         try:
             el = page.locator(trigger).first
             if el.is_visible(timeout=1500):
-                el.click()
+                el.click(timeout=2000)
                 page.wait_for_timeout(500)
                 return select_outlet_by_last4(page, last4, _depth + 1)
         except Exception:
@@ -180,9 +180,12 @@ def update_store_ui(page, store: dict) -> bool:
         log.warning("Timings page load timeout, proceeding anyway: %s", e)
     page.wait_for_timeout(500)
 
-    body = page.inner_text("body")
-    if last4 not in body:
-        log.warning("last4=%s not found on timings page — check res_id", last4)
+    try:
+        body = page.inner_text("body", timeout=5000)
+        if last4 not in body:
+            log.warning("last4=%s not found on timings page — check res_id", last4)
+    except Exception:
+        log.warning("Could not read page body (likely blocked by Cloudflare).")
 
     _fill_timing_selects(page, store)
 
