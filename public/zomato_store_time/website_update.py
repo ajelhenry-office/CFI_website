@@ -66,24 +66,28 @@ def main():
         "kitchen_id": store_name
     }
     
-    log.info(f"Triggering Playwright automation for {store_name} ({zomato_id})")
+    log.info(f"Attempting lightning-fast API update for {store_name} ({zomato_id})")
     
     try:
-        ok_stores = zomato_playwright.run_updates([store])
-        if ok_stores:
-            log.info(f"Successfully updated {store_name} via Playwright")
+        store["opening_raw"] = store["opening_24h"]
+        store["closing_raw"] = store["closing_24h"]
+        
+        ok_api = zomato_api.run_updates([store])
+        if ok_api:
+            log.info(f"Successfully updated {store_name} via Zomato API!")
         else:
-            log.warning(f"Playwright failed for {store_name}. Attempting API fallback...")
-            store["opening_raw"] = store["opening_24h"]
-            store["closing_raw"] = store["closing_24h"]
-            ok_api = zomato_api.run_updates([store])
-            if ok_api:
-                log.info(f"Successfully updated {store_name} via API fallback!")
+            log.warning(f"API failed for {store_name}. Attempting Playwright UI fallback...")
+            store["opening_raw"] = target_open
+            store["closing_raw"] = target_close
+            
+            ok_stores = zomato_playwright.run_updates([store])
+            if ok_stores:
+                log.info(f"Successfully updated {store_name} via Playwright fallback!")
             else:
-                log.error(f"Failed to update {store_name} via both Playwright and API")
+                log.error(f"Failed to update {store_name} via both API and Playwright")
                 sys.exit(1)
     except Exception as e:
-        log.error(f"Playwright automation error: {e}")
+        log.error(f"Automation error: {e}")
         sys.exit(1)
 
 if __name__ == "__main__":
