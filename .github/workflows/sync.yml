@@ -25,6 +25,12 @@ on:
 jobs:
   update-zomato:
     runs-on: ubuntu-latest
+    
+    # This forces GitHub to queue rapid clicks one-by-one so Zomato doesn't log you out!
+    concurrency:
+      group: zomato-timing-queue
+      cancel-in-progress: false
+      
     steps:
       - name: Checkout Code
         uses: actions/checkout@v3
