@@ -232,6 +232,10 @@ def run_updates(stores: list[dict]) -> list[dict]:
         
         # Hide the webdriver footprint so Zomato doesn't know it's a bot
         page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+        
+        # Set a strict global timeout so Cloudflare cannot freeze the script indefinitely
+        page.set_default_timeout(15000)
+        page.set_default_navigation_timeout(15000)
 
         if not cookies:
             log.info("No cookies found. Attempting initial automated login...")
