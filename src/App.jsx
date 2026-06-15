@@ -4,6 +4,7 @@ import TogglePage from "./TogglePage";
 import RatingsPage from "./RatingsPage";
 import { STORES } from "./stores";
 import TimingPage from "./TimingPage";
+import ReviewsPage from "./features/reviews/ReviewsPage";
 import { ZOMATO_STORES } from "../zomato_data";
 
 export default function App() {
@@ -107,11 +108,11 @@ export default function App() {
           </div>
           <div style={styles.filtersAndTabs}>
             <div style={styles.filterBar}><div style={styles.chip}>All Locations</div><span style={styles.dot}>•</span><div style={styles.chip}>All Brands</div><span style={styles.dot}>•</span><div style={styles.chip}>All Platforms</div><span style={styles.dot}>•</span><div style={styles.chip}>Last 7 Days</div></div>
-            {activeTab === "automation" && (<div style={styles.subtabs}><button style={styles.subtab(activeSubTab === "toggle")} onClick={() => setActiveSubTab("toggle")}>Toggle</button><button style={styles.subtab(activeSubTab === "timing")} onClick={() => setActiveSubTab("timing")}>Timing</button></div>)}
+            {activeTab === "automation" && (<div style={styles.subtabs}><button style={styles.subtab(activeSubTab === "toggle")} onClick={() => setActiveSubTab("toggle")}>Toggle</button><button style={styles.subtab(activeSubTab === "timing")} onClick={() => setActiveSubTab("timing")}>Timing</button><button style={styles.subtab(activeSubTab === "reviews")} onClick={() => setActiveSubTab("reviews")}>Dine-in Reviews</button></div>)}
           </div>
         </div>
         <div style={styles.contentArea}>
-          {activeTab === "automation" ? (activeSubTab === "toggle" ? <TogglePage stores={stores} setStores={setStores} logs={logs} setLogs={setLogs} /> : <TimingPage stores={zomatoStores} />) : <RatingsPage />}
+          {activeTab === "automation" ? (activeSubTab === "toggle" ? <TogglePage stores={stores} setStores={setStores} logs={logs} setLogs={setLogs} /> : activeSubTab === "timing" ? <TimingPage stores={zomatoStores} /> : <ReviewsPage />) : <RatingsPage />}
         </div>
       </div>
     </div>
