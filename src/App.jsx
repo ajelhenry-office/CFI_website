@@ -1,9 +1,9 @@
 import React, { useState } from "react";
 import Sidebar from "./Sidebar";
-import TogglePage from "./TogglePage";
-import RatingsPage from "./RatingsPage";
-import { STORES } from "./stores";
-import TimingPage from "./TimingPage";
+import TogglePage from "./features/toggle/TogglePage";
+import RatingsPage from "./features/ratings/RatingsPage";
+import { STORES } from "./features/toggle/stores";
+import TimingPage from "./features/timing/TimingPage";
 import ReviewsPage from "./features/reviews/ReviewsPage";
 import { ZOMATO_STORES } from "../zomato_data";
 
