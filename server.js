@@ -11,6 +11,12 @@ import timingRoutes from "./server/timing/timing.routes.js";
 import reviewsRouter from "./server/reviews/reviewsRouter.js";
 import automationRoutes from "./server/ratings/automation.routes.js";
 import insightsRoutes from "./server/ratings/insights.routes.js";
+import { createClient } from "@supabase/supabase-js";
+
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_KEY
+);
 
 const app = express();
 app.use(cors());
@@ -18,7 +24,24 @@ app.use(express.json());
 
 // ─── HEALTH CHECK ─────────────────────────────────────────────
 app.get("/health", (req, res) => {
-  res.json({ status: "ok", timestamp: new Date().toISOString() });
+  res.json({ status: "Backend is running" });
+});
+
+// ─── DB TEST ENDPOINT ─────────────────────────────────────────
+app.get("/test-db", async (req, res) => {
+  try {
+    // If your table is actually named 'order_reviews', replace 'swiggy_ratings_feedback' below
+    const { data, error } = await supabase
+      .from('swiggy_ratings_feedback')
+      .select('*')
+      .limit(1);
+      
+    if (error) throw error;
+    
+    res.json({ success: true, data });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 // ─── MOUNT MODULAR ROUTES ─────────────────────────────────────
