@@ -1,7 +1,7 @@
-import express from "express";
-import { createClient } from "@supabase/supabase-js";
-import { Groq } from "groq-sdk";
-import "dotenv/config";
+const express = require("express");
+const { createClient } = require("@supabase/supabase-js");
+const { Groq } = require("groq-sdk");
+require("dotenv/config");
 
 const router = express.Router();
 
@@ -250,4 +250,4 @@ router.post("/:id", async (req, res) => {
   }
 });
 
-export default router;
+module.exports = router;
