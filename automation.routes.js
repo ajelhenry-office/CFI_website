@@ -1,5 +1,5 @@
 import express from "express";
-import pipeline from "./server/automation/run_pipeline.js";
+import pipeline from "./server/ratings/run_pipeline.js";
 
 const router = express.Router();
 
