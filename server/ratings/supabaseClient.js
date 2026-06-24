@@ -1,10 +1,12 @@
-require('dotenv').config();
-const { createClient } = require('@supabase/supabase-js');
+import 'dotenv/config';
+import { createClient } from '@supabase/supabase-js';
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_KEY
 );
+
+export { supabase };
 
 function normalizeDate(d) {
   if (!d) return null;
@@ -166,4 +168,4 @@ async function insertRows(rows) {
   }
 }
 
-module.exports = { insertRows };
+export { insertRows };

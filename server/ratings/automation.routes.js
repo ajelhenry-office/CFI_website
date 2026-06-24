@@ -1,5 +1,5 @@
-const express = require("express");
-const pipeline = require("./run_pipeline.js");
+import express from "express";
+import pipeline from "./run_pipeline.js"; // This now correctly imports the default export
 
 const router = express.Router();
 
@@ -17,4 +17,4 @@ router.post("/run", async (req, res) => {
   }
 });
 
-module.exports = router;
+export default router;

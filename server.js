@@ -11,12 +11,8 @@ import timingRoutes from "./server/timing/timing.routes.js";
 import reviewsRouter from "./server/reviews/reviewsRouter.js";
 import automationRoutes from "./server/ratings/automation.routes.js";
 import insightsRoutes from "./server/ratings/insights.routes.js";
-import { createClient } from "@supabase/supabase-js";
-
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_KEY
-);
+import { handleFilterRequest } from "./server/ratings/filters.js";
+import { supabase } from "./server/ratings/supabaseClient.js";
 
 const app = express();
 app.use(cors());
@@ -50,6 +46,9 @@ app.use("/api", timingRoutes);
 app.use("/api/reviews", reviewsRouter);
 app.use("/api/automation", automationRoutes);
 app.use("/api/insights", insightsRoutes);
+
+// New route for fetching filter dropdown options
+app.get("/api/filters", handleFilterRequest);
 
 // ─── START SERVER ─────────────────────────────────────────────
 const PORT = process.env.PORT || 3001;

@@ -1,4 +1,4 @@
-const xlsx = require('xlsx');
+import xlsx from 'xlsx';
 
 const COLUMN_MAPPING = {
   'date': 'date',
@@ -103,4 +103,4 @@ function parseExcel(filePath) {
   return Array.from(uniqueRowsMap.values());
 }
 
-module.exports = { parseExcel };
+export { parseExcel };

@@ -1,6 +1,6 @@
-const fs = require('fs');
-const path = require('path');
-const { google } = require('googleapis');
+import fs from 'fs';
+import path from 'path';
+import { google } from 'googleapis';
 
 const CREDENTIALS_PATH = path.join(__dirname, 'gmail_credentials.json');
 const TOKEN_PATH = path.join(__dirname, 'gmail_token.json');
@@ -179,4 +179,4 @@ async function markEmailAsProcessed(gmail, messageId) {
   });
 }
 
-module.exports = { checkForNewReports };
+export { checkForNewReports };

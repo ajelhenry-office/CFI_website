@@ -1,24 +1,30 @@
-const express = require("express");
-const { createClient } = require("@supabase/supabase-js");
-const { Groq } = require("groq-sdk");
-require("dotenv/config");
+import express from "express";
+import { Groq } from "groq-sdk";
+import "dotenv/config";
+import { supabase } from "./supabaseClient.js";
 
 const router = express.Router();
-
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_KEY // Secure backend service key
-);
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 const TABLE = "order_reviews";
 
 function applyFilters(query, filters) {
-  if (filters.brand) query = query.eq("outlet_master.brand_name", filters.brand);
-  if (filters.city) query = query.eq("outlet_master.city", filters.city);
-  if (filters.zone) query = query.eq("outlet_master.zone", filters.zone);
-  if (filters.dateFrom) query = query.gte("date", filters.dateFrom);
-  if (filters.dateTo) query = query.lte("date", filters.dateTo);
+  // Handle array-based filters from multi-select dropdowns
+  if (filters.brands && filters.brands.length > 0)
+    query = query.in("outlet_master.brand_name", filters.brands);
+  if (filters.cities && filters.cities.length > 0)
+    query = query.in("outlet_master.city", filters.cities);
+  if (filters.zones && filters.zones.length > 0)
+    query = query.in("outlet_master.zone", filters.zones);
+  if (filters.areas && filters.areas.length > 0)
+    query = query.in("outlet_master.area", filters.areas);
+
+  // Handle date and time ranges
+  if (filters.startDate) query = query.gte("date", filters.startDate);
+  if (filters.endDate) query = query.lte("date", filters.endDate);
+  if (filters.timeFrom) query = query.gte("ordered_time", filters.timeFrom);
+  if (filters.timeTo) query = query.lte("ordered_time", filters.timeTo);
+
   return query;
 }
 
@@ -250,4 +256,4 @@ router.post("/:id", async (req, res) => {
   }
 });
 
-module.exports = router;
+export default router;

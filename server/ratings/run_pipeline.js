@@ -1,8 +1,8 @@
-require('dotenv').config();
-const fs = require('fs');
-const xlsx = require('xlsx');
-const { createClient } = require('@supabase/supabase-js');
-const { checkForNewReports } = require('./gmailWatcher');
+import 'dotenv/config';
+import fs from 'fs';
+import xlsx from 'xlsx';
+import { createClient } from '@supabase/supabase-js';
+import { checkForNewReports } from './gmailWatcher.js';
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -228,11 +228,11 @@ function startScheduler() {
   scheduleNext(12); // 12:00 PM
 }
 
-module.exports = { runPipeline };
+export default { runPipeline };
 
 // ─── ENTRY POINT ──────────────────────────────────────────────
 
-if (require.main === module) {
+if (process.argv[1] === new URL(import.meta.url).pathname) {
   const args = process.argv.slice(2);
   if (args.includes('--schedule')) {
     startScheduler();
