@@ -3,10 +3,9 @@ import StoreCard from "./StoreCard";
 import ActivityLog from "./ActivityLog";
 import { toggleStore } from "../../api";
 
-export default function TogglePage({ stores, setStores, logs, setLogs }) {
-  const [filterBrand, setFilterBrand] = useState("All Brands");
+export default function TogglePage({ stores, setStores, logs, setLogs, globalFilters }) {
   const [searchQuery, setSearchQuery] = useState("");
-  const [isBulking, setIsBulking] = useState(false);
+  const [isBulking, setIsSyncing] = useState(false);
 
   const handleToggle = async (store, forceStatus = null) => {
     const currentStatus = store.status;
@@ -47,19 +46,20 @@ export default function TogglePage({ stores, setStores, logs, setLogs }) {
     
     if (!window.confirm(`Are you sure you want to turn ${storesToChange.length} stores ${desiredStatus.toUpperCase()}?`)) return;
 
-    setIsBulking(true);
+    setIsSyncing(true);
     for (const store of storesToChange) {
       await handleToggle(store, desiredStatus);
       // Small delay to prevent UrbanPiper rate limiting
       await new Promise(res => setTimeout(res, 300));
     }
-    setIsBulking(false);
+    setIsSyncing(false);
   };
 
   const filteredStores = stores.filter(s => {
-    const matchBrand = filterBrand === "All Brands" || s.brand === filterBrand;
+    const matchBrand = !globalFilters?.brands || globalFilters.brands.length === 0 || globalFilters.brands.some(b => b.toLowerCase() === s.brand.toLowerCase());
+    const matchCity = !globalFilters?.cities || globalFilters.cities.length === 0 || globalFilters.cities.some(c => c.toLowerCase() === s.city.toLowerCase());
     const matchSearch = s.name.toLowerCase().includes(searchQuery.toLowerCase());
-    return matchBrand && matchSearch;
+    return matchBrand && matchCity && matchSearch;
   });
 
   const onlineCount = stores.filter(s => s.status === "online").length;
@@ -69,7 +69,8 @@ export default function TogglePage({ stores, setStores, logs, setLogs }) {
     container: {
       display: "flex",
       height: "100%",
-      overflow: "hidden"
+      overflow: "hidden",
+      backgroundColor: "#ffffff"
     },
     mainCol: {
       flex: 1,
@@ -78,29 +79,40 @@ export default function TogglePage({ stores, setStores, logs, setLogs }) {
       padding: "32px 40px",
       overflowY: "auto"
     },
+    topActionsRow: {
+      display: "flex",
+      justifyContent: "space-between",
+      alignItems: "center",
+      marginBottom: "24px",
+      gap: "16px",
+      flexWrap: "wrap"
+    },
     statsRow: {
       display: "flex",
-      gap: "16px",
-      marginBottom: "24px",
+      gap: "12px",
       alignItems: "center"
     },
-    statText: (color) => ({
-      fontSize: "14px",
-      fontWeight: "600",
-      color: color,
-      backgroundColor: "rgba(255, 255, 255, 0.05)",
-      padding: "10px 16px",
-      borderRadius: "8px",
-      border: "1px solid rgba(255, 255, 255, 0.1)"
-    }),
-    bulkBtn: (color) => ({
+    statText: (isActive) => ({
       fontSize: "13px",
-      fontWeight: "600",
-      color: "#ffffff",
-      backgroundColor: color,
-      padding: "10px 20px",
-      borderRadius: "8px",
-      border: "none",
+      fontWeight: "700",
+      color: isActive ? "#ffffff" : "#132664",
+      backgroundColor: isActive ? "#132664" : "rgba(19, 38, 100, 0.05)",
+      padding: "8px 14px",
+      borderRadius: "20px",
+      border: `1px solid ${isActive ? "#132664" : "rgba(19, 38, 100, 0.15)"}`
+    }),
+    bulkActions: {
+      display: "flex",
+      gap: "8px"
+    },
+    bulkBtn: (isOnlineAction) => ({
+      fontSize: "12px",
+      fontWeight: "700",
+      color: isOnlineAction ? "#ffffff" : "#132664",
+      backgroundColor: isOnlineAction ? "#132664" : "#ffffff",
+      padding: "8px 16px",
+      borderRadius: "20px",
+      border: isOnlineAction ? "none" : "1px solid #132664",
       cursor: isBulking ? "not-allowed" : "pointer",
       opacity: isBulking ? 0.6 : 1,
       transition: "opacity 0.2s"
@@ -108,37 +120,65 @@ export default function TogglePage({ stores, setStores, logs, setLogs }) {
     controlsRow: {
       display: "flex",
       justifyContent: "flex-end",
-      marginBottom: "24px"
+      marginBottom: "20px"
     },
     searchBox: {
-      padding: "10px 16px",
-      borderRadius: "8px",
-      backgroundColor: "rgba(255, 255, 255, 0.05)",
-      border: "1px solid rgba(255, 255, 255, 0.1)",
-      color: "#ffffff",
+      padding: "8px 16px",
+      borderRadius: "20px",
+      backgroundColor: "#ffffff",
+      border: "1px solid #132664",
+      color: "#132664",
       outline: "none",
-      fontFamily: "Inter",
-      width: "260px"
+      fontFamily: "Inter, sans-serif",
+      fontSize: "13px",
+      width: "240px"
     },
     grid: {
       display: "grid",
-      gridTemplateColumns: "repeat(4, 1fr)",
-      gap: "20px"
+      gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))",
+      gap: "20px",
+      paddingBottom: "40px"
     }
   };
 
   return (
     <div style={styles.container}>
       <div style={styles.mainCol}>
-        <div style={styles.statsRow}>
-          <div style={styles.statText("#10b981")}>{onlineCount} Online</div>
-          <div style={styles.statText("#64748b")}>{offlineCount} Offline</div>
-          <div style={styles.statText("#ffffff")}>{stores.length} Total</div>
+        <div style={styles.topActionsRow}>
+          <div style={styles.statsRow}>
+            <div style={styles.statText(true)}>{onlineCount} Online</div>
+            <div style={styles.statText(false)}>{offlineCount} Offline</div>
+            <div style={styles.statText(false)}>{stores.length} Total</div>
+          </div>
+          <div style={styles.bulkActions}>
+            <button style={styles.bulkBtn(true)} onClick={() => handleBulkToggle("online")} disabled={isBulking}>
+              Bulk Go Online
+            </button>
+            <button style={styles.bulkBtn(false)} onClick={() => handleBulkToggle("offline")} disabled={isBulking}>
+              Bulk Go Offline
+            </button>
+          </div>
         </div>
+        
+        <div style={styles.controlsRow}>
+          <input 
+            type="text" 
+            placeholder="Search stores..." 
+            value={searchQuery} 
+            onChange={e => setSearchQuery(e.target.value)} 
+            style={styles.searchBox}
+          />
+        </div>
+
         <div style={styles.grid}>
           {filteredStores.map(store => (
             <StoreCard key={store.id} store={store} onToggle={handleToggle} />
           ))}
+          {filteredStores.length === 0 && (
+            <div style={{ color: "rgba(19, 38, 100, 0.6)", gridColumn: "1 / -1", textAlign: "center", padding: "40px" }}>
+              No stores match the active search or filters.
+            </div>
+          )}
         </div>
       </div>
       <ActivityLog logs={logs} />

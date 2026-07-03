@@ -1,7 +1,9 @@
 import fs from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import { google } from 'googleapis';
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CREDENTIALS_PATH = path.join(__dirname, 'gmail_credentials.json');
 const TOKEN_PATH = path.join(__dirname, 'gmail_token.json');
 const DOWNLOAD_DIR = path.join(__dirname, 'downloads');
@@ -61,12 +63,60 @@ function getAttachmentParts(part) {
   return attachments;
 }
 
+/**
+ * Cleans a URL and extracts the Google Sheet/Drive file ID.
+ * @param {string} url The raw URL from the email body.
+ * @returns {string|null} The extracted file ID or null.
+ */
+function extractFileId(url) {
+  const cleanUrl = url
+    .replace(/\*/g, '')        // remove * character
+    .replace(/\s/g, '')        // remove spaces
+    .split('#')[0]             // remove #gid=... fragment
+    .trim();
+  
+  const match = cleanUrl.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+  return match ? match[1] : null;
+}
+
+/**
+ * Downloads a Google Sheet as an .xlsx file using an authenticated request.
+ * @param {object} auth The authenticated Google OAuth2 client.
+ * @param {string} fileId The ID of the Google Sheet.
+ * @param {string} destPath The full path to save the downloaded file.
+ * @returns {Promise<string>} The path to the saved file.
+ */
+async function downloadGoogleSheet(auth, fileId, destPath) {
+  console.log("Getting access token...");
+  const tokenResponse = await auth.getAccessToken();
+  const accessToken = tokenResponse.token;
+  console.log("Access token retrieved ✓");
+
+  const exportUrl = `https://docs.google.com/spreadsheets/d/${fileId}/export?format=xlsx`;
+  console.log(`Downloading sheet with file ID: ${fileId}`);
+
+  const response = await fetch(exportUrl, {
+    headers: {
+      'Authorization': `Bearer ${accessToken}`,
+      'Accept': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    }
+  });
+  console.log(`Download response status: ${response.status}`);
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+  const buffer = await response.arrayBuffer();
+  fs.writeFileSync(destPath, Buffer.from(buffer));
+  return destPath;
+}
+
 async function checkForNewReports(targetDateStr) {
   const auth = await getAuthClient();
   const gmail = google.gmail({ version: 'v1', auth });
+  const drive = google.drive({ version: 'v3', auth });
   const downloadedFiles = [];
 
-  let query = `from:ranjith.r@swiggy.in subject:"Daily-MTD Funnel,IGCC,RDC,Serviceability & RHI - Report"`;
+  // Use keywords instead of an exact phrase to make the search more robust.
+  let query = `from:ranjith.r@swiggy.in subject:(Funnel IGCC RDC Serviceability Report)`;
   if (!targetDateStr) {
     query += ` -label:swiggy-processed`;
   }
@@ -83,7 +133,8 @@ async function checkForNewReports(targetDateStr) {
 
   let targetDateObj = null;
   if (targetDateStr) {
-    targetDateObj = new Date(targetDateStr.replace(/-/g, '/'));
+    // Use UTC to prevent timezone-related off-by-one-day errors.
+    targetDateObj = new Date(`${targetDateStr}T00:00:00.000Z`);
     console.log(`Filtering inbox strictly for emails received on: ${targetDateStr}`);
   }
 
@@ -96,9 +147,9 @@ async function checkForNewReports(targetDateStr) {
       const dateHeader = headers.find(h => h.name === 'Date')?.value;
       if (dateHeader) {
         const emailDate = new Date(dateHeader);
-        if (emailDate.getFullYear() !== targetDateObj.getFullYear() ||
-            emailDate.getMonth() !== targetDateObj.getMonth() ||
-            emailDate.getDate() !== targetDateObj.getDate()) {
+        if (emailDate.getUTCFullYear() !== targetDateObj.getUTCFullYear() ||
+            emailDate.getUTCMonth() !== targetDateObj.getUTCMonth() ||
+            emailDate.getUTCDate() !== targetDateObj.getUTCDate()) {
           continue; // Instantly skip emails that don't match the exact day
         }
       }
@@ -125,33 +176,76 @@ async function checkForNewReports(targetDateStr) {
     // 2. Extract and download from links in the email body
     const bodyText = getEmailBody(msgData.data.payload);
     const urlRegex = /(https?:\/\/[^\s"'<>]+)/g;
-    const urls = bodyText.match(urlRegex) || [];
+    const urls = [...new Set(bodyText.match(urlRegex) || [])];
 
     for (let url of urls) {
-      url = url.replace(/&amp;/g, '&'); // Fix HTML escaped ampersands
+      // Get a fresh access token to authorize the download
+      const accessToken = (await auth.getAccessToken()).token;
+      const authHeaders = {
+        'Authorization': `Bearer ${accessToken}`
+      };
+
+      url = url.replace(/&amp;/g, '&').replace(/[)>"']+$/, '').trim();
       const lowerUrl = url.toLowerCase();
-      if (lowerUrl.includes('.xlsx') || lowerUrl.includes('.xls') || lowerUrl.includes('.csv')) {
-        console.log(`Found report link in email: ${url}`);
-        try {
-          const response = await fetch(url);
+
+      // Skip obvious non-file links
+      if (lowerUrl.includes('unsubscribe') || lowerUrl.includes('mailto:')) continue;
+      
+      try {
+        // Case 1: Google Sheets link — convert to xlsx export
+        const fileId = extractFileId(url);
+        if (fileId) {
+          const filePath = path.join(DOWNLOAD_DIR, `${Date.now()}_report.xlsx`);
+          await downloadGoogleSheet(auth, fileId, filePath);
+          downloadedFiles.push(filePath);
+          console.log(`Sheet saved to: ${filePath}`);
+          continue;
+        }
+
+        // Case 3: Direct file link (.xlsx / .xls / .csv)
+        // This case is now less likely but kept as a fallback
+        if (lowerUrl.includes('.xlsx') || lowerUrl.includes('.xls') || lowerUrl.includes('.csv')) {
+          console.log(`Found direct file link: ${url}`);
+          const response = await fetch(url, { headers: authHeaders, redirect: 'follow' });
           if (response.ok) {
-            const arrayBuffer = await response.arrayBuffer();
-            const buffer = Buffer.from(arrayBuffer);
-            const fileName = url.split('/').pop().split('?')[0] || 'download_link.xlsx';
+            const buffer = Buffer.from(await response.arrayBuffer());
+            const fileName = url.split('/').pop().split('?')[0] || 'report.xlsx';
             const filePath = path.join(DOWNLOAD_DIR, `${Date.now()}_${fileName}`);
             fs.writeFileSync(filePath, buffer);
             downloadedFiles.push(filePath);
+            console.log(`Saved: ${filePath}`);
           }
-        } catch (err) {
-          console.error(`Failed to download from link:`, err.message);
+          continue;
         }
+
+        // Case 4: Unknown link — follow redirect and check content-type
+        const response = await fetch(url, { headers: authHeaders, redirect: 'follow' });
+        if (response.ok) {
+          const contentType = response.headers.get('content-type') || '';
+          const finalUrl = response.url.toLowerCase();
+          const isFile = contentType.includes('spreadsheet') ||
+                         contentType.includes('octet-stream') ||
+                         contentType.includes('excel') ||
+                         finalUrl.includes('.xlsx') ||
+                         finalUrl.includes('.xls') ||
+                         finalUrl.includes('.csv');
+          if (isFile) {
+            console.log(`Downloaded file via redirect: ${url}`);
+            const buffer = Buffer.from(await response.arrayBuffer());
+            const filePath = path.join(DOWNLOAD_DIR, `${Date.now()}_redirect_report.xlsx`);
+            fs.writeFileSync(filePath, buffer);
+            downloadedFiles.push(filePath);
+          }
+        }
+      } catch (err) {
+        console.error(`Failed to process link ${url}:`, err.message);
       }
     }
 
     if (!targetDateStr) {
       await markEmailAsProcessed(gmail, message.id);
     } else {
-      console.log(`Testing mode (Target Date Provided): Skipping label application so email can be fetched again.`);
+      console.log(`Running for a specific date, skipping 'processed' label to allow re-runs.`);
     }
   }
 

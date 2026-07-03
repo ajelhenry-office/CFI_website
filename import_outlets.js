@@ -9,7 +9,7 @@ const supabase = createClient(
 );
 
 async function importMaster() {
-  const filePath = '/Users/ajelhenry/Downloads/curefoods_tables_with_zone_mumbai.xlsx';
+  const filePath = '/Users/ajelhenry/Downloads/curefoods_tables_with_zone_mumbai.xlsx'; // Updated to your new file
   
   if (!fs.existsSync(filePath)) {
     console.error(`File not found at path: ${filePath}`);
@@ -36,7 +36,7 @@ async function importMaster() {
     const area = getVal('area');
     const dedupeKey = `${restId}_${area || 'no_area'}`;
 
-    // If we haven't seen this restaurant_id yet, add it. This ensures the first one wins.
+    // If we haven't seen this restaurant_id + area combination yet, add it.
     if (!uniqueOutletsMap.has(dedupeKey)) {
       uniqueOutletsMap.set(dedupeKey, {
         restaurant_id: restId,

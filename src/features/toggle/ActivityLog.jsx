@@ -1,16 +1,16 @@
 import React from "react";
 
 const Icons = {
-  check: <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>,
-  x: <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+  check: <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>,
+  x: <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
 };
 
 export default function ActivityLog({ logs }) {
   const styles = {
     container: {
       width: "280px",
-      backgroundColor: "rgba(255, 255, 255, 0.02)",
-      borderLeft: "1px solid rgba(255, 255, 255, 0.08)",
+      backgroundColor: "#ffffff",
+      borderLeft: "1px solid rgba(19, 38, 100, 0.15)",
       display: "flex",
       flexDirection: "column",
       height: "100%",
@@ -18,10 +18,10 @@ export default function ActivityLog({ logs }) {
     },
     header: {
       padding: "20px 24px",
-      borderBottom: "1px solid rgba(255, 255, 255, 0.08)",
-      fontSize: "14px",
-      fontWeight: "600",
-      color: "#ffffff",
+      borderBottom: "1px solid rgba(19, 38, 100, 0.15)",
+      fontSize: "13px",
+      fontWeight: "700",
+      color: "#132664",
       textTransform: "uppercase",
       letterSpacing: "0.5px"
     },
@@ -34,7 +34,7 @@ export default function ActivityLog({ logs }) {
       flex: 1
     },
     empty: {
-      color: "#64748b",
+      color: "rgba(19, 38, 100, 0.6)",
       fontSize: "13px",
       textAlign: "center",
       marginTop: "32px"
@@ -44,9 +44,9 @@ export default function ActivityLog({ logs }) {
       gap: "12px",
       alignItems: "flex-start",
       padding: "12px",
-      backgroundColor: "rgba(255, 255, 255, 0.03)",
+      backgroundColor: "rgba(19, 38, 100, 0.03)",
       borderRadius: "8px",
-      border: "1px solid rgba(255, 255, 255, 0.05)"
+      border: "1px solid rgba(19, 38, 100, 0.08)"
     },
     iconWrapper: (success) => ({
       width: "20px",
@@ -55,8 +55,9 @@ export default function ActivityLog({ logs }) {
       display: "flex",
       alignItems: "center",
       justifyContent: "center",
-      backgroundColor: success ? "rgba(16, 185, 129, 0.2)" : "rgba(239, 68, 68, 0.2)",
-      color: success ? "#10b981" : "#ef4444",
+      backgroundColor: success ? "#132664" : "#ffffff",
+      border: "1px solid #132664",
+      color: success ? "#ffffff" : "#132664",
       flexShrink: 0
     }),
     details: {
@@ -66,17 +67,17 @@ export default function ActivityLog({ logs }) {
     },
     storeName: {
       fontSize: "13px",
-      fontWeight: "600",
-      color: "#ffffff"
+      fontWeight: "700",
+      color: "#132664"
     },
-    actionLine: (success) => ({
+    actionLine: {
       fontSize: "12px",
-      color: success ? "#10b981" : "#ef4444",
-      fontWeight: "500"
-    }),
+      color: "#132664",
+      fontWeight: "600"
+    },
     time: {
       fontSize: "11px",
-      color: "#64748b"
+      color: "rgba(19, 38, 100, 0.5)"
     }
   };
 
@@ -94,12 +95,12 @@ export default function ActivityLog({ logs }) {
               </div>
               <div style={styles.details}>
                 <div style={styles.storeName}>{log.store}</div>
-                <div style={styles.actionLine(log.success)}>
+                <div style={styles.actionLine}>
                   → {log.action} {log.success ? "" : "(FAILED)"}
                 </div>
                 {log.errorMsg && (
-                  <div style={{ fontSize: "11px", color: "#ef4444", marginTop: "4px", lineHeight: "1.4" }}>
-                    {log.errorMsg}
+                  <div style={{ fontSize: "11px", color: "#132664", fontWeight: "600", marginTop: "4px", lineHeight: "1.4" }}>
+                    Error: {log.errorMsg}
                   </div>
                 )}
                 <div style={styles.time}>{log.time}</div>

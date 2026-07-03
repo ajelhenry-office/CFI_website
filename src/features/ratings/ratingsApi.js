@@ -36,3 +36,5 @@ export const fetchDeliveryVsKitchen = (f) => fetchInsight(17, f);
 export const fetchWeeklyBrief = (f) => fetchInsight(18, f);
 export const fetchActionItems = (f) => fetchInsight(19, f);
 export const fetchPackagingIssues = (f) => fetchInsight(20, f);
+export const fetchRawReviews = (f) => fetchInsight(21, f);
+export const fetchLightweightReviews = (f) => fetchInsight(22, f);

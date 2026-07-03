@@ -4,12 +4,6 @@ export default function StoreCard({ store, onToggle }) {
   const [loading, setLoading] = useState(false);
   const isOnline = store.status === "online";
 
-  const brandColors = {
-    "Ovenfresh": "#f97316",
-    "Paris Cakes & Desserts": "#7c3aed"
-  };
-  const brandColor = brandColors[store.brand] || "#3b82f6";
-
   const handleToggleClick = async () => {
     if (loading) return;
     setLoading(true);
@@ -19,20 +13,21 @@ export default function StoreCard({ store, onToggle }) {
 
   const styles = {
     card: {
-      backgroundColor: "rgba(255, 255, 255, 0.03)",
-      border: "1px solid rgba(255, 255, 255, 0.1)",
+      backgroundColor: "#ffffff",
+      border: "1px solid rgba(19, 38, 100, 0.15)",
       borderRadius: "12px",
       overflow: "hidden",
       display: "flex",
       flexDirection: "column",
       position: "relative",
       opacity: loading ? 0.7 : 1,
-      transition: "opacity 0.2s"
+      transition: "opacity 0.2s, box-shadow 0.2s",
+      boxShadow: "0 2px 6px rgba(19, 38, 100, 0.04)"
     },
     brandBar: {
       height: "4px",
       width: "100%",
-      backgroundColor: brandColor
+      backgroundColor: "#132664"
     },
     content: {
       padding: "16px",
@@ -48,17 +43,17 @@ export default function StoreCard({ store, onToggle }) {
     info: {
       display: "flex",
       flexDirection: "column",
-      gap: "4px"
+      gap: "2px"
     },
     name: {
-      fontSize: "15px",
-      fontWeight: "600",
-      color: "#ffffff"
+      fontSize: "14px",
+      fontWeight: "700",
+      color: "#132664"
     },
     brand: {
       fontSize: "11px",
-      fontWeight: "500",
-      color: brandColor,
+      fontWeight: "600",
+      color: "rgba(19, 38, 100, 0.7)",
       textTransform: "uppercase",
       letterSpacing: "0.5px"
     },
@@ -66,34 +61,35 @@ export default function StoreCard({ store, onToggle }) {
       display: "flex",
       justifyContent: "space-between",
       alignItems: "center",
-      marginTop: "8px"
+      marginTop: "4px"
     },
     locationId: {
       fontSize: "11px",
-      color: "#64748b",
-      fontWeight: "500"
+      color: "rgba(19, 38, 100, 0.5)",
+      fontWeight: "600"
     },
     badge: {
       display: "flex",
       alignItems: "center",
-      gap: "6px",
-      fontSize: "11px",
-      fontWeight: "600",
-      color: isOnline ? "#10b981" : "#64748b",
-      textTransform: "uppercase",
-      letterSpacing: "0.5px"
+      gap: "5px",
+      fontSize: "10px",
+      fontWeight: "700",
+      color: "#132664",
+      textTransform: "uppercase"
     },
     dot: {
       width: "6px",
       height: "6px",
       borderRadius: "50%",
-      backgroundColor: isOnline ? "#10b981" : "#64748b"
+      backgroundColor: isOnline ? "#132664" : "transparent",
+      border: "1px solid #132664"
     },
     // Toggle Styles
     toggleTrack: {
       width: "36px",
       height: "20px",
-      backgroundColor: isOnline ? "#10b981" : "rgba(255, 255, 255, 0.1)",
+      backgroundColor: isOnline ? "#132664" : "rgba(19, 38, 100, 0.1)",
+      border: isOnline ? "none" : "1px solid #132664",
       borderRadius: "10px",
       position: "relative",
       cursor: loading ? "not-allowed" : "pointer",
@@ -101,14 +97,14 @@ export default function StoreCard({ store, onToggle }) {
     },
     toggleThumb: {
       position: "absolute",
-      top: "2px",
+      top: isOnline ? "2px" : "1px",
       left: isOnline ? "18px" : "2px",
       width: "16px",
       height: "16px",
-      backgroundColor: "#ffffff",
+      backgroundColor: isOnline ? "#ffffff" : "#132664",
       borderRadius: "50%",
-      transition: "left 0.2s",
-      boxShadow: "0 2px 4px rgba(0,0,0,0.2)"
+      transition: "left 0.2s, background-color 0.2s",
+      boxShadow: "0 1px 3px rgba(0,0,0,0.15)"
     }
   };
 

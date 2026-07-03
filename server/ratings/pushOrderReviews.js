@@ -9,11 +9,18 @@ const supabase = createClient(
 
 function normalizeDate(val) {
   if (!val) return null;
-  if (val instanceof Date) return val.toISOString().split('T')[0];
+  if (val instanceof Date) {
+    const y = val.getFullYear();
+    const m = String(val.getMonth() + 1).padStart(2, '0');
+    const d = String(val.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
   if (typeof val === 'number') {
-    // Excel serial date
     const date = new Date(Math.round((val - 25569) * 86400 * 1000));
-    return date.toISOString().split('T')[0];
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const d = String(date.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
   }
   const str = String(val).trim();
   const parts = str.split(/[-/]/);

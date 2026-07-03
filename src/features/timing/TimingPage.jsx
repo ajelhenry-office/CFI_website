@@ -56,18 +56,36 @@ function TimingRow({ store }) {
   };
 
   const selectStyle = {
-    background: "#07111a", border: "1px solid #1a2535", borderRadius: 6, padding: "6px 10px", color: "#00e5a0", outline: "none", width: 100, fontSize: 12
+    background: "#ffffff",
+    border: "1px solid #132664",
+    borderRadius: 6,
+    padding: "6px 10px",
+    color: "#132664",
+    outline: "none",
+    width: 110,
+    fontSize: 12,
+    fontWeight: "600",
+    cursor: "pointer"
   };
+
   const btnStyle = (slot) => ({
-    padding: "7px 14px", borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer", border: "none", color: "#070b0f", background: savingSlot === slot ? "#00e5a0" : "#ffffff", transition: "all 0.2s ease"
+    padding: "7px 14px",
+    borderRadius: 20,
+    fontSize: 11,
+    fontWeight: 700,
+    cursor: "pointer",
+    border: "1px solid #132664",
+    color: savingSlot === slot ? "#132664" : "#ffffff",
+    background: savingSlot === slot ? "#ffffff" : "#132664",
+    transition: "all 0.2s ease"
   });
 
   return (
-    <div style={{ background: "#0c1117", border: "1px solid #1a2535", borderRadius: 12, padding: "16px 20px", marginBottom: 10, display: "flex", flexDirection: "column", gap: 12 }}>
+    <div style={{ background: "#ffffff", border: "1px solid rgba(19, 38, 100, 0.15)", borderRadius: 12, padding: "16px 20px", marginBottom: 12, display: "flex", flexDirection: "column", gap: 12, boxShadow: "0 2px 6px rgba(19, 38, 100, 0.02)" }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <div style={{ flex: 1 }}>
-          <div style={{ fontSize: 14, fontWeight: 700, color: "#e2e8f0" }}>{store.name}</div>
-          <div style={{ fontSize: 10, color: "#a0b4c8", fontFamily: "'JetBrains Mono', monospace", textTransform: "uppercase", marginTop: 2 }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: "#132664" }}>{store.name}</div>
+          <div style={{ fontSize: 10, color: "rgba(19, 38, 100, 0.6)", fontFamily: "ui-monospace, monospace", textTransform: "uppercase", marginTop: 2, fontWeight: "600" }}>
             {store.brand} {store.zomato_id ? `| ZOMATO: ${store.zomato_id}` : ""}
           </div>
         </div>
@@ -75,12 +93,12 @@ function TimingRow({ store }) {
       
       <div style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
         {/* SLOT 1 */}
-        <div style={{ display: "flex", alignItems: "center", gap: 8, background: "rgba(255,255,255,0.02)", padding: "8px 12px", borderRadius: 8 }}>
-          <span style={{ fontSize: 11, color: "#4a6080", fontWeight: 700 }}>SLOT 1:</span>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, background: "rgba(19, 38, 100, 0.03)", padding: "8px 12px", borderRadius: 8, border: "1px solid rgba(19, 38, 100, 0.06)" }}>
+          <span style={{ fontSize: 11, color: "#132664", fontWeight: 700 }}>SLOT 1:</span>
           <select value={open1} onChange={e => setOpen1(e.target.value)} style={selectStyle}>
             {TIME_OPTIONS.map(t => <option key={t} value={t}>{t}</option>)}
           </select>
-          <span style={{ fontSize: 11, color: "#4a6080" }}>to</span>
+          <span style={{ fontSize: 11, color: "#132664", fontWeight: "600" }}>to</span>
           <select value={close1} onChange={e => setClose1(e.target.value)} style={selectStyle}>
             {TIME_OPTIONS.map(t => <option key={t} value={t}>{t}</option>)}
           </select>
@@ -90,12 +108,12 @@ function TimingRow({ store }) {
         </div>
 
         {/* SLOT 2 */}
-        <div style={{ display: "flex", alignItems: "center", gap: 8, background: "rgba(255,255,255,0.02)", padding: "8px 12px", borderRadius: 8 }}>
-          <span style={{ fontSize: 11, color: "#4a6080", fontWeight: 700 }}>SLOT 2:</span>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, background: "rgba(19, 38, 100, 0.03)", padding: "8px 12px", borderRadius: 8, border: "1px solid rgba(19, 38, 100, 0.06)" }}>
+          <span style={{ fontSize: 11, color: "#132664", fontWeight: 700 }}>SLOT 2:</span>
           <select value={open2} onChange={e => setOpen2(e.target.value)} style={selectStyle}>
             {TIME_OPTIONS.map(t => <option key={t} value={t}>{t}</option>)}
           </select>
-          <span style={{ fontSize: 11, color: "#4a6080" }}>to</span>
+          <span style={{ fontSize: 11, color: "#132664", fontWeight: "600" }}>to</span>
           <select value={close2} onChange={e => setClose2(e.target.value)} style={selectStyle}>
             {TIME_OPTIONS.map(t => <option key={t} value={t}>{t}</option>)}
           </select>
@@ -108,27 +126,28 @@ function TimingRow({ store }) {
   );
 }
 
-export default function TimingPage({ stores }) {
+export default function TimingPage({ stores, globalFilters }) {
   const [search, setSearch] = useState("");
 
-  const filtered = stores.filter(s => 
-    s.name.toLowerCase().includes(search.toLowerCase()) || 
-    (s.zomato_id && s.zomato_id.includes(search))
-  );
+  const filtered = stores.filter(s => {
+    const matchBrand = !globalFilters?.brands || globalFilters.brands.length === 0 || globalFilters.brands.some(b => b.toLowerCase() === s.brand.toLowerCase());
+    const matchSearch = s.name.toLowerCase().includes(search.toLowerCase()) || (s.zomato_id && s.zomato_id.includes(search));
+    return matchBrand && matchSearch;
+  });
 
   return (
-    <div style={{ padding: "24px 28px", overflowY: "auto", height: "100%", boxSizing: "border-box" }}>
-      <div style={{ marginBottom: 16, padding: "12px 16px", background: "#0c1117", borderRadius: 8, border: "1px solid #f97316", borderLeft: "3px solid #f97316" }}>
-        <div style={{ fontSize: 12, color: "#f97316", fontFamily: "'JetBrains Mono', monospace", marginBottom: 4 }}>ZOMATO ONLY</div>
-        <div style={{ fontSize: 12, color: "#a0b4c8" }}>
-          Timing changes go through GitHub Actions → Python API → Zomato partner portal. Changes take ~30–60 seconds to apply.
+    <div style={{ padding: "32px 40px", overflowY: "auto", height: "100%", boxSizing: "border-box", backgroundColor: "#ffffff" }}>
+      <div style={{ marginBottom: 20, padding: "16px", background: "rgba(19, 38, 100, 0.03)", borderRadius: 12, border: "1px solid #132664", borderLeft: "4px solid #132664" }}>
+        <div style={{ fontSize: 11, color: "#132664", fontWeight: "800", fontFamily: "ui-monospace, monospace", marginBottom: 4, letterSpacing: "1px" }}>ZOMATO EXCLUSIVE PORTAL INTEGRATION</div>
+        <div style={{ fontSize: 12, color: "rgba(19, 38, 100, 0.8)", lineHeight: "1.5" }}>
+          Operating timings push directly to the partner portal listing database via custom automated jobs. Changes require up to 60 seconds to populate fully.
         </div>
       </div>
       
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-        <span style={{ fontSize: 11, color: "#4a6080", textTransform: "uppercase", letterSpacing: "1.5px" }}>{filtered.length} stores</span>
-        <div style={{ display: "flex", alignItems: "center", background: "#0c1117", border: "1px solid #1a2535", borderRadius: 8, padding: "6px 12px" }}>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4a6080" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: 8 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+        <span style={{ fontSize: 12, color: "#132664", fontWeight: "700" }}>{filtered.length} listings</span>
+        <div style={{ display: "flex", alignItems: "center", background: "#ffffff", border: "1px solid #132664", borderRadius: 20, padding: "6px 14px" }}>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#132664" strokeWidth="2.5" style={{ marginRight: 8 }}>
             <circle cx="11" cy="11" r="8"></circle>
             <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
           </svg>
@@ -137,13 +156,21 @@ export default function TimingPage({ stores }) {
             placeholder="Search Zomato ID or Store..." 
             value={search} 
             onChange={e => setSearch(e.target.value)} 
-            style={{ background: "transparent", border: "none", outline: "none", color: "#e2e8f0", fontSize: 13, width: 220 }} 
+            style={{ background: "transparent", border: "none", outline: "none", color: "#132664", fontSize: 12, width: 220, fontWeight: "600" }} 
           />
         </div>
       </div>
-      {filtered.map(store => (
-        <TimingRow key={store.id} store={store} />
-      ))}
+      
+      <div>
+        {filtered.map(store => (
+          <TimingRow key={store.id} store={store} />
+        ))}
+        {filtered.length === 0 && (
+          <div style={{ color: "rgba(19, 38, 100, 0.6)", textAlign: "center", padding: "40px" }}>
+            No stores found matching active search or filters.
+          </div>
+        )}
+      </div>
     </div>
   );
 }

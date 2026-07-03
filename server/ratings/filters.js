@@ -1,40 +1,47 @@
 import { supabase } from './supabaseClient.js';
 
 /**
- * Fetches unique, non-null, and sorted values for a given column
- * from the outlet_master table.
- * @param {string} columnName - The name of the column to query.
- * @returns {Promise<string[]>} - A promise that resolves to an array of unique strings.
- */
-async function getUniqueValues(columnName) {
-  // Use select with `distinct()` for a clean and efficient query.
-  const { data, error } = await supabase
-    .from('outlet_master')
-    .select(columnName, { distinct: true });
-
-  if (error) {
-    console.error(`Error fetching distinct ${columnName}s:`, error);
-    throw new Error(`Failed to fetch ${columnName}s: ${error.message}`);
-  }
-
-  // The data comes back as [{col: val1}, {col: val2}]. We need to flatten,
-  // filter out null/empty values, and sort it.
-  return data.map(item => item[columnName]).filter(Boolean).sort();
-}
-
-/**
- * Main handler to fetch all filter options in a single request.
+ * Main handler to fetch ALL outlet master data once so the frontend can do instant cascading filtering.
  */
 async function handleFilterRequest(req, res) {
   try {
-    const [brands, cities, zones, areas] = await Promise.all([
-      getUniqueValues('brand_name'),
-      getUniqueValues('city'),
-      getUniqueValues('zone'),
-      getUniqueValues('area'),
-    ]);
+    // Fetch ALL necessary columns handling pagination
+    let allData = [];
+    let page = 0;
+    const pageSize = 1000;
+    
+    while (true) {
+      const { data, error } = await supabase
+        .from('outlet_master')
+        .select('brand_name, city, zone, area')
+        .range(page * pageSize, (page + 1) * pageSize - 1)
+        .order('brand_name'); // Stabilize sort to prevent missed rows
 
-    res.json({ brands, cities, zones, areas });
+      if (error) throw error;
+      if (!data || data.length === 0) break;
+      
+      allData = allData.concat(data);
+      if (data.length < pageSize) break;
+      page++;
+    }
+
+    // Clean the data (spaces & trim)
+    const cleanedData = allData.map(row => ({
+      brand: row.brand_name ? String(row.brand_name).replace(/\s+/g, ' ').trim() : null,
+      city: row.city ? String(row.city).replace(/\s+/g, ' ').trim() : null,
+      zone: row.zone ? String(row.zone).replace(/\s+/g, ' ').trim() : null,
+      area: row.area ? String(row.area).replace(/\s+/g, ' ').trim() : null,
+    }));
+
+    // Fetch max date from order_reviews
+    const { data: maxDateData } = await supabase
+      .from('order_reviews')
+      .select('date')
+      .order('date', { ascending: false })
+      .limit(1);
+    const maxDate = (maxDateData && maxDateData[0]) ? maxDateData[0].date : null;
+
+    res.json({ masterData: cleanedData, maxDate });
   } catch (error) {
     console.error('Error fetching filter options:', error);
     res.status(500).json({ error: 'Failed to load filter options.' });

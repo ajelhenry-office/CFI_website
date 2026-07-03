@@ -1,14 +1,19 @@
-const fs = require('fs');
-const path = require('path');
-const readline = require('readline');
-const { google } = require('googleapis');
+import fs from 'fs';
+import path from 'path';
+import readline from 'readline';
+import { google } from 'googleapis';
+import { fileURLToPath } from 'url';
 
 // Update these paths if your files are located somewhere else
-const CREDENTIALS_PATH = path.join(__dirname, 'gmail_credentials.json');
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const CREDENTIALS_PATH = path.join(__dirname, 'gmail_credentials.json'); // Correctly resolves path in ESM
 const TOKEN_PATH = path.join(__dirname, 'gmail_token.json');
 
 // The scope determines what the app can do. 'modify' allows reading and adding labels.
-const SCOPES = ['https://www.googleapis.com/auth/gmail.modify'];
+const SCOPES = [
+  'https://www.googleapis.com/auth/gmail.modify',
+  'https://www.googleapis.com/auth/drive.readonly'
+];
 
 function authorize(credentials, callback) {
   const { client_secret, client_id, redirect_uris } = credentials.installed || credentials.web;

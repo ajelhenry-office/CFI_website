@@ -77,13 +77,16 @@ function parseExcel(filePath) {
 
         for (let [key, val] of Object.entries(row)) {
           const normalizedKey = key.trim().toLowerCase();
-          const mappedKey = COLUMN_MAPPING[normalizedKey];
+          let dbKey = COLUMN_MAPPING[normalizedKey];
           
-          if (mappedKey) {
-            if (typeof val === 'string') val = val.replace(/\u00A0/g, ' ').replace(/\s+/g, ' ').trim();
-            if (val === "" || val === "None" || val === "none") val = null;
-            cleanedRow[mappedKey] = val;
+          // If the column is not in our standard mapping, use its own name.
+          // This makes the parser flexible to new, unexpected columns.
+          if (!dbKey) {
+            dbKey = normalizedKey.replace(/[^a-z0-9_]/g, '_'); // Sanitize for DB
           }
+          if (typeof val === 'string') val = val.replace(/\u00A0/g, ' ').replace(/\s+/g, ' ').trim();
+          if (val === "" || val === "None" || val === "none") val = null;
+          cleanedRow[dbKey] = val;
         }
         
         // Skip completely blank/summary rows that have no order ID

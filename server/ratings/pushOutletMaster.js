@@ -45,5 +45,5 @@ async function pushOutletMaster(filePath) {
   console.log('Done.');
 }
 
-const filePath = process.argv[2] || '/Users/ajelhenry/Downloads/curefoods_tables_with_zone_mumbai.xlsx';
+const filePath = process.argv[2] || '/Users/ajelhenry/CFI_website/server/curefoods_tables_with_zone_mumbai.xlsx';
 pushOutletMaster(filePath);

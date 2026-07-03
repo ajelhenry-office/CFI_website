@@ -17,6 +17,10 @@ import { supabase } from "./server/ratings/supabaseClient.js";
 const app = express();
 app.use(cors());
 app.use(express.json());
+app.use((req, res, next) => {
+  console.log(`[HTTP] ${req.method} ${req.url} - Body:`, JSON.stringify(req.body));
+  next();
+});
 
 // ─── HEALTH CHECK ─────────────────────────────────────────────
 app.get("/health", (req, res) => {

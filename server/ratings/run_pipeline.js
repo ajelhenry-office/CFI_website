@@ -13,10 +13,18 @@ const supabase = createClient(
 
 function normalizeDate(val) {
   if (!val) return null;
-  if (val instanceof Date) return val.toISOString().split('T')[0];
+  if (val instanceof Date) {
+    const y = val.getFullYear();
+    const m = String(val.getMonth() + 1).padStart(2, '0');
+    const d = String(val.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
   if (typeof val === 'number') {
     const date = new Date(Math.round((val - 25569) * 86400 * 1000));
-    return date.toISOString().split('T')[0];
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const d = String(date.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
   }
   const str = String(val).trim();
   const parts = str.split(/[-/]/);
@@ -47,49 +55,178 @@ function parseFile(filePath) {
   return xlsx.utils.sheet_to_json(wb.Sheets[sheetName], { defval: null });
 }
 
+// ─── ZONE DETAILS REFERENCE MAPPING ───────────────────────────
+
+let zoneMap = null;
+
+async function loadZoneMap() {
+  if (zoneMap) return zoneMap;
+  zoneMap = new Map();
+
+  const paths = [
+    new URL('../curefoods_tables_with_zone_mumbai.xlsx', import.meta.url).pathname,
+    '/Users/ajelhenry/Downloads/curefoods_tables_zone_details_mumbai.xlsx',
+    '/Users/ajelhenry/Downloads/curefoods_tables_with_zone_mumbai.xlsx',
+    new URL('downloads/curefoods_tables_zone_details_mumbai.xlsx', import.meta.url).pathname,
+    new URL('downloads/curefoods_tables_with_zone_mumbai.xlsx', import.meta.url).pathname
+  ];
+
+  let filePath = null;
+  for (const p of paths) {
+    if (fs.existsSync(p)) {
+      filePath = p;
+      break;
+    }
+  }
+
+  if (!filePath) {
+    console.log('Warning: Zone details reference file not found in Downloads. Zone mapping will be skipped.');
+    return zoneMap;
+  }
+
+  console.log(`Loading zone details from reference file: ${filePath}`);
+  try {
+    const wb = xlsx.readFile(filePath);
+    const sheetName = wb.SheetNames.find(name => 
+      name.toLowerCase().includes('zone') || 
+      name.toLowerCase().includes('outlet_master')
+    ) || wb.SheetNames[0];
+
+    const sheet = wb.Sheets[sheetName];
+    const rows = xlsx.utils.sheet_to_json(sheet, { defval: null });
+
+    const getColVal = (row, keyStr) => {
+      const foundKey = Object.keys(row).find(k => k && k.toLowerCase().replace(/_/g, ' ').includes(keyStr.toLowerCase().replace(/_/g, ' ')));
+      return foundKey ? String(row[foundKey]).trim() : null;
+    };
+
+    for (const row of rows) {
+      const city = getColVal(row, 'city');
+      const area = getColVal(row, 'area');
+      const zone = getColVal(row, 'zone');
+      if (city && area && zone) {
+        const key = `${city.toLowerCase()}_${area.toLowerCase()}`;
+        zoneMap.set(key, zone);
+      }
+    }
+    console.log(`Loaded ${zoneMap.size} zone mappings successfully from sheet "${sheetName}".`);
+  } catch (err) {
+    console.error('Failed to parse zone details reference file:', err.message);
+  }
+
+  return zoneMap;
+}
+
 // ─── STEP 2: SYNC OUTLET MASTER ───────────────────────────────
 
 async function syncOutletMaster(rows) {
-  // Collect unique restaurants from this file
-  const uniqueMap = new Map();
+  // Load the zone mappings from the reference file
+  const zMap = await loadZoneMap();
+
+  // 1. Fetch all existing restaurant_id + area combinations from outlet_master along with city and zone
+  console.log('Fetching existing outlets from database...');
+  let existingOutlets = [];
+  let page = 0;
+  const pageSize = 1000;
+  while (true) {
+    const { data, error } = await supabase
+      .from('outlet_master')
+      .select('restaurant_id, area, city, zone')
+      .range(page * pageSize, (page + 1) * pageSize - 1);
+    if (error) {
+      console.error('Error fetching existing outlets:', error.message);
+      break;
+    }
+    if (!data || data.length === 0) break;
+    existingOutlets = existingOutlets.concat(data);
+    if (data.length < pageSize) break;
+    page++;
+  }
+
+  // Set of existing keys: "restaurant_id_area"
+  const existingSet = new Set(
+    existingOutlets.map(o => `${String(o.restaurant_id).trim()}_${String(o.area || '').trim()}`)
+  );
+
+  // Build city -> zone map from reference file (zMap) and existing DB records
+  const dbCityToZone = new Map();
+  
+  // First, populate from reference zMap keys (format is "city_area")
+  for (const [key, zone] of zMap.entries()) {
+    const cityPart = key.split('_')[0];
+    if (cityPart && zone) {
+      dbCityToZone.set(cityPart.toLowerCase(), String(zone).trim());
+    }
+  }
+
+  // Next, populate/override from existing database records (which contain validated zone data)
+  for (const o of existingOutlets) {
+    if (o.city && o.zone) {
+      const cleanCity = String(o.city).trim().toLowerCase();
+      const cleanZone = String(o.zone).trim();
+      if (cleanCity && cleanZone) {
+        dbCityToZone.set(cleanCity, cleanZone);
+      }
+    }
+  }
+
+  // 2. Identify new unique outlets from the parsed Excel sheet
+  const uniqueNewMap = new Map();
   for (const row of rows) {
     if (!row.restaurant_id) continue;
-    const key = `${String(row.restaurant_id).replace(/\.0$/, '').trim()}_${row.area || ''}`;
-    if (!uniqueMap.has(key)) {
-      uniqueMap.set(key, {
-        restaurant_id:  String(row.restaurant_id).replace(/\.0$/, '').trim(),
+    const restId = String(row.restaurant_id).replace(/\.0$/, '').trim();
+    const area = row.area ? String(row.area).trim() : '';
+    const key = `${restId}_${area}`;
+
+    if (!existingSet.has(key) && !uniqueNewMap.has(key)) {
+      // Map the zone based on city and area from our reference file
+      const city = row.city ? String(row.city).trim() : '';
+      const zoneKey = `${city.toLowerCase()}_${area.toLowerCase()}`;
+      
+      let mappedZone = zMap.get(zoneKey) || row.zone || row.Zone || null;
+      
+      // Fallback 1: Look up zone of similar city from database / reference map
+      if (!mappedZone && city) {
+        mappedZone = dbCityToZone.get(city.toLowerCase()) || null;
+      }
+      
+      // Fallback 2: Look at other rows in the incoming Excel sheet for a zone
+      if (!mappedZone && city) {
+        for (const r of rows) {
+          if (r.city && String(r.city).trim().toLowerCase() === city.toLowerCase()) {
+            const z = r.zone || r.Zone || null;
+            if (z) {
+              mappedZone = String(z).trim();
+              break;
+            }
+          }
+        }
+      }
+
+      uniqueNewMap.set(key, {
+        restaurant_id:  restId,
         brand_name:     row.brand_name      || null,
         business_entity:row.business_entity || null,
         city:           row.city            || null,
         area:           row.area            || null,
-        zone:           row.Zone || row.zone || null,
+        zone:           mappedZone,
       });
     }
   }
 
-  const fromFile = Array.from(uniqueMap.values());
-  const fileRestaurantIds = [...new Set(fromFile.map(r => r.restaurant_id))];
-
-  // Check which restaurant_ids already exist in outlet_master
-  const { data: existing } = await supabase
-    .from('outlet_master')
-    .select('restaurant_id, area')
-    .in('restaurant_id', fileRestaurantIds);
-
-  const existingKeys = new Set((existing || []).map(r => `${r.restaurant_id}_${r.area || ''}`));
-  const newRestaurants = fromFile.filter(r => !existingKeys.has(`${r.restaurant_id}_${r.area || ''}`));
-
-  if (newRestaurants.length === 0) {
-    console.log('No new restaurants to add to outlet_master.');
+  const outletsToInsert = Array.from(uniqueNewMap.values());
+  if (outletsToInsert.length === 0) {
+    console.log('No new outlets to insert.');
     return;
   }
 
-  console.log(`Adding ${newRestaurants.length} new restaurants to outlet_master...`);
+  console.log(`Inserting ${outletsToInsert.length} new unique outlets into outlet_master...`);
   const CHUNK = 500;
-  for (let i = 0; i < newRestaurants.length; i += CHUNK) {
-    const { error } = await supabase.from('outlet_master').insert(newRestaurants.slice(i, i + CHUNK));
+  for (let i = 0; i < outletsToInsert.length; i += CHUNK) {
+    const chunk = outletsToInsert.slice(i, i + CHUNK);
+    const { error } = await supabase.from('outlet_master').insert(chunk);
     if (error) console.error(`outlet_master insert error (batch ${i}):`, error.message);
-    else console.log(`Inserted outlet_master rows ${i + 1}–${i + Math.min(CHUNK, newRestaurants.length - i)}`);
+    else console.log(`Inserted outlet_master rows ${i + 1}–${i + chunk.length}`);
   }
 }
 
@@ -145,16 +282,17 @@ async function pushOrderReviews(rows) {
   }
 
   const toInsert = localRecords.filter(r => !existingKeys.has(`${r.order_id}_${r.restaurant_id}_${r.item_name}`));
-  console.log(`Skipped ${localRecords.length - toInsert.length} already existing rows.`);
-  console.log(`Inserting ${toInsert.length} new rows into order_reviews...`);
+  console.log(`Skipped ${localRecords.length - toInsert.length} already existing reviews.`);
+  console.log(`Inserting ${toInsert.length} new reviews into order_reviews...`);
 
   if (toInsert.length === 0) return console.log('Nothing new to insert.');
 
   const INSERT_CHUNK = 500;
   for (let i = 0; i < toInsert.length; i += INSERT_CHUNK) {
-    const { error } = await supabase.from('order_reviews').insert(toInsert.slice(i, i + INSERT_CHUNK));
+    const chunk = toInsert.slice(i, i + INSERT_CHUNK);
+    const { error } = await supabase.from('order_reviews').insert(chunk);
     if (error) console.error(`Insert error (batch ${i}):`, error.message);
-    else console.log(`Inserted rows ${i + 1}–${i + Math.min(INSERT_CHUNK, toInsert.length - i)}`);
+    else console.log(`Inserted rows ${i + 1}–${i + chunk.length}`);
   }
 }
 
