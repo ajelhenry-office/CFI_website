@@ -1,183 +1,154 @@
-import React, { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
+import { C, cardStyle, FONT } from "../../../theme";
 
-const C = { text: "#132664", bg: "#ffffff", border: "rgba(19, 38, 100, 0.15)" };
+const FIELDS = [
+  ["review_id", "Review ID"],
+  ["outlet_id", "Outlet ID"],
+  ["restaurant_id", "Restaurant ID"],
+  ["brand_name", "Brand Name"],
+  ["business_entity", "Business Entity"],
+  ["city", "City"],
+  ["area", "Area"],
+  ["zone", "Zone"],
+  ["order_id", "Order ID"],
+  ["date", "Date"],
+  ["ordered_time", "Ordered Time"],
+  ["gmv_total", "GMV Total"],
+  ["item_name", "Item Name"],
+  ["comments", "Comments"],
+  ["restaurant_rating", "Rating"],
+  ["post_status", "Post Status"],
+  ["updated_at", "Updated At"],
+];
 
-function Card({ children, style }) {
-  return (
-    <div style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 12, padding: 20, color: C.text, boxShadow: "0 2px 8px rgba(19, 38, 100, 0.03)", ...style }}>
-      {children}
-    </div>
-  );
-}
+const fmt = (key, val) => {
+  if (val === null || val === undefined || val === "") return "-";
+  if (key === "ordered_time" || key === "updated_at") return new Date(val).toLocaleString();
+  if (key === "gmv_total") return Number(val).toFixed(2);
+  if (key === "restaurant_rating") return `${val}★`;
+  return val;
+};
 
-export default function CommentsInsight({ reviews, onClose, onRegisterDownload }) {
-  const [currentPage, setCurrentPage] = useState(1);
-  const PAGE_SIZE = 100;
+const PAGE_SIZE = 100;
 
-  const totalRows = Array.isArray(reviews) ? reviews.length : 0;
-  const totalPages = Math.ceil(totalRows / PAGE_SIZE);
-  const startIndex = (currentPage - 1) * PAGE_SIZE;
-  const endIndex = Math.min(startIndex + PAGE_SIZE, totalRows);
-  const paginatedRows = Array.isArray(reviews) ? reviews.slice(startIndex, endIndex) : [];
+export default function CommentsInsight({ reviews = [], onClose, onRegisterDownload }) {
+  const [page, setPage] = useState(1);
+  const totalPages = Math.max(1, Math.ceil(reviews.length / PAGE_SIZE));
+  const start = (page - 1) * PAGE_SIZE;
+  const pageRows = reviews.slice(start, start + PAGE_SIZE);
 
-  const header = (title) => (
-    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-      <div style={{ fontSize: 15, fontWeight: 800, color: "#132664" }}>{title}</div>
-      <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
-        {onClose && (
-          <button onClick={onClose} style={{ background: "none", border: "none", color: "#132664", fontSize: 18, cursor: "pointer", fontWeight: "bold" }}>✕</button>
-        )}
-      </div>
-    </div>
-  );
-
-  // Prepare Sheets for Download
-  const getDownloadDataSheets = () => {
-    const rows = reviews.map(r => ({
-      "Review ID": r.review_id,
-      "Outlet ID": r.outlet_id,
-      "Restaurant ID": r.restaurant_id,
-      "Brand Name": r.brand_name,
-      "Business Entity": r.business_entity,
-      City: r.city,
-      Area: r.area,
-      Zone: r.zone,
-      "Order ID": r.order_id,
-      Date: r.date,
-      "Ordered Time": r.ordered_time,
-      "GMV Total": r.gmv_total,
-      "Item Name": r.item_name,
-      Comments: r.comments,
-      Rating: r.restaurant_rating,
-      "Post Status": r.post_status,
-      "Updated At": r.updated_at
-    }));
-    return [
-      { sheetName: "Comments", rows }
-    ];
-  };
-
-  // Register callback to parent page
   useEffect(() => {
-    if (onRegisterDownload) {
-      onRegisterDownload(() => getDownloadDataSheets);
-    }
-    return () => {
-      if (onRegisterDownload) onRegisterDownload(null);
-    };
+    if (!onRegisterDownload) return;
+    onRegisterDownload(() => [
+      {
+        sheetName: "Comments",
+        rows: reviews.map((r) => {
+          const out = {};
+          FIELDS.forEach(([k, h]) => {
+            out[h] = r[k] ?? "";
+          });
+          return out;
+        }),
+      },
+    ]);
   }, [reviews, onRegisterDownload]);
 
   return (
-    <Card style={{ overflowX: "auto" }}>
-      {header("Comments Insight")}
-      
-      <div style={{ maxHeight: 600, overflowY: "auto", overflowX: "auto", position: "relative", border: "1px solid rgba(19, 38, 100, 0.15)", borderRadius: "8px" }}>
-        <table style={{ width: "100%", textAlign: "left", borderCollapse: "separate", borderSpacing: 0, color: "#132664", fontSize: 13 }}>
-          <thead style={{ position: "sticky", top: 0, zIndex: 11 }}>
-            <tr style={{ backgroundColor: "#132664", color: "#ffffff" }}>
-              <th style={{ 
-                position: "sticky", top: 0, zIndex: 10,
-                backgroundColor: "#132664", color: "#ffffff",
-                padding: "12px 10px", whiteSpace: "nowrap",
-                borderRight: "1px solid rgba(255, 255, 255, 0.1)",
-                borderBottom: "2.5px solid rgba(19, 38, 100, 0.2)"
-              }}>
-                Review ID
-              </th>
-              <th style={{ padding: "12px 10px", whiteSpace: "nowrap", borderBottom: "2.5px solid rgba(19, 38, 100, 0.2)" }}>Outlet ID</th>
-              <th style={{ padding: "12px 10px", whiteSpace: "nowrap", borderBottom: "2.5px solid rgba(19, 38, 100, 0.2)" }}>Restaurant ID</th>
-              <th style={{ padding: "12px 10px", whiteSpace: "nowrap", borderBottom: "2.5px solid rgba(19, 38, 100, 0.2)" }}>Brand Name</th>
-              <th style={{ padding: "12px 10px", whiteSpace: "nowrap", borderBottom: "2.5px solid rgba(19, 38, 100, 0.2)" }}>Business Entity</th>
-              <th style={{ padding: "12px 10px", whiteSpace: "nowrap", borderBottom: "2.5px solid rgba(19, 38, 100, 0.2)" }}>City</th>
-              <th style={{ padding: "12px 10px", whiteSpace: "nowrap", borderBottom: "2.5px solid rgba(19, 38, 100, 0.2)" }}>Area</th>
-              <th style={{ padding: "12px 10px", whiteSpace: "nowrap", borderBottom: "2.5px solid rgba(19, 38, 100, 0.2)" }}>Zone</th>
-              <th style={{ padding: "12px 10px", whiteSpace: "nowrap", borderBottom: "2.5px solid rgba(19, 38, 100, 0.2)" }}>Order ID</th>
-              <th style={{ padding: "12px 10px", whiteSpace: "nowrap", borderBottom: "2.5px solid rgba(19, 38, 100, 0.2)" }}>Date</th>
-              <th style={{ padding: "12px 10px", whiteSpace: "nowrap", borderBottom: "2.5px solid rgba(19, 38, 100, 0.2)" }}>Ordered Time</th>
-              <th style={{ padding: "12px 10px", whiteSpace: "nowrap", borderBottom: "2.5px solid rgba(19, 38, 100, 0.2)" }}>GMV Total</th>
-              <th style={{ padding: "12px 10px", whiteSpace: "nowrap", borderBottom: "2.5px solid rgba(19, 38, 100, 0.2)" }}>Item Name</th>
-              <th style={{ padding: "12px 10px", borderBottom: "2.5px solid rgba(19, 38, 100, 0.2)" }}>Comments</th>
-              <th style={{ padding: "12px 10px", whiteSpace: "nowrap", borderBottom: "2.5px solid rgba(19, 38, 100, 0.2)" }}>Rating</th>
-              <th style={{ padding: "12px 10px", whiteSpace: "nowrap", borderBottom: "2.5px solid rgba(19, 38, 100, 0.2)" }}>Post Status</th>
-              <th style={{ padding: "12px 10px", whiteSpace: "nowrap", borderBottom: "2.5px solid rgba(19, 38, 100, 0.2)" }}>Updated At</th>
+    <div style={{ ...cardStyle, overflowX: "auto", fontFamily: FONT }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+        <div style={{ fontSize: 15, fontWeight: 800, color: C.primary }}>
+          Comments Insight <span style={{ fontSize: 11, color: C.muted, fontWeight: 600 }}>({reviews.length} reviews)</span>
+        </div>
+        {onClose && (
+          <button onClick={onClose} style={{ border: "none", background: "none", cursor: "pointer", color: C.muted, fontSize: 15 }}>
+            ✕
+          </button>
+        )}
+      </div>
+
+      <div style={{ maxHeight: 600, overflow: "auto", border: `1px solid ${C.border}`, borderRadius: 8 }}>
+        <table style={{ borderCollapse: "collapse", fontSize: 11.5, minWidth: 1800 }}>
+          <thead>
+            <tr>
+              {FIELDS.map(([key, header], i) => (
+                <th
+                  key={key}
+                  style={{
+                    backgroundColor: C.primary,
+                    color: "#ffffff",
+                    padding: "10px 12px",
+                    textAlign: "left",
+                    fontWeight: 800,
+                    whiteSpace: "nowrap",
+                    position: "sticky",
+                    top: 0,
+                    left: i === 0 ? 0 : undefined,
+                    zIndex: i === 0 ? 12 : 10,
+                  }}
+                >
+                  {header}
+                </th>
+              ))}
             </tr>
           </thead>
           <tbody>
-            {paginatedRows.map((row, i) => {
-              const rowBg = i % 2 === 0 ? "#ffffff" : "rgba(19, 38, 100, 0.02)";
-              return (
-                <tr key={i} style={{ backgroundColor: rowBg }}>
-                  <td style={{ 
-                    color: "#132664", fontWeight: "700",
-                    padding: "12px 10px", whiteSpace: "nowrap",
-                    borderRight: "1px solid rgba(19, 38, 100, 0.08)",
-                    borderBottom: "1px solid rgba(19, 38, 100, 0.08)"
-                  }}>
-                    {row.review_id || "-"}
+            {pageRows.map((r, i) => (
+              <tr key={r.review_id || i} style={{ backgroundColor: i % 2 === 0 ? "#ffffff" : C.rowAlt }}>
+                {FIELDS.map(([key], ci) => (
+                  <td
+                    key={key}
+                    style={{
+                      padding: "9px 12px",
+                      borderBottom: `1px solid ${C.borderSoft}`,
+                      color: C.text,
+                      whiteSpace: key === "comments" ? "pre-wrap" : "nowrap",
+                      minWidth: key === "comments" ? 260 : undefined,
+                      position: ci === 0 ? "sticky" : undefined,
+                      left: ci === 0 ? 0 : undefined,
+                      zIndex: ci === 0 ? 9 : undefined,
+                      backgroundColor: ci === 0 ? (i % 2 === 0 ? "#ffffff" : "#f7f8fc") : undefined,
+                      borderRight: ci === 0 ? `2.5px solid rgba(19,38,100,0.2)` : undefined,
+                      fontWeight: ci === 0 ? 800 : 500,
+                    }}
+                  >
+                    {fmt(key, r[key])}
                   </td>
-                  <td style={{ padding: "12px 10px", whiteSpace: "nowrap", borderBottom: "1px solid rgba(19, 38, 100, 0.08)" }}>{row.outlet_id || "-"}</td>
-                  <td style={{ padding: "12px 10px", whiteSpace: "nowrap", borderBottom: "1px solid rgba(19, 38, 100, 0.08)" }}>{row.restaurant_id || "-"}</td>
-                  <td style={{ padding: "12px 10px", whiteSpace: "nowrap", borderBottom: "1px solid rgba(19, 38, 100, 0.08)" }}>{row.brand_name || "-"}</td>
-                  <td style={{ padding: "12px 10px", whiteSpace: "nowrap", borderBottom: "1px solid rgba(19, 38, 100, 0.02)" }}>{row.business_entity || "-"}</td>
-                  <td style={{ padding: "12px 10px", whiteSpace: "nowrap", borderBottom: "1px solid rgba(19, 38, 100, 0.08)" }}>{row.city || "-"}</td>
-                  <td style={{ padding: "12px 10px", whiteSpace: "nowrap", borderBottom: "1px solid rgba(19, 38, 100, 0.08)" }}>{row.area || "-"}</td>
-                  <td style={{ padding: "12px 10px", whiteSpace: "nowrap", borderBottom: "1px solid rgba(19, 38, 100, 0.08)" }}>{row.zone || "-"}</td>
-                  <td style={{ padding: "12px 10px", whiteSpace: "nowrap", borderBottom: "1px solid rgba(19, 38, 100, 0.08)" }}>{row.order_id || "-"}</td>
-                  <td style={{ padding: "12px 10px", whiteSpace: "nowrap", borderBottom: "1px solid rgba(19, 38, 100, 0.08)" }}>{row.date || "-"}</td>
-                  <td style={{ padding: "12px 10px", whiteSpace: "nowrap", borderBottom: "1px solid rgba(19, 38, 100, 0.08)" }}>{row.ordered_time ? new Date(row.ordered_time).toLocaleString() : "-"}</td>
-                  <td style={{ padding: "12px 10px", whiteSpace: "nowrap", borderBottom: "1px solid rgba(19, 38, 100, 0.08)" }}>{row.gmv_total != null ? Number(row.gmv_total).toFixed(2) : "-"}</td>
-                  <td style={{ padding: "12px 10px", whiteSpace: "nowrap", borderBottom: "1px solid rgba(19, 38, 100, 0.08)" }}>{row.item_name || "-"}</td>
-                  <td style={{ padding: "12px 10px", whiteSpace: "pre-wrap", borderBottom: "1px solid rgba(19, 38, 100, 0.08)" }}>{row.comments || "-"}</td>
-                  <td style={{ padding: "12px 10px", fontWeight: "bold", color: "#132664", borderBottom: "1px solid rgba(19, 38, 100, 0.08)" }}>{row.restaurant_rating ? `${row.restaurant_rating}★` : "-"}</td>
-                  <td style={{ padding: "12px 10px", whiteSpace: "nowrap", borderBottom: "1px solid rgba(19, 38, 100, 0.08)" }}>{row.post_status || "-"}</td>
-                  <td style={{ padding: "12px 10px", whiteSpace: "nowrap", borderBottom: "1px solid rgba(19, 38, 100, 0.08)" }}>{row.updated_at ? new Date(row.updated_at).toLocaleString() : "-"}</td>
-                </tr>
-              );
-            })}
+                ))}
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>
 
-      {totalPages > 1 && (
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "16px", fontSize: "12px", fontWeight: "700", color: "#132664" }}>
-          <span>Showing reviews {startIndex + 1}-{endIndex} of {totalRows} entries</span>
-          <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-            <button 
-              onClick={() => setCurrentPage(p => Math.max(p - 1, 1))} 
-              disabled={currentPage === 1}
-              style={{
-                background: "none",
-                border: "1px solid #132664",
-                borderRadius: "6px",
-                padding: "4px 10px",
-                color: "#132664",
-                cursor: currentPage === 1 ? "not-allowed" : "pointer",
-                opacity: currentPage === 1 ? 0.4 : 1,
-                fontWeight: "800"
-              }}
-            >
-              &larr; Prev
-            </button>
-            <span>Page {currentPage} of {totalPages}</span>
-            <button 
-              onClick={() => setCurrentPage(p => Math.min(p + 1, totalPages))} 
-              disabled={currentPage === totalPages}
-              style={{
-                background: "none",
-                border: "1px solid #132664",
-                borderRadius: "6px",
-                padding: "4px 10px",
-                color: "#132664",
-                cursor: currentPage === totalPages ? "not-allowed" : "pointer",
-                opacity: currentPage === totalPages ? 0.4 : 1,
-                fontWeight: "800"
-              }}
-            >
-              Next &rarr;
-            </button>
-          </div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12 }}>
+        <div style={{ fontSize: 11.5, color: C.muted, fontWeight: 600 }}>
+          Showing records {reviews.length ? start + 1 : 0}-{Math.min(start + PAGE_SIZE, reviews.length)} of {reviews.length}
         </div>
-      )}
-    </Card>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <button disabled={page === 1} onClick={() => setPage((p) => p - 1)} style={pager(page === 1)}>
+            Prev
+          </button>
+          <span style={{ fontSize: 11.5, fontWeight: 700, color: C.muted }}>
+            {page} / {totalPages}
+          </span>
+          <button disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)} style={pager(page >= totalPages)}>
+            Next
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
+
+const pager = (disabled) => ({
+  padding: "6px 14px",
+  borderRadius: 8,
+  border: `1.5px solid ${C.primary}`,
+  backgroundColor: "#ffffff",
+  color: C.primary,
+  fontSize: 11.5,
+  fontWeight: 700,
+  cursor: disabled ? "not-allowed" : "pointer",
+  opacity: disabled ? 0.4 : 1,
+  fontFamily: FONT,
+});

@@ -1,73 +1,79 @@
-import React, { useEffect } from "react";
-
-const C = { text: "#132664", bg: "#ffffff", border: "rgba(19, 38, 100, 0.15)" };
-
-function Card({ children, style }) {
-  return (
-    <div style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 12, padding: 20, color: C.text, boxShadow: "0 2px 8px rgba(19, 38, 100, 0.03)", ...style }}>
-      {children}
-    </div>
-  );
-}
+import { C, cardStyle, FONT } from "../../../theme";
+import { useEffect } from "react";
 
 export default function TextAIInsight({ title, textContent, onClose, onRegisterDownload }) {
-  useEffect(() => {
-    if (onRegisterDownload) {
-      const getDownloadDataSheets = () => {
-        return [{
-          sheetName: "AI Summary",
-          rows: [{ "AI Operations Report": textContent }]
-        }];
-      };
-      onRegisterDownload(getDownloadDataSheets);
-    }
-    return () => {
-      if (onRegisterDownload) onRegisterDownload(null);
-    };
-  }, [textContent, onRegisterDownload]);
+  const text = String(textContent || "");
 
-  const renderLines = () => {
-    if (typeof textContent !== "string") return null;
-    return textContent.split("\n").map((line, idx) => {
-      if (line.trim().startsWith("-") || line.trim().startsWith("*")) {
-        return (
-          <li key={idx} style={{ marginBottom: "8px", lineHeight: "1.6" }}>
-            {line.trim().substring(1).trim()}
-          </li>
-        );
-      }
-      return (
-        <p key={idx} style={{ margin: "0 0 10px 0", lineHeight: "1.6", fontWeight: line.includes(":") ? "700" : "500" }}>
-          {line}
-        </p>
-      );
-    });
-  };
+  useEffect(() => {
+    if (!onRegisterDownload) return;
+    onRegisterDownload(() => [
+      {
+        sheetName: "AI Summary",
+        rows: text
+          .split("\n")
+          .filter(Boolean)
+          .map((line) => ({ "AI Operations Report": line })),
+      },
+    ]);
+  }, [text, onRegisterDownload]);
 
   return (
-    <Card style={{ padding: "24px" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "2px solid rgba(19, 38, 100, 0.15)", paddingBottom: "12px", marginBottom: "16px" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-          <span style={{ fontSize: "16px" }}>✨</span>
-          <h3 style={{ fontSize: "15px", fontWeight: "800", margin: 0, color: "#132664" }}>{title}</h3>
+    <div style={{ ...cardStyle, padding: 24, fontFamily: FONT }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 10,
+          paddingBottom: 12,
+          borderBottom: `2px solid ${C.border}`,
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: 15 }}>✨</span>
+          <span style={{ fontSize: 15, fontWeight: 800, color: C.primary }}>{title}</span>
         </div>
         {onClose && (
-          <button onClick={onClose} style={{ background: "none", border: "none", color: "#132664", fontSize: "18px", cursor: "pointer", fontWeight: "bold" }}>✕</button>
+          <button onClick={onClose} style={{ border: "none", background: "none", cursor: "pointer", color: C.muted, fontSize: 15 }}>
+            ✕
+          </button>
         )}
       </div>
-
-      <div style={{ 
-        backgroundColor: "rgba(19, 38, 100, 0.02)", 
-        border: "1px solid rgba(19, 38, 100, 0.08)", 
-        borderRadius: "8px", 
-        padding: "20px", 
-        fontSize: "13px", 
-        color: "#132664",
-        overflowY: "auto",
-        maxHeight: "400px"
-      }}>
-        {renderLines()}
+      <div
+        style={{
+          marginTop: 16,
+          backgroundColor: "rgba(19,38,100,0.02)",
+          border: "1px solid rgba(19,38,100,0.08)",
+          borderRadius: 8,
+          padding: 20,
+          maxHeight: 400,
+          overflowY: "auto",
+          fontSize: 13,
+          color: C.text,
+        }}
+      >
+        {text.split("\n").map((line, i) => {
+          const trimmed = line.trim();
+          if (!trimmed) return null;
+          if (/^[-*]/.test(trimmed))
+            return (
+              <p key={i} style={{ marginBottom: 8, lineHeight: 1.6, margin: "0 0 8px 0", paddingLeft: 4 }}>
+                {trimmed}
+              </p>
+            );
+          if (trimmed.includes(":"))
+            return (
+              <p key={i} style={{ fontWeight: 700, margin: "0 0 10px 0", lineHeight: 1.6 }}>
+                {trimmed}
+              </p>
+            );
+          return (
+            <p key={i} style={{ fontWeight: 500, margin: "0 0 10px 0", lineHeight: 1.6 }}>
+              {trimmed}
+            </p>
+          );
+        })}
       </div>
-    </Card>
+    </div>
   );
 }

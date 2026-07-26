@@ -18,3 +18,4 @@ dropped_rows_report.json
 
 # Mac OS generated files
 .DS_Store
+.gstack/

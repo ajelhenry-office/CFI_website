@@ -1,347 +1,132 @@
-import React from "react";
-import DefaultDashboard from "./insights/DefaultDashboard";
+import InsightSummaryPanel from "./insights/InsightSummaryPanel";
+import GenericTableInsight from "./insights/GenericTableInsight";
 import BrandDashboard from "./insights/BrandDashboard";
 import LocationMatrixAndSummary from "./insights/LocationMatrixAndSummary";
 import CommentsInsight from "./insights/CommentsInsight";
-import GenericTableInsight from "./insights/GenericTableInsight";
 import TextAIInsight from "./insights/TextAIInsight";
 
-export { DownloadDialog } from "./insights/DownloadDialog";
+// Column keys MUST match the exact field names the backend returns
+// (server/ratings/insights.routes.js). The backend uses { name, avg, count }
+// for grouped "overall" results, plus insight-specific camelCase keys.
+const COLS = {
+  6: [{ header: "Item Name", key: "name", bold: true }, { header: "Average Rating", key: "avg" }, { header: "Total Reviews", key: "count" }],
+  7: [{ header: "Item Name", key: "name", bold: true }, { header: "Average Rating", key: "avg" }, { header: "Total Reviews", key: "count" }],
+  8: [{ header: "Item Name", key: "name", bold: true }, { header: "Total Reviews", key: "count" }, { header: "Average Rating", key: "avg" }],
+  10: [{ header: "Kitchen Area", key: "name", bold: true }, { header: "Average Rating", key: "avg" }, { header: "Total Reviews", key: "count" }],
+  9: [{ header: "Product Category", key: "name", bold: true }, { header: "Average Rating", key: "avg" }, { header: "Total Reviews", key: "count" }],
+  11: [{ header: "Star Rating", key: "name", bold: true }, { header: "Count of Reviews", key: "count" }, { header: "Percentage", key: "pct", render: (v) => `${v}%` }],
+  12: [{ header: "Month", key: "name", bold: true }, { header: "Average Rating", key: "avg" }],
+  14: [{ header: "Day Category", key: "name", bold: true }, { header: "Average Rating", key: "avg" }, { header: "Total Reviews", key: "count" }],
+  15: [{ header: "Hour of Day", key: "name", bold: true }, { header: "Complaint Count (≤2★)", key: "count" }, { header: "Peak Status", key: "worst", render: (v) => (v ? "🔴 Peak" : "Normal") }],
+  23: [{ header: "Daypart Slot", key: "name", bold: true }, { header: "Average Rating", key: "avg" }, { header: "Total Reviews", key: "count" }],
+  26: [{ header: "City", key: "city", bold: true }, { header: "Best Brand", key: "bestBrand" }, { header: "Best Avg", key: "bestAvg" }, { header: "Worst Brand", key: "worstBrand" }, { header: "Worst Avg", key: "worstAvg" }],
+  27: [{ header: "Outlet ID", key: "outletId", bold: true }, { header: "Area", key: "area" }, { header: "Brand", key: "brand" }, { header: "Outlet Avg", key: "outletAvg" }, { header: "Kitchen Avg", key: "kitchenAvg" }, { header: "Rating Gap", key: "gap" }, { header: "Status", key: "status" }],
+  28: [{ header: "Outlet ID", key: "outletId", bold: true }, { header: "Outlet Name (Area)", key: "name" }, { header: "Best Item", key: "bestItem" }, { header: "Item Rating", key: "rating" }, { header: "Reviews Count", key: "count" }],
+  29: [{ header: "Item Name", key: "name", bold: true }, { header: "Average Rating", key: "avg" }, { header: "Reviews Count", key: "count" }, { header: "Std Dev (Variance)", key: "stddev" }, { header: "Consistency", key: "status" }],
+  30: [{ header: "Item Name", key: "item", bold: true }, { header: "City", key: "city" }, { header: "Average Rating", key: "avg" }, { header: "Reviews Count", key: "count" }],
+  31: [{ header: "Item Name", key: "item", bold: true }, { header: "Month", key: "month" }, { header: "Average Rating", key: "avg" }, { header: "Reviews Count", key: "count" }],
+  32: [{ header: "Item Name", key: "name", bold: true }, { header: "Item Average", key: "avg" }, { header: "Company Average", key: "companyAvg" }, { header: "Rating Gap", key: "gap" }, { header: "Performance Status", key: "status" }],
+  17: [{ header: "Fault Responsibility", key: "cause", bold: true }, { header: "Classified Complaints", key: "count" }, { header: "Percentage", key: "percentage", render: (v) => `${v}%` }],
+};
 
-export default function InsightResult({ insightId, data, onClose, allBrands, masterData, onRegisterDownload }) {
-  if (!data) return null;
+// Breakdown tables have a different row shape than the "overall" table — keys
+// must match the per-dimension objects the backend emits in data.breakdown.
+const BREAKDOWN_METRICS = {
+  6: [{ header: "Top Rated Item", key: "topItem" }, { header: "Avg Rating", key: "topAvg" }, { header: "Reviews", key: "topCount" }],
+  7: [{ header: "Worst Rated Item", key: "worstItem" }, { header: "Avg Rating", key: "worstAvg" }, { header: "Reviews", key: "worstCount" }],
+  8: [{ header: "Best Selling Item", key: "topItem" }, { header: "Total Orders", key: "topCount" }, { header: "Avg Rating", key: "topAvg" }],
+  9: [{ header: "Average Rating", key: "avg" }, { header: "Total Reviews", key: "count" }],
+  10: [{ header: "Average Rating", key: "avg" }, { header: "Total Reviews", key: "count" }],
+  11: [{ header: "Weighted Avg", key: "weightedAvg" }, { header: "Promoter %", key: "promoterPct", render: (v) => `${v}%` }, { header: "Detractor %", key: "detractorPct", render: (v) => `${v}%` }, { header: "Total", key: "total" }],
+  12: [{ header: "Avg Rating", key: "avgRating" }, { header: "Trend", key: "trend" }, { header: "Best Month", key: "bestMonth" }, { header: "Worst Month", key: "worstMonth" }],
+  14: [{ header: "Weekday Avg", key: "weekdayAvg" }, { header: "Weekday Reviews", key: "weekdayCount" }, { header: "Weekend Avg", key: "weekendAvg" }, { header: "Weekend Reviews", key: "weekendCount" }, { header: "Delta", key: "delta" }],
+  15: [{ header: "Total Complaints", key: "totalComplaints" }, { header: "Peak Hour", key: "peakHour" }, { header: "Peak Count", key: "peakCount" }],
+  23: [{ header: "Overall Avg", key: "overallAvg" }, { header: "Best Daypart", key: "bestDaypart" }, { header: "Best Avg", key: "bestAvg" }, { header: "Worst Daypart", key: "worstDaypart" }, { header: "Worst Avg", key: "worstAvg" }],
+};
 
-  // ── 0. Default Dashboard View (Landing page) ──────────────────
-  if (insightId === null) {
-    return <DefaultDashboard data={data} onClose={onClose} allBrands={allBrands} masterData={masterData} onRegisterDownload={onRegisterDownload} />;
-  }
+const BREAKDOWN_IDS = [6, 7, 8, 9, 10, 11, 12, 14, 15, 23];
 
-  // ── 1. Brand Level Rating (Comparison) ────────────────────────
-  if (insightId === 1) {
-    return <BrandDashboard reviews={data} onClose={onClose} allBrands={allBrands} masterData={masterData} onRegisterDownload={onRegisterDownload} />;
-  }
+export default function InsightResult({ insightId, label, data, reviews, allBrands, masterData, filters, onClose, onRegisterDownload }) {
+  if (insightId === 21) return <CommentsInsight reviews={Array.isArray(data) ? data : []} onClose={onClose} onRegisterDownload={onRegisterDownload} />;
 
-  // ── 2. Zone Level Rating (Matrix Comparison) ─────────────────
-  if (insightId === 2) {
-    return <LocationMatrixAndSummary reviews={data} locationKey="zone" locationTitle="Zone" onClose={onClose} allBrands={allBrands} masterData={masterData} onRegisterDownload={onRegisterDownload} />;
-  }
+  if ([16, 18, 19, 20].includes(insightId))
+    return <TextAIInsight title={label} textContent={data?.text || data} onClose={onClose} onRegisterDownload={onRegisterDownload} />;
 
-  // ── 3. City Level Rating (Matrix Comparison) ─────────────────
-  if (insightId === 3) {
-    return <LocationMatrixAndSummary reviews={data} locationKey="city" locationTitle="City" onClose={onClose} allBrands={allBrands} masterData={masterData} onRegisterDownload={onRegisterDownload} />;
-  }
-
-  // ── 4. Area Level Rating (Matrix Comparison) ─────────────────
-  if (insightId === 4) {
-    return <LocationMatrixAndSummary reviews={data} locationKey="area" locationTitle="Area" onClose={onClose} allBrands={allBrands} masterData={masterData} onRegisterDownload={onRegisterDownload} />;
-  }
-
-  // ── 21. Raw Reviews Data / Comments Insight ───────────────────
-  if (insightId === 21) {
-    return <CommentsInsight reviews={data} onClose={onClose} onRegisterDownload={onRegisterDownload} />;
-  }
-
-  // ── TIME INSIGHTS ─────────────────────────────────────────────
-  if (insightId === 14) {
+  if ([1, 2, 3, 4].includes(insightId)) {
+    const keyMap = { 2: ["zone", "Zone"], 3: ["city", "City"], 4: ["area", "Area"] };
     return (
-      <GenericTableInsight 
-        title="Weekend vs Weekday Ratings" 
-        columns={[
-          { header: "Day Category", key: "name", bold: true },
-          { header: "Average Rating", key: "avg", render: v => `${v}★` },
-          { header: "Total Reviews", key: "count" }
-        ]}
-        data={data}
-        onClose={onClose}
-        searchField=""
-        onRegisterDownload={onRegisterDownload}
-      />
+      <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+        <InsightSummaryPanel insightId={insightId} data={data} filters={filters} />
+        {insightId === 1 ? (
+          <BrandDashboard reviews={reviews} allBrands={allBrands} masterData={masterData} onClose={onClose} onRegisterDownload={onRegisterDownload} />
+        ) : (
+          <LocationMatrixAndSummary
+            reviews={reviews}
+            locationKey={keyMap[insightId][0]}
+            locationTitle={keyMap[insightId][1]}
+            masterData={masterData}
+            onClose={onClose}
+            onRegisterDownload={onRegisterDownload}
+          />
+        )}
+      </div>
     );
   }
 
-  if (insightId === 15) {
+  // Insight 17 returns a plain object { delivery, kitchen, packaging, other },
+  // not an array — reshape it into rows the generic table can render.
+  if (insightId === 17 && data && !Array.isArray(data)) {
+    const total = Object.values(data).reduce((a, b) => a + (Number(b) || 0), 0) || 1;
+    const rows17 = Object.entries(data).map(([cause, count]) => ({
+      cause: cause.charAt(0).toUpperCase() + cause.slice(1),
+      count: Number(count) || 0,
+      percentage: +(((Number(count) || 0) / total) * 100).toFixed(1),
+    }));
     return (
-      <GenericTableInsight 
-        title="Peak Complaint Hours (Volume-wise)" 
-        columns={[
-          { header: "Hour of Day", key: "name", bold: true },
-          { header: "Complaint Count (ratings <= 2★)", key: "count" },
-          { header: "Peak Status", key: "worst", render: v => v ? "🔴 PEAK COMPLAINT HOUR" : "Normal" }
-        ]}
-        data={data}
-        onClose={onClose}
-        searchField="name"
-        onRegisterDownload={onRegisterDownload}
-      />
+      <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+        <GenericTableInsight
+          title={label}
+          data={rows17}
+          columns={COLS[17]}
+          searchField="cause"
+          onClose={onClose}
+          onRegisterDownload={onRegisterDownload}
+          sheetName={label}
+        />
+      </div>
     );
   }
 
-  if (insightId === 23) {
-    return (
-      <GenericTableInsight 
-        title="Hourly Daypart Split" 
-        columns={[
-          { header: "Daypart Slot", key: "name", bold: true },
-          { header: "Average Rating", key: "avg", render: v => `${v}★` },
-          { header: "Total Reviews", key: "count" }
-        ]}
-        data={data}
-        onClose={onClose}
-        searchField=""
-        onRegisterDownload={onRegisterDownload}
-      />
-    );
-  }
+  const hasBreakdown =
+    BREAKDOWN_IDS.includes(insightId) && data && !Array.isArray(data) && Array.isArray(data.breakdown) && data.breakdown.length > 0;
+  const rows = hasBreakdown ? data.breakdown : Array.isArray(data) ? data : data?.overall || [];
+  const dims = hasBreakdown ? data.breakdownDims || [] : [];
+  const dimCols = dims.map((d, i) => ({ header: d.label, key: d.field, bold: i === 0 }));
+  const baseCols = (hasBreakdown ? BREAKDOWN_METRICS[insightId] : null) || COLS[insightId] || [
+    { header: "Label", key: "name", bold: true },
+    { header: "Average Rating", key: "avg" },
+    { header: "Total Reviews", key: "count" },
+  ];
+  const columns = [...dimCols, ...baseCols];
+  const suffix = dims.length ? ` — by ${dims.map((d) => d.label).join(" > ")}` : "";
 
-  if (insightId === 12) {
-    return (
-      <GenericTableInsight 
-        title="Monthly Trends Comparison" 
-        columns={[
-          { header: "Month", key: "name", bold: true },
-          { header: "Average Rating", key: "avg", render: v => `${v}★` }
-        ]}
-        data={data}
-        onClose={onClose}
-        searchField=""
-        onRegisterDownload={onRegisterDownload}
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      <InsightSummaryPanel
+        insightId={insightId}
+        data={Array.isArray(data) ? data : data?.overall || rows}
+        filters={filters}
+        breakdown={hasBreakdown ? { rows, dims } : null}
       />
-    );
-  }
-
-  // ── LOCATION INSIGHTS ─────────────────────────────────────────
-  if (insightId === 26) {
-    return (
-      <GenericTableInsight 
-        title="Best & Worst Brand per City" 
-        columns={[
-          { header: "City", key: "city", bold: true },
-          { header: "Best Brand", key: "bestBrand" },
-          { header: "Best Avg", key: "bestAvg", render: v => `${v}★` },
-          { header: "Worst Brand", key: "worstBrand" },
-          { header: "Worst Avg", key: "worstAvg", render: v => `${v}★` }
-        ]}
-        data={data}
-        onClose={onClose}
-        searchField="city"
-        onRegisterDownload={onRegisterDownload}
-      />
-    );
-  }
-
-  if (insightId === 27) {
-    return (
-      <GenericTableInsight 
-        title="Outlet vs Kitchen Average Gap" 
-        columns={[
-          { header: "Outlet ID", key: "outletId", bold: true },
-          { header: "Area", key: "area" },
-          { header: "Brand", key: "brand" },
-          { header: "Outlet Avg", key: "outletAvg", render: v => `${v}★` },
-          { header: "Kitchen Avg", key: "kitchenAvg", render: v => `${v}★` },
-          { header: "Rating Gap", key: "gap", render: v => v > 0 ? `+${v}★` : `${v}★` },
-          { header: "Status", key: "status" }
-        ]}
-        data={data}
-        onClose={onClose}
-        searchField="area"
-        onRegisterDownload={onRegisterDownload}
-      />
-    );
-  }
-
-  if (insightId === 28) {
-    return (
-      <GenericTableInsight 
-        title="Best Item per Outlet" 
-        columns={[
-          { header: "Outlet ID", key: "outletId", bold: true },
-          { header: "Outlet Name (Area)", key: "name" },
-          { header: "Best Item", key: "bestItem" },
-          { header: "Item Rating", key: "rating", render: v => `${v}★` },
-          { header: "Reviews Count", key: "count" }
-        ]}
-        data={data}
-        onClose={onClose}
-        searchField="name"
-        onRegisterDownload={onRegisterDownload}
-      />
-    );
-  }
-
-  // ── SKU INSIGHTS ──────────────────────────────────────────────
-  if (insightId === 6 || insightId === 7 || insightId === 8 || insightId === 10) {
-    const titleMap = {
-      6: "SKU Leaderboard - Top Rated",
-      7: "SKU Leaderboard - Worst Rated (Kill List)",
-      8: "High Volume SKUs",
-      10: "High Volume, Low Rating Areas"
-    };
-    return (
-      <GenericTableInsight 
-        title={titleMap[insightId]} 
-        columns={[
-          { header: insightId === 10 ? "Kitchen Area" : "Item Name", key: "name", bold: true },
-          { header: "Average Rating", key: "avg", render: v => `${v}★` },
-          { header: "Total Reviews", key: "count" }
-        ]}
-        data={data}
-        onClose={onClose}
-        searchField="name"
-        onRegisterDownload={onRegisterDownload}
-      />
-    );
-  }
-
-  if (insightId === 29) {
-    return (
-      <GenericTableInsight 
-        title="SKU Consistency (Variance Analysis)" 
-        columns={[
-          { header: "Item Name", key: "name", bold: true },
-          { header: "Average Rating", key: "avg", render: v => `${v}★` },
-          { header: "Reviews Count", key: "count" },
-          { header: "Std Dev (Variance)", key: "stddev" },
-          { header: "Consistency", key: "status" }
-        ]}
-        data={data}
-        onClose={onClose}
-        searchField="name"
-        onRegisterDownload={onRegisterDownload}
-      />
-    );
-  }
-
-  // ── PERFORMANCE INSIGHTS ──────────────────────────────────────
-  if (insightId === 9) {
-    return (
-      <GenericTableInsight 
-        title="Category Ratings Overview" 
-        columns={[
-          { header: "Product Category", key: "name", bold: true },
-          { header: "Average Rating", key: "avg", render: v => `${v}★` },
-          { header: "Total Reviews", key: "count" }
-        ]}
-        data={data}
-        onClose={onClose}
-        searchField="name"
-        onRegisterDownload={onRegisterDownload}
-      />
-    );
-  }
-
-  if (insightId === 11) {
-    return (
-      <GenericTableInsight 
-        title="Rating Star Distribution" 
-        columns={[
-          { header: "Star Rating", key: "name", bold: true },
-          { header: "Count of Reviews", key: "count" },
-          { header: "Percentage", key: "pct", render: v => `${v}%` }
-        ]}
-        data={data}
-        onClose={onClose}
-        searchField=""
-        onRegisterDownload={onRegisterDownload}
-      />
-    );
-  }
-
-  if (insightId === 17) {
-    const blameData = [
-      { name: "Kitchen Fault", count: data.kitchen, pct: Math.round(data.kitchen / (data.kitchen + data.delivery + data.packaging + data.other || 1) * 100) },
-      { name: "Delivery Fault", count: data.delivery, pct: Math.round(data.delivery / (data.kitchen + data.delivery + data.packaging + data.other || 1) * 100) },
-      { name: "Packaging Fault", count: data.packaging, pct: Math.round(data.packaging / (data.kitchen + data.delivery + data.packaging + data.other || 1) * 100) },
-      { name: "Other / Unclear", count: data.other, pct: Math.round(data.other / (data.kitchen + data.delivery + data.packaging + data.other || 1) * 100) }
-    ];
-    return (
-      <GenericTableInsight 
-        title="AI Department Blame Split" 
-        columns={[
-          { header: "Fault Responsibility", key: "name", bold: true },
-          { header: "Classified Complaints Count", key: "count" },
-          { header: "Percentage", key: "pct", render: v => `${v}%` }
-        ]}
-        data={blameData}
-        onClose={onClose}
-        searchField=""
-        onRegisterDownload={onRegisterDownload}
-      />
-    );
-  }
-
-  if (insightId === 16 || insightId === 18 || insightId === 19 || insightId === 20) {
-    const aiTitles = {
-      16: "AI Repeat Complaint Finder",
-      18: "AI Weekly Operations Brief",
-      19: "AI Action Items Generator",
-      20: "AI Packaging Issues Tracker"
-    };
-    return (
-      <TextAIInsight 
-        title={aiTitles[insightId]} 
-        textContent={data} 
+      <GenericTableInsight
+        title={`${label}${suffix}`}
+        data={rows}
+        columns={columns}
+        searchField={columns[0]?.key}
         onClose={onClose}
         onRegisterDownload={onRegisterDownload}
+        sheetName={label}
       />
-    );
-  }
-
-  // ── ITEM-WISE INSIGHTS ────────────────────────────────────────
-  if (insightId === 30) {
-    return (
-      <GenericTableInsight 
-        title="Item Rating by City" 
-        columns={[
-          { header: "Item Name", key: "item", bold: true },
-          { header: "City", key: "city" },
-          { header: "Average Rating", key: "avg", render: v => `${v}★` },
-          { header: "Reviews Count", key: "count" }
-        ]}
-        data={data}
-        onClose={onClose}
-        searchField="item"
-        onRegisterDownload={onRegisterDownload}
-      />
-    );
-  }
-
-  if (insightId === 31) {
-    return (
-      <GenericTableInsight 
-        title="Item Trend Over Time" 
-        columns={[
-          { header: "Item Name", key: "item", bold: true },
-          { header: "Month", key: "month" },
-          { header: "Average Rating", key: "avg", render: v => `${v}★` },
-          { header: "Reviews Count", key: "count" }
-        ]}
-        data={data}
-        onClose={onClose}
-        searchField="item"
-        onRegisterDownload={onRegisterDownload}
-      />
-    );
-  }
-
-  if (insightId === 32) {
-    return (
-      <GenericTableInsight 
-        title="Item vs Company Average Gap" 
-        columns={[
-          { header: "Item Name", key: "name", bold: true },
-          { header: "Item Average", key: "avg", render: v => `${v}★` },
-          { header: "Company Average", key: "companyAvg", render: v => `${v}★` },
-          { header: "Rating Gap", key: "gap", render: v => v > 0 ? `+${v}★` : `${v}★` },
-          { header: "Performance Status", key: "status" }
-        ]}
-        data={data}
-        onClose={onClose}
-        searchField="name"
-        onRegisterDownload={onRegisterDownload}
-      />
-    );
-  }
-
-  return null;
+    </div>
+  );
 }

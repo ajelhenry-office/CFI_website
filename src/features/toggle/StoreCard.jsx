@@ -1,142 +1,88 @@
-import React, { useState } from "react";
+import { useState } from "react";
+import { C, FONT } from "../../theme";
+
+const BRAND_COLOR = {
+  "Cake Zone": "#d97706",
+  "Ovenfresh": "#132664",
+  "EatFit": "#15803d",
+};
 
 export default function StoreCard({ store, onToggle, isBulking }) {
   const [loading, setLoading] = useState(false);
-  const [isHovered, setIsHovered] = useState(false);
+  const [hovered, setHovered] = useState(false);
   const isOnline = store.status === "online";
+  const busy = loading || isBulking;
 
-  const handleToggleClick = async () => {
-    if (loading || isBulking) return;
+  const handleClick = async () => {
+    if (busy) return;
     setLoading(true);
-    await onToggle(store);
+    await onToggle(store, isOnline ? "disable" : "enable");
     setLoading(false);
   };
 
-  const styles = {
-    card: {
-      backgroundColor: "#ffffff",
-      border: "1px solid rgba(19, 38, 100, 0.08)",
-      borderRadius: "12px",
-      overflow: "hidden",
-      display: "flex",
-      flexDirection: "column",
-      position: "relative",
-      opacity: (loading || isBulking) ? 0.7 : 1,
-      transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
-      boxShadow: isHovered ? '0 8px 24px rgba(19, 38, 100, 0.12)' : '0 2px 8px rgba(19, 38, 100, 0.04)',
-      transform: isHovered ? 'translateY(-2px)' : 'none'
-    },
-    brandBar: {
-      height: "4px",
-      width: "100%",
-      backgroundColor: isOnline ? "#22c55e" : "#ef4444",
-      transition: "background-color 0.3s"
-    },
-    content: {
-      padding: "16px",
-      display: "flex",
-      flexDirection: "column",
-      gap: "12px"
-    },
-    topRow: {
-      display: "flex",
-      justifyContent: "space-between",
-      alignItems: "flex-start"
-    },
-    info: {
-      display: "flex",
-      flexDirection: "column",
-      gap: "2px"
-    },
-    name: {
-      fontSize: "14px",
-      fontWeight: "700",
-      color: "#132664"
-    },
-    brand: {
-      fontSize: "11px",
-      fontWeight: "600",
-      color: "#64748b",
-      textTransform: "uppercase",
-      letterSpacing: "0.5px"
-    },
-    bottomRow: {
-      display: "flex",
-      justifyContent: "space-between",
-      alignItems: "center",
-      marginTop: "4px"
-    },
-    locationId: {
-      fontSize: "11px",
-      color: "#94a3b8",
-      fontWeight: "600"
-    },
-    badge: {
-      display: "flex",
-      alignItems: "center",
-      gap: "6px",
-      fontSize: "10px",
-      fontWeight: "700",
-      color: isOnline ? "#22c55e" : "#ef4444",
-      textTransform: "uppercase",
-      backgroundColor: isOnline ? "rgba(34, 197, 94, 0.1)" : "rgba(239, 68, 68, 0.1)",
-      padding: "4px 8px",
-      borderRadius: "12px"
-    },
-    dot: {
-      width: "6px",
-      height: "6px",
-      borderRadius: "50%",
-      backgroundColor: isOnline ? "#22c55e" : "#ef4444"
-    },
-    // Toggle Styles
-    toggleTrack: {
-      width: "36px",
-      height: "20px",
-      backgroundColor: isOnline ? "#22c55e" : "#cbd5e1",
-      border: "none",
-      borderRadius: "10px",
-      position: "relative",
-      cursor: (loading || isBulking) ? "not-allowed" : "pointer",
-      transition: "background-color 0.2s"
-    },
-    toggleThumb: {
-      position: "absolute",
-      top: "2px",
-      left: isOnline ? "18px" : "2px",
-      width: "16px",
-      height: "16px",
-      backgroundColor: "#ffffff",
-      borderRadius: "50%",
-      transition: "left 0.2s, background-color 0.2s",
-      boxShadow: "0 1px 3px rgba(0,0,0,0.15)"
-    }
-  };
+  const brandColor = BRAND_COLOR[store.brand] || C.primary;
 
   return (
-    <div 
-      style={styles.card}
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
+    <div
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        backgroundColor: "#ffffff",
+        border: `1px solid ${C.border}`,
+        borderRadius: 12,
+        overflow: "hidden",
+        display: "flex",
+        flexDirection: "column",
+        opacity: busy ? 0.7 : 1,
+        transition: "all 0.25s cubic-bezier(0.4, 0, 0.2, 1)",
+        boxShadow: hovered ? "0 8px 24px rgba(19,38,100,0.12)" : "0 2px 8px rgba(19,38,100,0.04)",
+        transform: hovered ? "translateY(-2px)" : "none",
+        fontFamily: FONT,
+      }}
     >
-      <div style={styles.brandBar}></div>
-      <div style={styles.content}>
-        <div style={styles.topRow}>
-          <div style={styles.info}>
-            <div style={styles.name}>{store.name}</div>
-            <div style={styles.brand}>{store.brand}</div>
-          </div>
-          <div style={styles.toggleTrack} onClick={handleToggleClick}>
-            <div style={styles.toggleThumb}></div>
-          </div>
+      {/* Status bar */}
+      <div style={{ height: 4, backgroundColor: isOnline ? "#22c55e" : "#ef4444", transition: "background-color 0.3s" }} />
+
+      <div style={{ padding: "14px 16px", display: "flex", flexDirection: "column", gap: 10, flex: 1 }}>
+        {/* Brand badge + status */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+          <span style={{ fontSize: 10, fontWeight: 800, color: brandColor, textTransform: "uppercase", letterSpacing: 0.8, backgroundColor: `${brandColor}12`, borderRadius: 6, padding: "3px 7px" }}>
+            {store.brand}
+          </span>
+          <span style={{ fontSize: 10, fontWeight: 800, color: isOnline ? "#15803d" : "#dc2626", border: `1px solid ${isOnline ? "#15803d" : "#dc2626"}33`, borderRadius: 20, padding: "3px 9px" }}>
+            {isOnline ? "ONLINE" : "OFFLINE"}
+          </span>
         </div>
-        <div style={styles.bottomRow}>
-          <div style={styles.locationId}>ID: {store.location_id}</div>
-          <div style={styles.badge}>
-            <div style={styles.dot}></div>
-            {loading ? "UPDATING..." : isOnline ? "ONLINE" : "OFFLINE"}
+
+        {/* Store name */}
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 800, color: C.primary, lineHeight: 1.3 }}>{store.name}</div>
+          <div style={{ fontSize: 11, color: C.muted, marginTop: 3 }}>
+            {[store.city, store.zone].filter(Boolean).join(" · ")}
           </div>
+          <div style={{ fontSize: 10, color: C.muted, marginTop: 2, fontFamily: "monospace" }}>{store.location_id}</div>
         </div>
+
+        {/* Toggle button */}
+        <button
+          onClick={handleClick}
+          disabled={busy}
+          style={{
+            marginTop: "auto",
+            padding: "8px 0",
+            borderRadius: 8,
+            border: "none",
+            fontSize: 12,
+            fontWeight: 800,
+            cursor: busy ? "not-allowed" : "pointer",
+            fontFamily: FONT,
+            transition: "all 0.2s",
+            backgroundColor: isOnline ? "#fee2e2" : "#dcfce7",
+            color: isOnline ? "#b91c1c" : "#15803d",
+          }}
+        >
+          {loading ? "Working…" : isOnline ? "Disable" : "Enable"}
+        </button>
       </div>
     </div>
   );

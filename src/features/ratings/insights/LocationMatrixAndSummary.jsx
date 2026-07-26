@@ -1,536 +1,243 @@
-import React, { useState, useEffect } from "react";
+import { useEffect, useMemo } from "react";
+import { C, cardStyle } from "../../../theme";
 
-const C = { text: "#132664", bg: "#ffffff", border: "rgba(19, 38, 100, 0.15)" };
+const ZONE_ORDER = { North: 1, South: 2, East: 3, West: 4 };
 
-function Card({ children, style }) {
-  return (
-    <div style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 12, padding: 20, color: C.text, boxShadow: "0 2px 8px rgba(19, 38, 100, 0.03)", ...style }}>
-      {children}
-    </div>
-  );
-}
-
-const getCellBgColor = (rating) => {
-  if (rating === null || rating === "-") return "transparent";
-  const numRating = Number(rating);
-  if (isNaN(numRating)) return "transparent";
-  if (numRating >= 4.0) return "#132664"; // Good
-  if (numRating >= 3.0) return "rgba(19, 38, 100, 0.45)"; // Average
-  return "rgba(19, 38, 100, 0.12)"; // Poor
+const cellStyle = (avg) => {
+  if (avg === null || avg === undefined) return { backgroundColor: "transparent", color: C.primary };
+  if (avg >= 4) return { backgroundColor: "#132664", color: "#ffffff" };
+  if (avg >= 3) return { backgroundColor: "rgba(19, 38, 100, 0.45)", color: C.primary };
+  return { backgroundColor: "rgba(19, 38, 100, 0.12)", color: C.primary };
 };
 
-const getCellTextColor = (rating) => {
-  if (rating === null || rating === "-") return "rgba(19, 38, 100, 0.3)";
-  const numRating = Number(rating);
-  if (isNaN(numRating)) return "rgba(19, 38, 100, 0.3)";
-  if (numRating >= 4.0) return "#ffffff";
-  return "#132664";
-};
+export default function LocationMatrixAndSummary({
+  reviews = [],
+  locationKey,
+  locationTitle,
+  onClose,
+  masterData = [],
+  onRegisterDownload,
+}) {
+  const { locations, matrix, summary } = useMemo(() => {
+    const orders = new Map();
+    reviews.forEach((r) => {
+      const loc = r[locationKey];
+      const key = `${r.order_id}::${loc}::${r.brand_name}`;
+      if (!orders.has(key)) orders.set(key, { loc, brand: r.brand_name, ratings: [], hasComment: false });
+      const g = orders.get(key);
+      if (r.restaurant_rating) g.ratings.push(Number(r.restaurant_rating));
+      if (r.comments) g.hasComment = true;
+    });
 
-export default function LocationMatrixAndSummary({ reviews, locationKey, locationTitle, onClose, allBrands = [], masterData = [], onRegisterDownload }) {
-  const [matrixPage, setMatrixPage] = useState(1);
-  const [summaryPage, setSummaryPage] = useState(1);
-  const PAGE_SIZE = 100;
-
-  const brands = (allBrands && allBrands.length > 0)
-    ? allBrands
-    : Array.from(new Set(reviews.map(r => r.brand_name).filter(Boolean))).sort();
-
-  const orderLocBrandGroups = new Map();
-  reviews.forEach(r => {
-    const loc = r[locationKey] ? String(r[locationKey]).trim() : "";
-    const brand = r.brand_name ? String(r.brand_name).trim() : "";
-    const orderId = r.order_id;
-    if (!loc || !brand || !orderId) return;
-
-    const key = `${orderId}::${loc}::${brand}`;
-    if (!orderLocBrandGroups.has(key)) {
-      orderLocBrandGroups.set(key, { loc, brand, ratings: [], hasFeedback: false });
-    }
-    const group = orderLocBrandGroups.get(key);
-    if (r.restaurant_rating != null && !isNaN(Number(r.restaurant_rating))) {
-      group.ratings.push(Number(r.restaurant_rating));
-    }
-    if (r.has_comment || (r.comments && r.comments.trim() !== "")) {
-      group.hasFeedback = true;
-    }
-  });
-
-  const locationStats = new Map();
-  if (Array.isArray(masterData)) {
-    masterData.forEach(row => {
-      const loc = row[locationKey] ? String(row[locationKey]).trim() : "";
-      if (loc && !locationStats.has(loc)) {
-        locationStats.set(loc, { ratings: [], ordersCount: 0 });
+    const matrixMap = new Map();
+    const summaryMap = new Map();
+    orders.forEach((g) => {
+      const avg = g.ratings.length ? g.ratings.reduce((x, y) => x + y, 0) / g.ratings.length : null;
+      if (!matrixMap.has(g.loc)) matrixMap.set(g.loc, new Map());
+      const brands = matrixMap.get(g.loc);
+      if (!brands.has(g.brand)) brands.set(g.brand, { sum: 0, count: 0 });
+      if (avg !== null) {
+        const cell = brands.get(g.brand);
+        cell.sum += avg;
+        cell.count++;
       }
+      const sk = `${g.loc}|||${g.brand}`;
+      if (!summaryMap.has(sk)) summaryMap.set(sk, { loc: g.loc, brand: g.brand, ratings: [], orders: 0, feedbacks: 0 });
+      const s = summaryMap.get(sk);
+      s.orders++;
+      if (g.hasComment) s.feedbacks++;
+      if (avg !== null) s.ratings.push(avg);
     });
-  }
 
-  const matrixMap = new Map();
-  const summaryGroupMap = new Map();
+    const geo = new Map();
+    masterData.forEach((m) => {
+      const k = `${m[locationKey]}|||${m.brand}`;
+      if (!geo.has(k)) geo.set(k, { cities: new Set(), areas: new Set(), outlets: 0 });
+      const x = geo.get(k);
+      x.cities.add(m.city);
+      x.areas.add(m.area);
+      x.outlets++;
+    });
 
-  orderLocBrandGroups.forEach(og => {
-    if (!locationStats.has(og.loc)) {
-      locationStats.set(og.loc, { ratings: [], ordersCount: 0 });
-    }
-    const locStat = locationStats.get(og.loc);
-    locStat.ordersCount += 1;
+    const locs = [...matrixMap.entries()]
+      .map(([name, brands]) => {
+        const cells = [...brands.entries()].map(([brand, v]) => ({ brand, avg: v.count ? v.sum / v.count : null }));
+        const rated = cells.filter((c) => c.avg !== null);
+        return {
+          name,
+          cells,
+          avg: rated.length ? rated.reduce((a, c) => a + c.avg, 0) / rated.length : null,
+          outlets: masterData.filter((m) => m[locationKey] === name).length,
+        };
+      })
+      .sort((a, b) => (b.avg || 0) - (a.avg || 0));
 
-    if (!matrixMap.has(og.loc)) matrixMap.set(og.loc, new Map());
-    const brandMap = matrixMap.get(og.loc);
-    if (!brandMap.has(og.brand)) brandMap.set(og.brand, { sum: 0, count: 0 });
-    const cell = brandMap.get(og.brand);
-
-    const sumKey = `${og.loc}::${og.brand}`;
-    if (!summaryGroupMap.has(sumKey)) {
-      summaryGroupMap.set(sumKey, {
-        location: og.loc,
-        brand: og.brand,
-        ratings: [],
-        ordersCount: 0,
-        feedbacksCount: 0
+    const summaryRows = [...summaryMap.values()]
+      .map((s) => {
+        const g = geo.get(`${s.loc}|||${s.brand}`) || { cities: new Set(), areas: new Set(), outlets: 0 };
+        const avg = s.ratings.length ? s.ratings.reduce((x, y) => x + y, 0) / s.ratings.length : null;
+        return {
+          loc: s.loc,
+          brand: s.brand,
+          avg,
+          cities: g.cities.size,
+          areas: g.areas.size,
+          outlets: g.outlets,
+          orders: s.orders,
+          feedbacks: s.feedbacks,
+          above: s.ratings.filter((r) => r >= 4).length,
+          below: s.ratings.filter((r) => r < 4).length,
+        };
+      })
+      .sort((a, b) => {
+        const la = locationKey === "zone" ? (ZONE_ORDER[a.loc] || 9) - (ZONE_ORDER[b.loc] || 9) : a.loc.localeCompare(b.loc);
+        return la !== 0 ? la : a.brand.localeCompare(b.brand);
       });
-    }
-    const sumGroup = summaryGroupMap.get(sumKey);
-    sumGroup.ordersCount += 1;
-    if (og.hasFeedback) sumGroup.feedbacksCount += 1;
 
-    if (og.ratings.length > 0) {
-      const avgOrderRating = og.ratings.reduce((sum, r) => sum + r, 0) / og.ratings.length;
-      locStat.ratings.push(avgOrderRating);
-      cell.sum += avgOrderRating;
-      cell.count += 1;
-      sumGroup.ratings.push(avgOrderRating);
-    }
-  });
-  
-  const sortedLocations = Array.from(locationStats.entries())
-    .map(([loc, stat]) => {
-      const avg = stat.ratings.length ? +(stat.ratings.reduce((sum, r) => sum + r, 0) / stat.ratings.length).toFixed(2) : 0;
-      return { name: loc, avg, count: stat.ordersCount };
-    })
-    .sort((a, b) => b.avg - a.avg);
-
-  const getCellData = (loc, brand) => {
-    const normLoc = loc ? String(loc).trim() : "";
-    const normBrand = brand ? String(brand).trim() : "";
-    const brandMap = matrixMap.get(normLoc);
-    if (!brandMap) return null;
-    const cell = brandMap.get(normBrand);
-    if (!cell || cell.count === 0) return null;
-    return +(cell.sum / cell.count).toFixed(2);
-  };
-
-  const combinationMetaMap = new Map();
-  if (Array.isArray(masterData)) {
-    masterData.forEach(row => {
-      const loc = row[locationKey] ? String(row[locationKey]).trim() : "";
-      const brand = row.brand ? String(row.brand).trim() : "";
-      if (!loc || !brand) return;
-      
-      const key = `${loc}::${brand}`;
-      if (!combinationMetaMap.has(key)) {
-        combinationMetaMap.set(key, {
-          location: loc,
-          brand: brand,
-          cities: new Set(),
-          areas: new Set(),
-          outletsCount: 0
-        });
-      }
-      
-      const meta = combinationMetaMap.get(key);
-      meta.outletsCount += 1;
-      if (row.city) meta.cities.add(String(row.city).trim());
-      if (row.area) meta.areas.add(String(row.area).trim());
-    });
-  }
-
-  const summaryRows = Array.from(combinationMetaMap.values()).map(meta => {
-    const key = `${meta.location}::${meta.brand}`;
-    const g = summaryGroupMap.get(key);
-
-    const outletsCount = meta.outletsCount;
-    const citiesCount = meta.cities.size;
-    const areasCount = meta.areas.size;
-
-    if (g) {
-      const ratedOrdersCount = g.ratings.length;
-      const avgRating = ratedOrdersCount ? +(g.ratings.reduce((sum, r) => sum + r, 0) / ratedOrdersCount).toFixed(2) : "-";
-      const ratingsAbove4 = g.ratings.filter(r => r >= 4.0).length;
-      const ratingsBelow4 = ratedOrdersCount - ratingsAbove4;
-      
-      return {
-        location: meta.location,
-        brand: meta.brand,
-        rating: avgRating === "-" ? "-" : `${avgRating}★`,
-        citiesCount,
-        areasCount,
-        outletsCount,
-        ordersCount: g.ordersCount,
-        feedbacksCount: g.feedbacksCount,
-        ratingsAbove4,
-        ratingsBelow4
-      };
-    } else {
-      return {
-        location: meta.location,
-        brand: meta.brand,
-        rating: "-",
-        citiesCount,
-        areasCount,
-        outletsCount,
-        ordersCount: 0,
-        feedbacksCount: 0,
-        ratingsAbove4: 0,
-        ratingsBelow4: 0
-      };
-    }
-  }).sort((a, b) => {
-    if (locationKey === "zone") {
-      const zoneOrder = { "north": 1, "south": 2, "east": 3, "west": 4 };
-      const zoneA = a.location ? a.location.toLowerCase() : "";
-      const zoneB = b.location ? b.location.toLowerCase() : "";
-      const orderA = zoneOrder[zoneA] || 99;
-      const orderB = zoneOrder[zoneB] || 99;
-      if (orderA !== orderB) return orderA - orderB;
-    } else {
-      const locCompare = a.location.localeCompare(b.location);
-      if (locCompare !== 0) return locCompare;
-    }
-    return a.brand.localeCompare(b.brand);
-  });
-
-  const totalMatrixRows = sortedLocations.length;
-  const totalMatrixPages = Math.ceil(totalMatrixRows / PAGE_SIZE);
-  const matrixStart = (matrixPage - 1) * PAGE_SIZE;
-  const matrixEnd = Math.min(matrixStart + PAGE_SIZE, totalMatrixRows);
-  const paginatedLocations = sortedLocations.slice(matrixStart, matrixEnd);
-
-  const totalSummaryRows = summaryRows.length;
-  const totalSummaryPages = Math.ceil(totalSummaryRows / PAGE_SIZE);
-  const summaryStart = (summaryPage - 1) * PAGE_SIZE;
-  const summaryEnd = Math.min(summaryStart + PAGE_SIZE, totalSummaryRows);
-  const paginatedSummaryRows = summaryRows.slice(summaryStart, summaryEnd);
-
-  const ratedAllOrders = [];
-  orderLocBrandGroups.forEach(og => {
-    if (og.ratings.length > 0) {
-      ratedAllOrders.push(og.ratings.reduce((sum, r) => sum + r, 0) / og.ratings.length);
-    }
-  });
-  const totalAvg = ratedAllOrders.length ? +(ratedAllOrders.reduce((sum, r) => sum + r, 0) / ratedAllOrders.length).toFixed(2) : "-";
-
-  // Prepare Sheets Data for Download
-  const getDownloadDataSheets = () => {
-    const matrixRows = sortedLocations.map(loc => {
-      const rowObj = { Location: loc.name };
-      brands.forEach(brand => {
-        const val = getCellData(loc.name, brand);
-        rowObj[brand] = val !== null ? val : "-";
-      });
-      const locOrderRatings = [];
-      orderLocBrandGroups.forEach(og => {
-        if (og.loc === loc.name && og.ratings.length > 0) {
-          locOrderRatings.push(og.ratings.reduce((sum, r) => sum + r, 0) / og.ratings.length);
-        }
-      });
-      const locAvg = locOrderRatings.length ? +(locOrderRatings.reduce((sum, r) => sum + r, 0) / locOrderRatings.length).toFixed(2) : "-";
-      rowObj["Grand Total"] = locAvg;
-      return rowObj;
-    });
-
-    const summaryRowsData = summaryRows.map(r => {
-      const rowObj = {
-        Location: r.location,
-        Brand: r.brand,
-        Rating: r.rating,
-        Outlets: r.outletsCount,
-        Orders: r.ordersCount,
-        Feedbacks: r.feedbacksCount,
-        "Above 4★": r.ratingsAbove4,
-        "Below 4★": r.ratingsBelow4
-      };
-      if (locationKey !== "city") rowObj["Cities"] = r.citiesCount;
-      if (locationKey !== "area") rowObj["Areas"] = r.areasCount;
-      return rowObj;
-    });
-
-    return [
-      { sheetName: `${locationTitle} Matrix`, rows: matrixRows },
-      { sheetName: `${locationTitle} Summary`, rows: summaryRowsData }
-    ];
-  };
+    return { locations: locs, matrix: matrixMap, summary: summaryRows };
+  }, [reviews, locationKey, masterData]);
 
   useEffect(() => {
-    if (onRegisterDownload) {
-      onRegisterDownload(() => getDownloadDataSheets);
-    }
-    return () => {
-      if (onRegisterDownload) onRegisterDownload(null);
-    };
-  }, [reviews, masterData, onRegisterDownload]);
+    if (!onRegisterDownload) return;
+    onRegisterDownload(() => [
+      {
+        sheetName: `${locationTitle} Matrix`,
+        rows: locations.map((l) => {
+          const row = { [locationTitle]: l.name };
+          l.cells.forEach((c) => {
+            row[c.brand] = c.avg === null ? "" : Number(c.avg.toFixed(2));
+          });
+          row["Location Avg"] = l.avg === null ? "" : Number(l.avg.toFixed(2));
+          return row;
+        }),
+      },
+      {
+        sheetName: `${locationTitle} Summary`,
+        rows: summary.map((s) => ({
+          [locationTitle]: s.loc,
+          Brand: s.brand,
+          Rating: s.avg === null ? "-" : s.avg.toFixed(2),
+          Cities: s.cities,
+          Areas: s.areas,
+          Outlets: s.outlets,
+          Orders: s.orders,
+          Feedbacks: s.feedbacks,
+          "Above 4★": s.above,
+          "Below 4★": s.below,
+        })),
+      },
+    ]);
+  }, [locations, summary, locationTitle, onRegisterDownload]);
+
+  const th = {
+    backgroundColor: C.headerBg,
+    padding: "10px 12px",
+    textAlign: "left",
+    fontWeight: 800,
+    fontSize: 11.5,
+    color: C.primary,
+    position: "sticky",
+    top: 0,
+    zIndex: 10,
+    borderBottom: `2.5px solid rgba(19,38,100,0.2)`,
+    whiteSpace: "nowrap",
+  };
+  const headers = ["Brand", "Rating"]
+    .concat(locationKey !== "city" ? ["Cities"] : [])
+    .concat(locationKey !== "area" ? ["Areas"] : [])
+    .concat(["Outlets", "Orders", "Feedbacks", "Above 4★", "Below 4★"]);
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "24px", paddingBottom: "40px" }}>
-      
-      {/* COMPACT LOCATION CARDS (OPTION 1) */}
-      <Card style={{ padding: "24px" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px", gap: "16px" }}>
-          <h3 style={{ fontSize: "15px", color: "#132664", fontWeight: "800", margin: 0 }}>{locationTitle} &times; Brand Ratings</h3>
-          
-          <div style={{ display: "flex", gap: "16px", alignItems: "center" }}>
-            <div style={{ display: "flex", gap: "12px", fontSize: "10px", fontWeight: "700" }}>
-              <span style={{ display: "flex", alignItems: "center", gap: "4px" }}>
-                <span style={{ width: "10px", height: "10px", backgroundColor: "#132664", display: "inline-block", borderRadius: "2px" }} />
-                &ge; 4.0
+    <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+      <div style={{ ...cardStyle, padding: 24 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <div style={{ fontSize: 15, fontWeight: 800, color: C.primary }}>{locationTitle} × Brand Ratings</div>
+          <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+            {[
+              ["≥ 4.0", 4.2],
+              ["3.0 – 3.9", 3.4],
+              ["≤ 2.9", 2.4],
+            ].map(([label, v]) => (
+              <span key={label} style={{ fontSize: 10, fontWeight: 700, padding: "4px 10px", borderRadius: 20, ...cellStyle(v) }}>
+                {label}
               </span>
-              <span style={{ display: "flex", alignItems: "center", gap: "4px" }}>
-                <span style={{ width: "10px", height: "10px", backgroundColor: "rgba(19, 38, 100, 0.45)", display: "inline-block", borderRadius: "2px" }} />
-                3.0 - 3.9
-              </span>
-              <span style={{ display: "flex", alignItems: "center", gap: "4px" }}>
-                <span style={{ width: "10px", height: "10px", backgroundColor: "rgba(19, 38, 100, 0.12)", display: "inline-block", borderRadius: "2px" }} />
-                &le; 2.9
-              </span>
-            </div>
-            
+            ))}
             {onClose && (
-              <button onClick={onClose} style={{ background: "none", border: "none", color: "#132664", fontSize: "18px", cursor: "pointer", fontWeight: "bold" }}>✕</button>
+              <button onClick={onClose} style={{ border: "none", background: "none", cursor: "pointer", color: C.muted }}>
+                ✕
+              </button>
             )}
           </div>
         </div>
-
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(290px, 1fr))", gap: "16px", maxHeight: "540px", overflowY: "auto", padding: "4px" }}>
-          {paginatedLocations.map((loc) => {
-            const locOrderRatings = [];
-            orderLocBrandGroups.forEach(og => {
-              if (og.loc === loc.name && og.ratings.length > 0) {
-                locOrderRatings.push(og.ratings.reduce((sum, r) => sum + r, 0) / og.ratings.length);
-              }
-            });
-            const locAvg = locOrderRatings.length ? +(locOrderRatings.reduce((sum, r) => sum + r, 0) / locOrderRatings.length).toFixed(2) : null;
-            
-            // Get brands that are actually present/available in this location
-            const availableBrands = brands.filter(brand => combinationMetaMap.has(`${loc.name}::${brand}`));
-
-            return (
-              <div 
-                key={loc.name} 
-                style={{ 
-                  border: "1px solid rgba(19, 38, 100, 0.12)", 
-                  borderRadius: "12px", 
-                  padding: "16px", 
-                  backgroundColor: "#ffffff",
-                  display: "flex",
-                  flexDirection: "column",
-                  justifyContent: "space-between",
-                  gap: "12px",
-                  boxShadow: "0 2px 6px rgba(19, 38, 100, 0.02)"
-                }}
-              >
-                <div>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: "10px" }}>
-                    <span style={{ fontWeight: "800", fontSize: "13px", color: "#132664" }}>{loc.name}</span>
-                    <span style={{ fontSize: "10px", color: "rgba(19, 38, 100, 0.5)", fontWeight: "700" }}>{loc.count} active outlets</span>
-                  </div>
-
-                  {availableBrands.length > 0 ? (
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
-                      {availableBrands.map(brand => {
-                        const cellVal = getCellData(loc.name, brand);
-                        const isRated = cellVal !== null;
-                        return (
-                          <div 
-                            key={brand} 
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              gap: "5px",
-                              padding: "4px 10px",
-                              borderRadius: "20px",
-                              fontSize: "10px",
-                              fontWeight: "700",
-                              backgroundColor: isRated ? getCellBgColor(cellVal) : "rgba(19, 38, 100, 0.05)",
-                              color: isRated ? getCellTextColor(cellVal) : "rgba(19, 38, 100, 0.6)",
-                              border: "1px solid rgba(19, 38, 100, 0.08)"
-                            }}
-                          >
-                            <span>{brand}</span>
-                            <span style={{ fontWeight: "800", opacity: 0.9 }}>
-                              {isRated ? `${cellVal}★` : "-"}
-                            </span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <div style={{ fontSize: "11px", color: "rgba(19, 38, 100, 0.4)", fontStyle: "italic" }}>
-                      No brands available in this location
-                    </div>
-                  )}
-                </div>
-
-                {locAvg !== null && (
-                  <div style={{ display: "flex", justifyContent: "flex-end", borderTop: "1px dashed rgba(19, 38, 100, 0.08)", paddingTop: "8px", fontSize: "10px", fontWeight: "700", color: "rgba(19, 38, 100, 0.6)" }}>
-                    Location Avg: <span style={{ color: "#132664", fontWeight: "800", marginLeft: "4px" }}>{locAvg}★</span>
-                  </div>
-                )}
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fill, minmax(290px, 1fr))",
+            gap: 12,
+            maxHeight: 540,
+            overflowY: "auto",
+            marginTop: 16,
+          }}
+        >
+          {locations.slice(0, 100).map((l) => (
+            <div key={l.name} style={{ border: "1px solid rgba(19,38,100,0.12)", borderRadius: 12, padding: 16 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ fontSize: 13, fontWeight: 800, color: C.primary }}>{l.name}</span>
+                <span style={{ fontSize: 10.5, color: C.muted }}>{l.outlets} active outlets</span>
               </div>
-            );
-          })}
-        </div>
-
-        {totalMatrixPages > 1 && (
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "16px", fontSize: "12px", fontWeight: "700", color: "#132664" }}>
-            <span>Showing locations {matrixStart + 1}-{matrixEnd} of {totalMatrixRows}</span>
-            <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-              <button 
-                onClick={() => setMatrixPage(p => Math.max(p - 1, 1))} 
-                disabled={matrixPage === 1}
-                style={{
-                  background: "none",
-                  border: "1px solid #132664",
-                  borderRadius: "6px",
-                  padding: "4px 10px",
-                  color: "#132664",
-                  cursor: matrixPage === 1 ? "not-allowed" : "pointer",
-                  opacity: matrixPage === 1 ? 0.4 : 1,
-                  fontWeight: "800"
-                }}
-              >
-                &larr; Prev
-              </button>
-              <span>Page {matrixPage} of {totalMatrixPages}</span>
-              <button 
-                onClick={() => setMatrixPage(p => Math.min(p + 1, totalMatrixPages))} 
-                disabled={matrixPage === totalMatrixPages}
-                style={{
-                  background: "none",
-                  border: "1px solid #132664",
-                  borderRadius: "6px",
-                  padding: "4px 10px",
-                  color: "#132664",
-                  cursor: matrixPage === totalMatrixPages ? "not-allowed" : "pointer",
-                  opacity: matrixPage === totalMatrixPages ? 0.4 : 1,
-                  fontWeight: "800"
-                }}
-              >
-                Next &rarr;
-              </button>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 10 }}>
+                {l.cells.map((c) => (
+                  <span key={c.brand} style={{ padding: "4px 10px", borderRadius: 20, fontSize: 10, fontWeight: 700, ...cellStyle(c.avg) }}>
+                    {c.brand} {c.avg === null ? "—" : c.avg.toFixed(1)}
+                  </span>
+                ))}
+              </div>
+              <div style={{ marginTop: 12, paddingTop: 8, borderTop: "1px dashed rgba(19,38,100,0.2)", fontSize: 11, fontWeight: 700, color: C.primary }}>
+                Location Avg: {l.avg === null ? "—" : l.avg.toFixed(2)}★
+              </div>
             </div>
-          </div>
-        )}
-      </Card>
+          ))}
+        </div>
+      </div>
 
-      {/* SUMMARY TABLE CARD WITH STICKY HEADERS */}
-      <Card style={{ padding: "24px" }}>
-        <h3 style={{ fontSize: "14px", color: "#132664", marginBottom: "16px", fontWeight: "800" }}>{locationTitle} Summary</h3>
-        
-        <div style={{ maxHeight: "400px", overflow: "auto", position: "relative", border: "1px solid rgba(19, 38, 100, 0.15)", borderRadius: "8px" }}>
-          <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0, fontSize: "11px" }}>
+      <div style={cardStyle}>
+        <div style={{ fontSize: 14, fontWeight: 800, color: C.primary, marginBottom: 12 }}>{locationTitle} Summary</div>
+        <div style={{ maxHeight: 400, overflow: "auto" }}>
+          <table style={{ borderCollapse: "collapse", fontSize: 11.5, width: "100%" }}>
             <thead>
-              <tr style={{ backgroundColor: "#f4f6fa" }}>
-                <th style={{ 
-                  position: "sticky", top: 0, left: 0, zIndex: 20, 
-                  backgroundColor: "#f4f6fa", color: "#132664", fontWeight: "800",
-                  padding: "10px 12px", textAlign: "left", whiteSpace: "nowrap",
-                  borderRight: "2.5px solid rgba(19, 38, 100, 0.2)",
-                  borderBottom: "2.5px solid rgba(19, 38, 100, 0.2)"
-                }}>
-                  {locationTitle} (Frozen)
-                </th>
-                <th style={{ position: "sticky", top: 0, zIndex: 10, backgroundColor: "#f4f6fa", color: "#132664", fontWeight: "800", padding: "10px 12px", borderBottom: "2px solid rgba(19, 38, 100, 0.2)", borderRight: "1px solid rgba(19, 38, 100, 0.08)" }}>Brand</th>
-                <th style={{ position: "sticky", top: 0, zIndex: 10, backgroundColor: "#f4f6fa", color: "#132664", fontWeight: "800", padding: "10px 12px", borderBottom: "2px solid rgba(19, 38, 100, 0.2)", borderRight: "1px solid rgba(19, 38, 100, 0.08)" }}>Rating</th>
-                {locationKey !== "city" && <th style={{ position: "sticky", top: 0, zIndex: 10, backgroundColor: "#f4f6fa", color: "#132664", fontWeight: "800", padding: "10px 12px", borderBottom: "2px solid rgba(19, 38, 100, 0.2)", borderRight: "1px solid rgba(19, 38, 100, 0.08)" }}>Cities</th>}
-                {locationKey !== "area" && <th style={{ position: "sticky", top: 0, zIndex: 10, backgroundColor: "#f4f6fa", color: "#132664", fontWeight: "800", padding: "10px 12px", borderBottom: "2px solid rgba(19, 38, 100, 0.2)", borderRight: "1px solid rgba(19, 38, 100, 0.08)" }}>Areas</th>}
-                <th style={{ position: "sticky", top: 0, zIndex: 10, backgroundColor: "#f4f6fa", color: "#132664", fontWeight: "800", padding: "10px 12px", borderBottom: "2px solid rgba(19, 38, 100, 0.2)", borderRight: "1px solid rgba(19, 38, 100, 0.08)" }}>Outlets</th>
-                <th style={{ position: "sticky", top: 0, zIndex: 10, backgroundColor: "#f4f6fa", color: "#132664", fontWeight: "800", padding: "10px 12px", borderBottom: "2px solid rgba(19, 38, 100, 0.2)", borderRight: "1px solid rgba(19, 38, 100, 0.08)" }}>Orders</th>
-                <th style={{ position: "sticky", top: 0, zIndex: 10, backgroundColor: "#f4f6fa", color: "#132664", fontWeight: "800", padding: "10px 12px", borderBottom: "2px solid rgba(19, 38, 100, 0.2)", borderRight: "1px solid rgba(19, 38, 100, 0.08)" }}>Feedbacks</th>
-                <th style={{ position: "sticky", top: 0, zIndex: 10, backgroundColor: "#f4f6fa", color: "#132664", fontWeight: "800", padding: "10px 12px", borderBottom: "2px solid rgba(19, 38, 100, 0.2)", borderRight: "1px solid rgba(19, 38, 100, 0.08)" }}>Above 4★</th>
-                <th style={{ position: "sticky", top: 0, zIndex: 10, backgroundColor: "#f4f6fa", color: "#132664", fontWeight: "800", padding: "10px 12px", borderBottom: "2px solid rgba(19, 38, 100, 0.2)" }}>Below 4★</th>
+              <tr>
+                <th style={{ ...th, position: "sticky", left: 0, zIndex: 20, borderRight: `2.5px solid rgba(19,38,100,0.2)` }}>{locationTitle}</th>
+                {headers.map((h) => (
+                  <th key={h} style={th}>
+                    {h}
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody>
-              {paginatedSummaryRows.map((row, idx) => {
-                const rowBg = idx % 2 === 0 ? "#ffffff" : "rgba(19, 38, 100, 0.01)";
+              {summary.slice(0, 100).map((s, i) => {
+                const bg = i % 2 === 0 ? "#ffffff" : "#f7f8fc";
+                const values = [s.brand, s.avg === null ? "—" : s.avg.toFixed(2)]
+                  .concat(locationKey !== "city" ? [s.cities] : [])
+                  .concat(locationKey !== "area" ? [s.areas] : [])
+                  .concat([s.outlets, s.orders, s.feedbacks, s.above, s.below]);
                 return (
-                  <tr key={idx}>
-                    <td style={{ 
-                      position: "sticky", left: 0, zIndex: 9, 
-                      backgroundColor: rowBg, color: "#132664", fontWeight: "700",
-                      padding: "8px 12px", whiteSpace: "nowrap",
-                      borderRight: "2.5px solid rgba(19, 38, 100, 0.2)",
-                      borderBottom: "1px solid rgba(19, 38, 100, 0.08)"
-                    }}>
-                      {row.location}
+                  <tr key={`${s.loc}-${s.brand}`} style={{ backgroundColor: bg }}>
+                    <td style={{ padding: "9px 12px", fontWeight: 800, color: C.primary, position: "sticky", left: 0, zIndex: 9, backgroundColor: bg, borderRight: `2.5px solid rgba(19,38,100,0.2)`, whiteSpace: "nowrap" }}>
+                      {s.loc}
                     </td>
-                    <td style={{ padding: "8px 12px", fontWeight: "600", color: "#132664", borderBottom: "1px solid rgba(19, 38, 100, 0.08)", borderRight: "1px solid rgba(19, 38, 100, 0.08)" }}>{row.brand}</td>
-                    <td style={{ 
-                      padding: "8px 12px", 
-                      fontWeight: "700", 
-                      color: "#132664", 
-                      borderBottom: row.rating !== "-" ? "1px solid rgba(19, 38, 100, 0.08)" : "1px solid transparent", 
-                      borderRight: row.rating !== "-" ? "1px solid rgba(19, 38, 100, 0.08)" : "1px solid transparent",
-                      backgroundColor: row.rating !== "-" ? "transparent" : "transparent"
-                    }}>
-                      {row.rating !== "-" ? row.rating : ""}
-                    </td>
-                    {locationKey !== "city" && <td style={{ padding: "8px 12px", color: "#132664", borderBottom: "1px solid rgba(19, 38, 100, 0.08)", borderRight: "1px solid rgba(19, 38, 100, 0.08)" }}>{row.citiesCount}</td>}
-                    {locationKey !== "area" && <td style={{ padding: "8px 12px", color: "#132664", borderBottom: "1px solid rgba(19, 38, 100, 0.08)", borderRight: "1px solid rgba(19, 38, 100, 0.08)" }}>{row.areasCount}</td>}
-                    <td style={{ padding: "8px 12px", color: "#132664", borderBottom: "1px solid rgba(19, 38, 100, 0.08)", borderRight: "1px solid rgba(19, 38, 100, 0.08)" }}>{row.outletsCount}</td>
-                    <td style={{ padding: "8px 12px", color: "#132664", borderBottom: "1px solid rgba(19, 38, 100, 0.08)", borderRight: "1px solid rgba(19, 38, 100, 0.08)" }}>{row.ordersCount.toLocaleString()}</td>
-                    <td style={{ padding: "8px 12px", color: "#132664", borderBottom: "1px solid rgba(19, 38, 100, 0.08)", borderRight: "1px solid rgba(19, 38, 100, 0.08)" }}>{row.feedbacksCount.toLocaleString()}</td>
-                    <td style={{ padding: "8px 12px", color: "#132664", borderBottom: "1px solid rgba(19, 38, 100, 0.08)", borderRight: "1px solid rgba(19, 38, 100, 0.08)" }}>{row.ratingsAbove4.toLocaleString()}</td>
-                    <td style={{ padding: "8px 12px", color: "#132664", borderBottom: "1px solid rgba(19, 38, 100, 0.08)", fontWeight: row.ratingsBelow4 > 0 ? "700" : "500" }}>{row.ratingsBelow4.toLocaleString()}</td>
+                    {values.map((v, vi) => (
+                      <td key={vi} style={{ padding: "9px 12px", color: C.text, borderBottom: `1px solid ${C.borderSoft}` }}>
+                        {v}
+                      </td>
+                    ))}
                   </tr>
                 );
               })}
             </tbody>
           </table>
         </div>
-
-        {totalSummaryPages > 1 && (
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "16px", fontSize: "12px", fontWeight: "700", color: "#132664" }}>
-            <span>Showing summary records {summaryStart + 1}-{summaryEnd} of {totalSummaryRows} entries</span>
-            <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-              <button 
-                onClick={() => setSummaryPage(p => Math.max(p - 1, 1))} 
-                disabled={summaryPage === 1}
-                style={{
-                  background: "none",
-                  border: "1px solid #132664",
-                  borderRadius: "6px",
-                  padding: "4px 10px",
-                  color: "#132664",
-                  cursor: summaryPage === 1 ? "not-allowed" : "pointer",
-                  opacity: summaryPage === 1 ? 0.4 : 1,
-                  fontWeight: "800"
-                }}
-              >
-                &larr; Prev
-              </button>
-              <span>Page {summaryPage} of {totalSummaryPages}</span>
-              <button 
-                onClick={() => setSummaryPage(p => Math.min(p + 1, totalSummaryPages))} 
-                disabled={summaryPage === totalSummaryPages}
-                style={{
-                  background: "none",
-                  border: "1px solid #132664",
-                  borderRadius: "6px",
-                  padding: "4px 10px",
-                  color: "#132664",
-                  cursor: summaryPage === totalSummaryPages ? "not-allowed" : "pointer",
-                  opacity: summaryPage === totalSummaryPages ? 0.4 : 1,
-                  fontWeight: "800"
-                }}
-              >
-                Next &rarr;
-              </button>
-            </div>
-          </div>
-        )}
-      </Card>
+      </div>
     </div>
   );
 }
