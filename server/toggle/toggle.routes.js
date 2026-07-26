@@ -6,7 +6,7 @@ const router = express.Router();
 
 // ─── URBANPIPER CONFIG ───────────────────────────────────────
 const UP_LOCATION_URL = "https://api.urbanpiper.com/hub/api/v1/location/";
-const UP_PLATFORMS    = ["swiggy", "zomato", "urbanpiper", "masalabox", "bitsila", "magicpin", "ownly", "dotpe", "dunzo", "tipplr"];
+const UP_PLATFORMS    = ["swiggy", "zomato"];
 
 const UP_BRANDS = {
   ovenfresh: {
@@ -68,6 +68,7 @@ async function performToggleAPI(location_id, action, brand) {
 
     finalStatus = response.status;
     finalResponseText = await response.text();
+    console.log("[UP] Raw Response:", finalStatus, finalResponseText);
 
     if (response.status >= 200 && response.status < 300) {
       return { success: true, message: `Store ${action}d across platforms`, status: finalStatus };
