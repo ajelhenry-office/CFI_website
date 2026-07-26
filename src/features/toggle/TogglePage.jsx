@@ -67,7 +67,7 @@ export default function TogglePage({ stores, setStores, logs, setLogs }) {
   const [statusFilter, setStatusFilter] = useState("all");
 
   // Only allow Cake Zone and Ovenfresh in the brand filter
-  const uniqueBrands = ["Cake Zone", "Ovenfresh"];
+  const uniqueBrands = [...new Set(stores.map(s => s.brand).filter(Boolean))].sort();
   const uniqueZones = [...new Set(stores.filter(s => !selectedBrand || s.brand === selectedBrand).map(s => s.zone).filter(Boolean))].sort();
   const uniqueCities = [...new Set(stores.filter(s => (!selectedBrand || s.brand === selectedBrand) && (!selectedZone || s.zone === selectedZone)).map(s => s.city).filter(Boolean))].sort();
   const uniqueAreas = [...new Set(stores.filter(s => (!selectedBrand || s.brand === selectedBrand) && (!selectedZone || s.zone === selectedZone) && (!selectedCity || s.city === selectedCity)).map(s => s.name).filter(Boolean))].sort();
@@ -436,7 +436,7 @@ export default function TogglePage({ stores, setStores, logs, setLogs }) {
       </div>
 
       {/* Audit Modal */}
-      {isAuditOpen && <AuditModal onClose={() => setIsAuditOpen(false)} />}
+      {isAuditOpen && <AuditModal onClose={() => setIsAuditOpen(false)} stores={stores} selectedBrand={selectedBrand} />}
     </div>
   );
 }

@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 
 const BACKEND = import.meta.env.VITE_BACKEND_URL || "http://localhost:3001";
 
-export default function AuditModal({ onClose }) {
+export default function AuditModal({ onClose, stores = [], selectedBrand = "" }) {
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showSystemSyncs, setShowSystemSyncs] = useState(false);
@@ -23,6 +23,19 @@ export default function AuditModal({ onClose }) {
   const handleExportCSV = () => {
     window.location.href = `${BACKEND}/api/toggle/history/download`;
   };
+
+  // Determine which store IDs belong to the selected brand
+  const validStoreIds = React.useMemo(() => {
+    if (!selectedBrand) return null;
+    return new Set(stores.filter(s => s.brand === selectedBrand).map(s => s.location_id));
+  }, [stores, selectedBrand]);
+
+  // Filter logs by brand and system sync preference
+  const filteredLogs = logs.filter(log => {
+    if (!showSystemSyncs && log.is_automated) return false;
+    if (validStoreIds && !validStoreIds.has(log.store_id)) return false;
+    return true;
+  });
 
   const styles = {
     overlay: {
@@ -118,7 +131,7 @@ export default function AuditModal({ onClose }) {
     <div style={styles.overlay} onClick={onClose}>
       <div style={styles.modal} onClick={e => e.stopPropagation()}>
         <div style={styles.header}>
-          <div style={styles.title}>Audit Log History</div>
+          <div style={styles.title}>Audit Log History {selectedBrand ? `(${selectedBrand})` : ''}</div>
           <div style={{ display: 'flex', gap: '16px', alignItems: 'center' }}>
             <label style={{ fontSize: '13px', fontWeight: '600', color: '#64748b', display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
               <input type="checkbox" checked={showSystemSyncs} onChange={e => setShowSystemSyncs(e.target.checked)} />
@@ -145,7 +158,7 @@ export default function AuditModal({ onClose }) {
                 </tr>
               </thead>
               <tbody>
-                {logs.filter(log => showSystemSyncs || !log.is_automated).map(log => (
+                {filteredLogs.map(log => (
                   <tr key={log.id}>
                     <td style={styles.td}>{new Date(log.created_at).toLocaleString('en-IN')}</td>
                     <td style={{...styles.td, fontWeight: '600', color: '#132664'}}>{log.store_name}</td>
@@ -162,10 +175,10 @@ export default function AuditModal({ onClose }) {
                     <td style={styles.td}>{log.email}</td>
                   </tr>
                 ))}
-                {logs.filter(log => showSystemSyncs || !log.is_automated).length === 0 && (
+                {filteredLogs.length === 0 && (
                   <tr>
                     <td colSpan="6" style={{ padding: '40px', textAlign: 'center', color: '#64748b' }}>
-                      No recent activity.
+                      No recent activity for {selectedBrand || 'all brands'}.
                     </td>
                   </tr>
                 )}

@@ -24,6 +24,11 @@ const UP_BRANDS = {
     apikey   : process.env.UP_APIKEY_EATFIT   || "a7d35eac21f5e6eab9d760d25d71a899c3ba2178",
     biz_id   : process.env.UP_BIZ_ID_EATFIT   || "60578050",
   },
+  eatfit___: {
+    username : "biz_adm_QXJeFIgABXFq",
+    apikey   : "a7d35eac21f5e6eab9d760d25d71a899c3ba2178",
+    biz_id   : "60578050",
+  },
   cake_zone: {
     username : process.env.UP_USERNAME_CAKEZONE || "biz_adm_zzXEiLApvfel",
     apikey   : process.env.UP_APIKEY_CAKEZONE   || "e4d7ccbe7e7342169523c37a516488fe3146a46c",
@@ -36,8 +41,8 @@ async function performToggleAPI(location_id, action, brand) {
   const creds = UP_BRANDS[brandKey];
   if (!creds) return { success: false, error: `Unknown brand: ${brand}` };
 
-  if (brandKey === "cake_zone") {
-    return { success: true, message: `[TEST MODE] Store ${action}d (API bypassed for Cake Zone)` };
+  if (brandKey === "cake_zone" || brandKey === "eatfit___") {
+    return { success: true, message: `[TEST MODE] Store ${action}d (API bypassed for ${brand})` };
   }
 
   let currentPlatforms = [...UP_PLATFORMS];
