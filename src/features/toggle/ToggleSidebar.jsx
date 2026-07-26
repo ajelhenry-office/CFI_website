@@ -2,7 +2,7 @@ import { useState } from "react";
 import { C, FONT } from "../../theme";
 import ActivityLog from "./ActivityLog";
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:3001";
+const API_BASE = import.meta.env.VITE_API_BASE_URL || (import.meta.env.PROD ? "" : "http://localhost:3001");
 
 const TAB = ["Health", "Recent", "Problems"];
 

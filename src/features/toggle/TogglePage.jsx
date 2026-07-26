@@ -6,7 +6,7 @@ import ToggleSidebar from "./ToggleSidebar";
 import BulkProgressIsland from "./BulkProgressIsland";
 import AuditModal from "./AuditModal";
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:3001";
+const API_BASE = import.meta.env.VITE_API_BASE_URL || (import.meta.env.PROD ? "" : "http://localhost:3001");
 
 const BRANDS = ["All", ...new Set(STORES.map((s) => s.brand))];
 const CITIES = ["All", ...new Set(STORES.map((s) => s.city).filter(Boolean))].sort();
