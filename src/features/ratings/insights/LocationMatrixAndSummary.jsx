@@ -274,10 +274,10 @@ export default function LocationMatrixAndSummary({ reviews, locationKey, locatio
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "24px", paddingBottom: "40px" }}>
       
-      {/* MATRIX CARD WITH STICKY HEADERS */}
+      {/* COMPACT LOCATION CARDS (OPTION 1) */}
       <Card style={{ padding: "24px" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px", gap: "16px" }}>
-          <h3 style={{ fontSize: "15px", color: "#132664", fontWeight: "800", margin: 0 }}>{locationTitle} &times; Brand Rating Matrix</h3>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px", gap: "16px" }}>
+          <h3 style={{ fontSize: "15px", color: "#132664", fontWeight: "800", margin: 0 }}>{locationTitle} &times; Brand Ratings</h3>
           
           <div style={{ display: "flex", gap: "16px", alignItems: "center" }}>
             <div style={{ display: "flex", gap: "12px", fontSize: "10px", fontWeight: "700" }}>
@@ -301,125 +301,89 @@ export default function LocationMatrixAndSummary({ reviews, locationKey, locatio
           </div>
         </div>
 
-        <div style={{ maxHeight: "480px", overflow: "auto", position: "relative", border: "1px solid rgba(19, 38, 100, 0.15)", borderRadius: "8px" }}>
-          <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0, fontSize: "11px" }}>
-            <thead>
-              <tr style={{ backgroundColor: "#f4f6fa" }}>
-                <th style={{ 
-                  position: "sticky", top: 0, left: 0, zIndex: 20, 
-                  backgroundColor: "#f4f6fa", color: "#132664", fontWeight: "800",
-                  padding: "10px 12px", textAlign: "left", whiteSpace: "nowrap",
-                  borderRight: "2.5px solid rgba(19, 38, 100, 0.2)",
-                  borderBottom: "2.5px solid rgba(19, 38, 100, 0.2)"
-                }}>
-                  Location (Frozen)
-                </th>
-                {brands.map(brand => (
-                  <th key={brand} style={{ 
-                    position: "sticky", top: 0, zIndex: 10,
-                    backgroundColor: "#f4f6fa", color: "#132664", fontWeight: "800",
-                    padding: "10px 12px", textAlign: "center", whiteSpace: "nowrap",
-                    borderBottom: "2.5px solid rgba(19, 38, 100, 0.2)",
-                    borderRight: "1px solid rgba(19, 38, 100, 0.1)"
-                  }}>
-                    {brand}
-                  </th>
-                ))}
-                <th style={{ 
-                  position: "sticky", top: 0, zIndex: 10,
-                  backgroundColor: "#f4f6fa", color: "#132664", fontWeight: "800",
-                  padding: "10px 12px", textAlign: "center", whiteSpace: "nowrap",
-                  borderBottom: "2.5px solid rgba(19, 38, 100, 0.2)"
-                }}>
-                  Grand Total
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {paginatedLocations.map((loc, idx) => {
-                const locOrderRatings = [];
-                orderLocBrandGroups.forEach(og => {
-                  if (og.loc === loc.name && og.ratings.length > 0) {
-                    locOrderRatings.push(og.ratings.reduce((sum, r) => sum + r, 0) / og.ratings.length);
-                  }
-                });
-                const locAvg = locOrderRatings.length ? +(locOrderRatings.reduce((sum, r) => sum + r, 0) / locOrderRatings.length).toFixed(2) : null;
-                const rowBg = idx % 2 === 0 ? "#ffffff" : "rgba(19, 38, 100, 0.01)";
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(290px, 1fr))", gap: "16px", maxHeight: "540px", overflowY: "auto", padding: "4px" }}>
+          {paginatedLocations.map((loc) => {
+            const locOrderRatings = [];
+            orderLocBrandGroups.forEach(og => {
+              if (og.loc === loc.name && og.ratings.length > 0) {
+                locOrderRatings.push(og.ratings.reduce((sum, r) => sum + r, 0) / og.ratings.length);
+              }
+            });
+            const locAvg = locOrderRatings.length ? +(locOrderRatings.reduce((sum, r) => sum + r, 0) / locOrderRatings.length).toFixed(2) : null;
+            
+            // Get brands that are actually present/available in this location
+            const availableBrands = brands.filter(brand => combinationMetaMap.has(`${loc.name}::${brand}`));
 
-                return (
-                  <tr style={{ backgroundColor: rowBg }} key={loc.name}>
-                    <td style={{ 
-                      position: "sticky", left: 0, zIndex: 9, 
-                      backgroundColor: rowBg, color: "#132664", fontWeight: "700",
-                      padding: "8px 12px", whiteSpace: "nowrap",
-                      borderRight: "2.5px solid rgba(19, 38, 100, 0.2)",
-                      borderBottom: "1px solid rgba(19, 38, 100, 0.08)"
-                    }}>
-                      {loc.name} <span style={{ fontWeight: "500", fontSize: "9px", color: "rgba(19, 38, 100, 0.5)", marginLeft: "4px" }}>({loc.count})</span>
-                    </td>
-                    {brands.map(brand => {
-                      const cellVal = getCellData(loc.name, brand);
-                      return (
-                        <td 
-                          key={brand} 
-                          style={{ 
-                            padding: "8px 12px", textAlign: "center", fontWeight: "700", 
-                            backgroundColor: getCellBgColor(cellVal),
-                            color: getCellTextColor(cellVal),
-                            borderBottom: "1px solid rgba(19, 38, 100, 0.08)",
-                            borderRight: "1px solid rgba(19, 38, 100, 0.08)"
-                          }}
-                        >
-                          {cellVal !== null ? cellVal : "-"}
-                        </td>
-                      );
-                    })}
-                    <td style={{ 
-                      padding: "8px 12px", textAlign: "center", fontWeight: "800", color: "#132664", 
-                      backgroundColor: "rgba(19, 38, 100, 0.04)",
-                      borderBottom: "1px solid rgba(19, 38, 100, 0.08)"
-                    }}>
-                      {locAvg !== null ? `${locAvg}★` : "-"}
-                    </td>
-                  </tr>
-                );
-              })}
+            return (
+              <div 
+                key={loc.name} 
+                style={{ 
+                  border: "1px solid rgba(19, 38, 100, 0.12)", 
+                  borderRadius: "12px", 
+                  padding: "16px", 
+                  backgroundColor: "#ffffff",
+                  display: "flex",
+                  flexDirection: "column",
+                  justifyContent: "space-between",
+                  gap: "12px",
+                  boxShadow: "0 2px 6px rgba(19, 38, 100, 0.02)"
+                }}
+              >
+                <div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: "10px" }}>
+                    <span style={{ fontWeight: "800", fontSize: "13px", color: "#132664" }}>{loc.name}</span>
+                    <span style={{ fontSize: "10px", color: "rgba(19, 38, 100, 0.5)", fontWeight: "700" }}>{loc.count} active outlets</span>
+                  </div>
 
-              <tr style={{ backgroundColor: "#e8ebf5", fontWeight: "800" }}>
-                <td style={{ 
-                  position: "sticky", left: 0, zIndex: 9,
-                  backgroundColor: "#e8ebf5", color: "#132664", fontWeight: "800",
-                  padding: "10px 12px", whiteSpace: "nowrap",
-                  borderRight: "2.5px solid rgba(19, 38, 100, 0.2)",
-                  borderTop: "1.5px solid rgba(19, 38, 100, 0.15)"
-                }}>
-                  Grand Total
-                </td>
-                {brands.map(brand => {
-                  const brandOrderRatings = [];
-                  orderLocBrandGroups.forEach(og => {
-                    if (og.brand === brand && og.ratings.length > 0) {
-                      brandOrderRatings.push(og.ratings.reduce((sum, r) => sum + r, 0) / og.ratings.length);
-                    }
-                  });
-                  const brandAvg = brandOrderRatings.length ? +(brandOrderRatings.reduce((sum, r) => sum + r, 0) / brandOrderRatings.length).toFixed(2) : null;
-                  return (
-                    <td key={brand} style={{ padding: "10px 12px", textAlign: "center", color: "#132664", borderRight: "1px solid rgba(19, 38, 100, 0.08)", borderTop: "1.5px solid rgba(19, 38, 100, 0.15)" }}>
-                      {brandAvg !== null ? brandAvg : "-"}
-                    </td>
-                  );
-                })}
-                <td style={{ padding: "10px 12px", textAlign: "center", color: "#132664", borderTop: "1.5px solid rgba(19, 38, 100, 0.15)" }}>
-                  {totalAvg !== "-" ? `${totalAvg}★` : "-"}
-                </td>
-              </tr>
-            </tbody>
-          </table>
+                  {availableBrands.length > 0 ? (
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+                      {availableBrands.map(brand => {
+                        const cellVal = getCellData(loc.name, brand);
+                        const isRated = cellVal !== null;
+                        return (
+                          <div 
+                            key={brand} 
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: "5px",
+                              padding: "4px 10px",
+                              borderRadius: "20px",
+                              fontSize: "10px",
+                              fontWeight: "700",
+                              backgroundColor: isRated ? getCellBgColor(cellVal) : "rgba(19, 38, 100, 0.05)",
+                              color: isRated ? getCellTextColor(cellVal) : "rgba(19, 38, 100, 0.6)",
+                              border: "1px solid rgba(19, 38, 100, 0.08)"
+                            }}
+                          >
+                            <span>{brand}</span>
+                            <span style={{ fontWeight: "800", opacity: 0.9 }}>
+                              {isRated ? `${cellVal}★` : "-"}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div style={{ fontSize: "11px", color: "rgba(19, 38, 100, 0.4)", fontStyle: "italic" }}>
+                      No brands available in this location
+                    </div>
+                  )}
+                </div>
+
+                {locAvg !== null && (
+                  <div style={{ display: "flex", justifyContent: "flex-end", borderTop: "1px dashed rgba(19, 38, 100, 0.08)", paddingTop: "8px", fontSize: "10px", fontWeight: "700", color: "rgba(19, 38, 100, 0.6)" }}>
+                    Location Avg: <span style={{ color: "#132664", fontWeight: "800", marginLeft: "4px" }}>{locAvg}★</span>
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
 
         {totalMatrixPages > 1 && (
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "16px", fontSize: "12px", fontWeight: "700", color: "#132664" }}>
-            <span>Showing matrix rows {matrixStart + 1}-{matrixEnd} of {totalMatrixRows} locations</span>
+            <span>Showing locations {matrixStart + 1}-{matrixEnd} of {totalMatrixRows}</span>
             <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
               <button 
                 onClick={() => setMatrixPage(p => Math.max(p - 1, 1))} 
@@ -502,7 +466,16 @@ export default function LocationMatrixAndSummary({ reviews, locationKey, locatio
                       {row.location}
                     </td>
                     <td style={{ padding: "8px 12px", fontWeight: "600", color: "#132664", borderBottom: "1px solid rgba(19, 38, 100, 0.08)", borderRight: "1px solid rgba(19, 38, 100, 0.08)" }}>{row.brand}</td>
-                    <td style={{ padding: "8px 12px", fontWeight: "700", color: "#132664", borderBottom: "1px solid rgba(19, 38, 100, 0.08)", borderRight: "1px solid rgba(19, 38, 100, 0.08)" }}>{row.rating}</td>
+                    <td style={{ 
+                      padding: "8px 12px", 
+                      fontWeight: "700", 
+                      color: "#132664", 
+                      borderBottom: row.rating !== "-" ? "1px solid rgba(19, 38, 100, 0.08)" : "1px solid transparent", 
+                      borderRight: row.rating !== "-" ? "1px solid rgba(19, 38, 100, 0.08)" : "1px solid transparent",
+                      backgroundColor: row.rating !== "-" ? "transparent" : "transparent"
+                    }}>
+                      {row.rating !== "-" ? row.rating : ""}
+                    </td>
                     {locationKey !== "city" && <td style={{ padding: "8px 12px", color: "#132664", borderBottom: "1px solid rgba(19, 38, 100, 0.08)", borderRight: "1px solid rgba(19, 38, 100, 0.08)" }}>{row.citiesCount}</td>}
                     {locationKey !== "area" && <td style={{ padding: "8px 12px", color: "#132664", borderBottom: "1px solid rgba(19, 38, 100, 0.08)", borderRight: "1px solid rgba(19, 38, 100, 0.08)" }}>{row.areasCount}</td>}
                     <td style={{ padding: "8px 12px", color: "#132664", borderBottom: "1px solid rgba(19, 38, 100, 0.08)", borderRight: "1px solid rgba(19, 38, 100, 0.08)" }}>{row.outletsCount}</td>

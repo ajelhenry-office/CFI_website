@@ -1,11 +1,12 @@
 import React, { useState } from "react";
 
-export default function StoreCard({ store, onToggle }) {
+export default function StoreCard({ store, onToggle, isBulking }) {
   const [loading, setLoading] = useState(false);
+  const [isHovered, setIsHovered] = useState(false);
   const isOnline = store.status === "online";
 
   const handleToggleClick = async () => {
-    if (loading) return;
+    if (loading || isBulking) return;
     setLoading(true);
     await onToggle(store);
     setLoading(false);
@@ -14,20 +15,22 @@ export default function StoreCard({ store, onToggle }) {
   const styles = {
     card: {
       backgroundColor: "#ffffff",
-      border: "1px solid rgba(19, 38, 100, 0.15)",
+      border: "1px solid rgba(19, 38, 100, 0.08)",
       borderRadius: "12px",
       overflow: "hidden",
       display: "flex",
       flexDirection: "column",
       position: "relative",
-      opacity: loading ? 0.7 : 1,
-      transition: "opacity 0.2s, box-shadow 0.2s",
-      boxShadow: "0 2px 6px rgba(19, 38, 100, 0.04)"
+      opacity: (loading || isBulking) ? 0.7 : 1,
+      transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
+      boxShadow: isHovered ? '0 8px 24px rgba(19, 38, 100, 0.12)' : '0 2px 8px rgba(19, 38, 100, 0.04)',
+      transform: isHovered ? 'translateY(-2px)' : 'none'
     },
     brandBar: {
       height: "4px",
       width: "100%",
-      backgroundColor: "#132664"
+      backgroundColor: isOnline ? "#22c55e" : "#ef4444",
+      transition: "background-color 0.3s"
     },
     content: {
       padding: "16px",
@@ -53,7 +56,7 @@ export default function StoreCard({ store, onToggle }) {
     brand: {
       fontSize: "11px",
       fontWeight: "600",
-      color: "rgba(19, 38, 100, 0.7)",
+      color: "#64748b",
       textTransform: "uppercase",
       letterSpacing: "0.5px"
     },
@@ -65,43 +68,45 @@ export default function StoreCard({ store, onToggle }) {
     },
     locationId: {
       fontSize: "11px",
-      color: "rgba(19, 38, 100, 0.5)",
+      color: "#94a3b8",
       fontWeight: "600"
     },
     badge: {
       display: "flex",
       alignItems: "center",
-      gap: "5px",
+      gap: "6px",
       fontSize: "10px",
       fontWeight: "700",
-      color: "#132664",
-      textTransform: "uppercase"
+      color: isOnline ? "#22c55e" : "#ef4444",
+      textTransform: "uppercase",
+      backgroundColor: isOnline ? "rgba(34, 197, 94, 0.1)" : "rgba(239, 68, 68, 0.1)",
+      padding: "4px 8px",
+      borderRadius: "12px"
     },
     dot: {
       width: "6px",
       height: "6px",
       borderRadius: "50%",
-      backgroundColor: isOnline ? "#132664" : "transparent",
-      border: "1px solid #132664"
+      backgroundColor: isOnline ? "#22c55e" : "#ef4444"
     },
     // Toggle Styles
     toggleTrack: {
       width: "36px",
       height: "20px",
-      backgroundColor: isOnline ? "#132664" : "rgba(19, 38, 100, 0.1)",
-      border: isOnline ? "none" : "1px solid #132664",
+      backgroundColor: isOnline ? "#22c55e" : "#cbd5e1",
+      border: "none",
       borderRadius: "10px",
       position: "relative",
-      cursor: loading ? "not-allowed" : "pointer",
+      cursor: (loading || isBulking) ? "not-allowed" : "pointer",
       transition: "background-color 0.2s"
     },
     toggleThumb: {
       position: "absolute",
-      top: isOnline ? "2px" : "1px",
+      top: "2px",
       left: isOnline ? "18px" : "2px",
       width: "16px",
       height: "16px",
-      backgroundColor: isOnline ? "#ffffff" : "#132664",
+      backgroundColor: "#ffffff",
       borderRadius: "50%",
       transition: "left 0.2s, background-color 0.2s",
       boxShadow: "0 1px 3px rgba(0,0,0,0.15)"
@@ -109,7 +114,11 @@ export default function StoreCard({ store, onToggle }) {
   };
 
   return (
-    <div style={styles.card}>
+    <div 
+      style={styles.card}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+    >
       <div style={styles.brandBar}></div>
       <div style={styles.content}>
         <div style={styles.topRow}>

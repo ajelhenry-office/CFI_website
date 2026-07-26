@@ -1,10 +1,103 @@
 import 'dotenv/config';
-import { createClient } from '@supabase/supabase-js';
+import fs from 'fs';
+import { pool } from './server/ratings/db.js';
 
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_KEY
-);
+const CITY_TO_ZONE_MAP = {
+  // South
+  'bangalore': 'South', 'bengaluru': 'South', 'hyderabad': 'South', 'chennai': 'South', 
+  'trichy': 'South', 'nellore': 'South', 'mysore': 'South', 'mysuru': 'South', 
+  'vizag': 'South', 'visakhapatnam': 'South', 'kochi': 'South', 'coimbatore': 'South', 
+  'dharwad': 'South', 'kurnool': 'South', 'madurai': 'South', 'vijayawada': 'South', 
+  'mangalore': 'South', 'mangaluru': 'South', 'pondicherry': 'South', 'manipal': 'South', 
+  'tumakuru': 'South', 'tumkur': 'South', 'kozhikode': 'South', 'warangal': 'South', 
+  'rajahmundry': 'South', 'thiruvananthapuram': 'South', 'trivandrum': 'South', 
+  'goa': 'South', 'central goa': 'South', 'erode': 'South', 'guntur': 'South', 
+  'kakinada': 'South', 'thrissur': 'South', 'anantapur': 'South', 'salem': 'South', 
+  'tirupati': 'South', 'hosur': 'South', 'palakkad': 'South', 'tirupur': 'South',
+
+  // North
+  'delhi': 'North', 'new delhi': 'North', 'karnal': 'North', 'gurgaon': 'North', 
+  'gurugram': 'North', 'gwalior': 'North', 'chandigarh': 'North', 'faridabad': 'North', 
+  'noida 1': 'North', 'noida': 'North', 'indore': 'North', 'jaipur': 'North', 
+  'bhopal': 'North', 'dehradun': 'North', 'lucknow': 'North', 'ludhiana': 'North', 
+  'amritsar': 'North', 'ujjain': 'North',
+
+  // West
+  'mumbai': 'West', 'bombay': 'West', 'pune': 'West', 'ahmedabad': 'West', 
+  'nagpur': 'West', 'aurangabad': 'West', 'nashik': 'West', 'nasik': 'West', 
+  'surat': 'West', 'jamshedpur': 'West', 'vadodara': 'West', 'baroda': 'West',
+
+  // East
+  'guwahati': 'East', 'bhubaneswar': 'East', 'ranchi': 'East', 'kolkata': 'East', 
+  'calcutta': 'East', 'cuttack': 'East', 'raipur': 'East', 'patna': 'East', 
+  'siliguri': 'East'
+};
+
+const ALLOWED_BRANDS = [
+  "99 Slice by Olio Pizza",
+  "Crusto's Pizza",
+  "Olio - The Wood Fired Pizzeria",
+  "PHAT - Chicken & Burgers",
+  "POMP - Pizza On My Plate",
+  "Juno's Pizza The Thin Crust Pizzeria",
+  "Ovenfresh Cakes and Desserts",
+  "Ovenfresh Pizzas",
+  "The Dessert Heaven",
+  "The Dessert Heaven Pure Veg",
+  "EatFit",
+  "EatFit All Things Healthy",
+  "EatFit Desi Meals Burgers More",
+  "Home Plate X Ghar ka Khana",
+  "Great Indian Khichdi by EatFit",
+  "HRX by Eatfit",
+  "HRX Rolls and Wraps",
+  "Rolls On Wheels - Shawarma & Wraps",
+  "Madras Curd Rice Company",
+  "Sharief Bhai Biryani",
+  "Roz Shawarma by Sharief Bhai",
+  "Krispy Kreme"
+];
+
+function getNormalizedBrand(brand) {
+  if (!brand) return "";
+  return brand.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function getCanonicalBrandName(brandName) {
+  if (!brandName) return null;
+  const norm = brandName.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+  // Rule 1: Juno's Pizza
+  if (norm.includes("junospizza") || norm.includes("junospizzathethincrustpizzeria")) {
+    return "Juno's Pizza The Thin Crust Pizzeria";
+  }
+
+  // Rule 2: Crusto's Pizza
+  if (norm.includes("crustoscheeseburstpizza") || norm.includes("crustospizza")) {
+    return "Crusto's Pizza";
+  }
+
+  // Rule 3: HRX Rolls and Wraps
+  if (norm.includes("rollswrapsbyhrx") || norm.includes("hrxrollsandwraps")) {
+    return "HRX Rolls and Wraps";
+  }
+
+  // Rule 4: Ovenfresh Pizzas
+  if (norm.includes("ovenfreshpizzas")) {
+    return "Ovenfresh Pizzas";
+  }
+
+  // Rule 5: Home Plate X Ghar ka Khana
+  if (norm.includes("homeplatebyeatfit") || norm.includes("gharkakhanabyeatfit") || norm.includes("homeplatexgharkakhana")) {
+    return "Home Plate X Ghar ka Khana";
+  }
+
+  // Otherwise, return a matched name from ALLOWED_BRANDS to ensure exact casing
+  const matched = ALLOWED_BRANDS.find(b => getNormalizedBrand(b) === norm);
+  return matched || brandName.replace(/_/g, " ").replace(/\s+/g, " ").trim();
+}
+
+const ALLOWED_BRANDS_NORMALIZED = new Set(ALLOWED_BRANDS.map(b => getNormalizedBrand(b)));
 
 function normalizeDate(d) {
   if (!d) return null;
@@ -46,7 +139,7 @@ async function insertRows(rows) {
     return console.log("No valid rows found to insert.");
   }
 
-  console.log(`Checking ${rows.length} rows against Supabase for exact duplicates...`);
+  console.log(`Checking ${rows.length} rows against PostgreSQL for exact duplicates...`);
 
   // 1. Format rows and drop empty/garbage Excel rows instantly
   const formattedRows = rows
@@ -55,17 +148,20 @@ async function insertRows(rows) {
       return {
         ...row,
         order_id: orderId,
+        brand_name: getCanonicalBrandName(row.brand_name),
         date: normalizeDate(row.date),
         ordered_time: row.ordered_time instanceof Date ? row.ordered_time.toISOString() : row.ordered_time
       };
     })
-    .filter(row => row.order_id && row.order_id !== 'null' && row.order_id !== '');
+    .filter(row => {
+      const isValidOrder = row.order_id && row.order_id !== 'null' && row.order_id !== '';
+      if (!isValidOrder) return false;
+      
+      const normRowBrand = getNormalizedBrand(row.brand_name);
+      return ALLOWED_BRANDS_NORMALIZED.has(normRowBrand);
+    });
 
-  // Find unique Order IDs in this sheet
-  const uniqueOrderIds = [...new Set(formattedRows.map(r => r.order_id))];
-  console.log(`Querying Supabase for ${uniqueOrderIds.length} unique Order IDs...`);
-
-  // NEW: Validate and extract unique outlets into outlet_master
+  // Validate and extract unique outlets into outlet_master
   const uniqueOutletsMap = new Map();
   let dataInconsistent = false;
 
@@ -75,19 +171,57 @@ async function insertRows(rows) {
     const restId = String(row.restaurant_id).trim();
     const area = String(row.area).trim();
     const dedupeKey = `${restId}_${area}`;
+    const cleanCity = row.city ? String(row.city).trim().toLowerCase() : '';
 
     const currentOutlet = {
       restaurant_id: restId,
       brand_name: row.brand_name,
       business_entity: row.business_entity,
       city: row.city,
-      area: area,
-      zone: row.zone
+      area: area
     };
+    
+    // Assign zone if explicitly provided in email row
+    if (row.zone != null && String(row.zone).trim() !== '') {
+      currentOutlet.zone = String(row.zone).trim();
+    } else {
+      // Auto-assign zone based on city map
+      const mappedZone = CITY_TO_ZONE_MAP[cleanCity];
+      if (mappedZone) {
+        currentOutlet.zone = mappedZone;
+      } else {
+        // DETECTOR WARNING: If city is unknown, print an explicit log alert
+        console.warn(`\n⚠️ [ALERT] UNKNOWN CITY ZONE: A new restaurant ID ${restId} in city '${row.city}' (Area: '${area}') was found, but its zone is unknown. Please add '${cleanCity}' to CITY_TO_ZONE_MAP in supabaseClient.js.\n`);
+        currentOutlet.zone = null;
+
+        // Log this warning to a warnings.json file in the root
+        try {
+          const warningPath = './warnings.json';
+          let warnings = [];
+          if (fs.existsSync(warningPath)) {
+            try {
+              warnings = JSON.parse(fs.readFileSync(warningPath, 'utf8'));
+            } catch (e) {}
+          }
+          if (!warnings.some(w => w.restaurant_id === restId && w.area === area)) {
+            warnings.push({
+              restaurant_id: restId,
+              brand_name: row.brand_name || null,
+              city: row.city || null,
+              area: area,
+              detected_at: new Date().toISOString(),
+              issue: "Unknown city zone. Please update CITY_TO_ZONE_MAP."
+            });
+            fs.writeFileSync(warningPath, JSON.stringify(warnings, null, 2));
+          }
+        } catch (err) {
+          console.error("Failed to write to warnings.json:", err.message);
+        }
+      }
+    }
     
     if (uniqueOutletsMap.has(dedupeKey)) {
       const existing = uniqueOutletsMap.get(dedupeKey);
-      // Validate that the attributes consistently map to the same restaurant_id + area
       if (existing.brand_name !== currentOutlet.brand_name || existing.business_entity !== currentOutlet.business_entity || existing.city !== currentOutlet.city || existing.zone !== currentOutlet.zone) {
         console.warn(`[WARNING] Inconsistent data found in Excel for restaurant_id+area: ${dedupeKey}`);
         dataInconsistent = true;
@@ -100,50 +234,47 @@ async function insertRows(rows) {
   const outletsToUpsert = Array.from(uniqueOutletsMap.values());
 
   if (outletsToUpsert.length > 0) {
-    console.log(`Upserting ${outletsToUpsert.length} unique outlets to outlet_master...`);
-    // Use the composite unique key for onConflict
-    const { error: outletError } = await supabase.from('outlet_master').upsert(outletsToUpsert, { onConflict: 'restaurant_id,area' });
-    if (outletError) console.error("Error upserting outlets:", outletError.message);
-  }
-
-  // 2. Fetch existing records by Order ID (in small chunks to prevent network timeouts)
-  let existingData = [];
-  const FETCH_CHUNK_SIZE = 50; // Reduced to 50 to keep query sizes highly optimized
-  
-  for (let i = 0; i < uniqueOrderIds.length; i += FETCH_CHUNK_SIZE) {
-    const chunkIds = uniqueOrderIds.slice(i, i + FETCH_CHUNK_SIZE);
-    
-    let fetchFrom = 0;
-    const fetchStep = 1000;
-    let keepFetching = true;
-
-    // Paginates through Supabase to guarantee we fetch EVERY existing row (bypassing the 1000 limit)
-    while (keepFetching) {
-      const { data: chunk, error: fetchError } = await supabase
-        .from('order_reviews')
-        .select('id, date, order_id, restaurant_id, item_name, comments, restaurant_rating, post_status')
-        .in('order_id', chunkIds)
-        .order('id', { ascending: true }) // Crucial for reliable pagination
-        .range(fetchFrom, fetchFrom + fetchStep - 1);
-        
-      if (fetchError) {
-        console.error("Error fetching existing data from Supabase:", fetchError.message);
-        break;
-      }
-      
-      existingData = existingData.concat(chunk || []);
-      
-      if (!chunk || chunk.length < fetchStep) {
-        keepFetching = false;
-      } else {
-        fetchFrom += fetchStep;
-      }
+    console.log(`Upserting ${outletsToUpsert.length} unique outlets to outlet_master in Postgres...`);
+    for (const o of outletsToUpsert) {
+      await pool.query(`
+        INSERT INTO outlet_master (restaurant_id, brand_name, business_entity, city, area, zone)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        ON CONFLICT (restaurant_id, area) 
+        DO UPDATE SET 
+          brand_name = EXCLUDED.brand_name,
+          business_entity = EXCLUDED.business_entity,
+          city = EXCLUDED.city,
+          zone = EXCLUDED.zone
+      `, [o.restaurant_id, o.brand_name, o.business_entity, o.city, o.area, o.zone]);
     }
   }
 
-  // Create a fast-lookup Map of existing records (Key: ORDERID_RESTID_ITEMNAME -> DB Row)
+  // Find unique Order IDs in this sheet
+  const uniqueOrderIds = [...new Set(formattedRows.map(r => r.order_id))];
+  console.log(`Querying PostgreSQL for existing records...`);
+
+  // Fetch existing records by Order ID in chunks
+  let existingData = [];
+  const FETCH_CHUNK_SIZE = 100;
+  
+  for (let i = 0; i < uniqueOrderIds.length; i += FETCH_CHUNK_SIZE) {
+    const chunkIds = uniqueOrderIds.slice(i, i + FETCH_CHUNK_SIZE);
+    try {
+      const res = await pool.query(
+        `SELECT id, date, order_id, restaurant_id, item_name, comments, restaurant_rating, post_status 
+         FROM order_reviews 
+         WHERE order_id = ANY($1)`,
+        [chunkIds]
+      );
+      existingData = existingData.concat(res.rows || []);
+    } catch (err) {
+      console.error("Error fetching existing data from Postgres:", err.message);
+    }
+  }
+
+  // Create a fast-lookup Map of existing records
   const existingMap = new Map();
-  (existingData || []).forEach(record => {
+  existingData.forEach(record => {
     existingMap.set(generateDedupeKey(record.order_id, record.restaurant_id, record.item_name), record);
   });
 
@@ -151,17 +282,15 @@ async function insertRows(rows) {
   const rowsToUpdate = [];
   const processedKeys = new Set();
 
-  // 3. Separate rows into "Completely New", "Needs Update", and "Unchanged Duplicates"
+  // Separate rows into "Completely New", "Needs Update", and "Unchanged Duplicates"
   formattedRows.forEach(row => {
     const key = generateDedupeKey(row.order_id, row.restaurant_id, row.item_name);
     
-    // Double-check: If we already queued this exact combination in this batch, skip it.
     if (processedKeys.has(key)) return;
     processedKeys.add(key);
 
     const existingDbRow = existingMap.get(key);
 
-    // Generate the specific payload strictly for the order_reviews table
     const reviewPayload = {
       order_id: row.order_id,
       restaurant_id: row.restaurant_id,
@@ -177,16 +306,13 @@ async function insertRows(rows) {
     };
 
     if (!existingDbRow) {
-      // Order is completely missing from DB, queue it for Insert
       newRowsToInsert.push(reviewPayload);
     } else {
-      // Order exists! Let's check if there is delayed feedback to update.
       const hasNewComments = row.comments != null && row.comments !== existingDbRow.comments;
       const hasNewRating = row.restaurant_rating != null && row.restaurant_rating !== existingDbRow.restaurant_rating;
       const hasNewStatus = row.post_status != null && row.post_status !== existingDbRow.post_status;
 
       if (hasNewComments || hasNewRating || hasNewStatus) {
-        // We attach the existing DB 'id' so Supabase knows exactly which row to update
         rowsToUpdate.push({ ...reviewPayload, id: existingDbRow.id });
       }
     }
@@ -199,32 +325,53 @@ async function insertRows(rows) {
     return console.log("No new inserts or delayed feedback updates needed.");
   }
 
-  // 4. Insert genuinely new orders
+  // Insert genuinely new orders
   if (newRowsToInsert.length > 0) {
-    console.log(`Attempting to insert ${newRowsToInsert.length} brand new rows...`);
-    
-    const CHUNK_SIZE = 1000; // Reduced from 5000 to prevent Payload Too Large API errors
-    for (let i = 0; i < newRowsToInsert.length; i += CHUNK_SIZE) {
-      const chunk = newRowsToInsert.slice(i, i + CHUNK_SIZE);
-      // Use upsert with ignoreDuplicates to guarantee no UNIQUE constraint violations on the DB side
-      const { error: insertError } = await supabase.from('order_reviews').upsert(chunk, { onConflict: 'order_id,restaurant_id,item_name', ignoreDuplicates: true });
-      if (insertError) console.error(`Insert Error (Batch ${i}):`, insertError.message);
+    console.log(`Attempting to insert ${newRowsToInsert.length} brand new rows into Postgres...`);
+    for (const r of newRowsToInsert) {
+      try {
+        await pool.query(`
+          INSERT INTO order_reviews (
+            order_id, restaurant_id, area, item_name, date, 
+            ordered_time, gmv_total, comments, restaurant_rating, 
+            post_status, updated_at
+          )
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+          ON CONFLICT (order_id, restaurant_id, item_name) 
+          DO NOTHING
+        `, [
+          r.order_id, r.restaurant_id, r.area, r.item_name, r.date,
+          r.ordered_time, r.gmv_total, r.comments, r.restaurant_rating,
+          r.post_status, r.updated_at
+        ]);
+      } catch (err) {
+        console.error(`Postgres insert error for order ${r.order_id}:`, err.message);
+      }
     }
-    console.log("Successfully inserted new rows in batches!");
+    console.log("Successfully inserted new rows!");
   }
 
-  // 5. Update older orders that received delayed feedback
+  // Update older orders that received delayed feedback
   if (rowsToUpdate.length > 0) {
     console.log(`Attempting to update ${rowsToUpdate.length} existing rows with new delayed feedback...`);
-    
-    const CHUNK_SIZE = 1000; // Reduced from 5000 for safe upserting
-    for (let i = 0; i < rowsToUpdate.length; i += CHUNK_SIZE) {
-      const chunk = rowsToUpdate.slice(i, i + CHUNK_SIZE);
-      // Because we attached the primary key 'id' to the objects, 'upsert' safely updates the existing records!
-      const { error: updateError } = await supabase.from('order_reviews').upsert(chunk);
-      if (updateError) console.error(`Update Error (Batch ${i}):`, updateError.message);
+    for (const r of rowsToUpdate) {
+      try {
+        await pool.query(`
+          UPDATE order_reviews 
+          SET 
+            comments = $1, 
+            restaurant_rating = $2, 
+            post_status = $3, 
+            updated_at = $4
+          WHERE id = $5
+        `, [
+          r.comments, r.restaurant_rating, r.post_status, r.updated_at, r.id
+        ]);
+      } catch (err) {
+        console.error(`Postgres update error for ID ${r.id}:`, err.message);
+      }
     }
-    console.log("Successfully updated existing rows with fresh feedback in batches!");
+    console.log("Successfully updated existing rows with fresh feedback!");
   }
 }
 

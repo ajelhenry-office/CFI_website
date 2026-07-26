@@ -500,7 +500,14 @@ export default function App() {
       case "backfill":
         return <RouteBackfillingPage globalFilters={filters} />;
       case "ratings":
-        return <RatingsPage globalFilters={filters} allBrands={options.brands} masterData={masterData} />;
+        return (
+          <RatingsPage 
+            globalFilters={filters} 
+            allBrands={options.brands} 
+            masterData={masterData} 
+            onUpdateFilters={(newFilters) => setFilters(prev => ({ ...prev, ...newFilters }))}
+          />
+        );
       case "settings":
         return <SettingsView />;
       case "theme":
@@ -553,6 +560,7 @@ export default function App() {
               </div>
             </div>
 
+            {activeTab !== "toggle" && (
             <div style={styles.filtersRow}>
               {/* Checkbox Brand Select */}
               <CheckboxFilterPopover 
@@ -712,6 +720,7 @@ export default function App() {
                 </button>
               )}
             </div>
+            )}
           </div>
         )}
 

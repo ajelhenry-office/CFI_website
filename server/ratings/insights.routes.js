@@ -3,7 +3,7 @@ import { Groq } from "groq-sdk";
 import "dotenv/config";
 import path from "path";
 import fs from "fs";
-import { supabase } from "./supabaseClient.js";
+import { pool } from "./db.js";
 
 const router = express.Router();
 
@@ -21,29 +21,21 @@ async function getOutletMap() {
     return outletCache;
   }
 
-  let allData = [];
-  let page = 0;
-  const pageSize = 1000;
-  while (true) {
-    const { data, error } = await supabase
-      .from('outlet_master')
-      .select('*')
-      .order('restaurant_id')
-      .range(page * pageSize, (page + 1) * pageSize - 1);
-    if (error) throw error;
-    if (!data || data.length === 0) break;
-    allData = allData.concat(data);
-    if (data.length < pageSize) break;
-    page++;
+  try {
+    const res = await pool.query('SELECT * FROM outlet_master ORDER BY restaurant_id');
+    const allData = res.rows;
+    
+    const map = new Map();
+    for (const r of allData) {
+      map.set(r.restaurant_id, r);
+    }
+    outletCache = map;
+    lastFetchTime = now;
+    return outletCache;
+  } catch (err) {
+    console.error("Failed to query outlet_master:", err.message);
+    throw err;
   }
-  
-  const map = new Map();
-  for (const r of allData) {
-    map.set(r.restaurant_id, r);
-  }
-  outletCache = map;
-  lastFetchTime = now;
-  return outletCache;
 }
 
 function splitDateRange(startDateStr, endDateStr, numChunks) {
@@ -71,7 +63,58 @@ function splitDateRange(startDateStr, endDateStr, numChunks) {
   return chunks;
 }
 
-async function fetchJoined(filters, limit = 200000, extraQueryFn = null) {
+function getParentBrand(brandName) {
+  if (!brandName) return "Other";
+  const norm = brandName.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+  const Groups = {
+    "olio": [
+      "99slicebyoliopizza",
+      "crustospizza",
+      "junospizzathethincrustpizzeria",
+      "oliothewoodfiredpizzeria",
+      "phatchickenburgers",
+      "pomppizzaonmyplate"
+    ],
+    "Eatfit": [
+      "eatfit",
+      "eatfitallthingshealthy",
+      "eatfitdesimealsburgersmore",
+      "gharkakhanabyeatfit",
+      "greatindiankhichdibyeatfit",
+      "homeplatebyeatfit",
+      "hrxbyeatfit",
+      "hrxrollsandwraps",
+      "rollsonwheelsshawarmawraps",
+      "homeplatexgharkakhana"
+    ],
+    "cakezone": [
+      "ovenfreshcakesanddesserts",
+      "ovenfreshpizzas",
+      "thedessertheaven",
+      "thedessertheavenpureveg"
+    ],
+    "Sharief Bhai Biryani": [
+      "rozshawarmabyshariefbhai",
+      "shariefbhaibiryani"
+    ],
+    "Millet Express": [
+      "madrascurdricecompany"
+    ],
+    "Krispy Kreme": [
+      "krispykreme"
+    ]
+  };
+
+  for (const [parent, children] of Object.entries(Groups)) {
+    if (children.includes(norm)) {
+      return parent;
+    }
+  }
+  return brandName.replace(/_/g, " ").replace(/\s+/g, " ").trim();
+}
+
+async function fetchJoined(filters, limit = 200000, extraSQL = '') {
   const map = await getOutletMap();
   
   let valid = Array.from(map.values());
@@ -93,133 +136,76 @@ async function fetchJoined(filters, limit = 200000, extraQueryFn = null) {
   // If a filter is applied but no outlets match, there are no reviews to return
   if (hasOutletFilter && validIds.length === 0) return [];
 
-  let allReviews = [];
-  const ID_CHUNK_SIZE = 400;
-
   const startDate = filters.dateFrom || filters.startDate;
   const endDate = filters.dateTo || filters.endDate;
 
-  if (!hasOutletFilter) {
-    const defaultStart = startDate || "2026-01-01";
-    const defaultEnd = endDate || "2026-12-31";
-    const numChunks = 12;
-    const chunks = splitDateRange(defaultStart, defaultEnd, numChunks);
+  let queryText = 'SELECT * FROM order_reviews WHERE 1=1';
+  const queryParams = [];
 
-    const promises = chunks.map(async (chunk) => {
-      let chunkReviews = [];
-      let page = 0;
-      const pageSize = 1000;
-      let keepFetching = true;
-      while (keepFetching && chunkReviews.length < limit) {
-        let q = supabase.from(TABLE).select('*');
-        q = q.gte("date", chunk.start);
-        q = q.lte("date", chunk.end);
+  if (startDate) {
+    queryParams.push(startDate);
+    queryText += ` AND date >= $${queryParams.length}`;
+  }
+  if (endDate) {
+    queryParams.push(endDate);
+    queryText += ` AND date <= $${queryParams.length}`;
+  }
+  if (hasOutletFilter) {
+    queryParams.push(validIds);
+    queryText += ` AND restaurant_id = ANY($${queryParams.length})`;
+  }
+  if (extraSQL) {
+    queryText += ` ${extraSQL}`;
+  }
 
-        if (extraQueryFn) q = extraQueryFn(q);
-        
-        q = q.range(page * pageSize, (page + 1) * pageSize - 1);
-        
-        const { data, error } = await q;
-        if (error) throw error;
-        
-        if (!data || data.length === 0) {
-          keepFetching = false;
-        } else {
-          chunkReviews = chunkReviews.concat(data);
-          if (data.length < pageSize) keepFetching = false;
-          else page++;
+  queryText += ' ORDER BY date DESC, id DESC';
+
+  try {
+    const dbRes = await pool.query(queryText, queryParams);
+    let result = dbRes.rows;
+
+    // Filter by time of day in memory since ordered_time is a full timestamp with timezone
+    if (filters.timeFrom || filters.timeTo) {
+      result = result.filter(row => {
+        if (!row.ordered_time) return false;
+        try {
+          const dateObj = new Date(row.ordered_time);
+          if (isNaN(dateObj.getTime())) return false;
+          
+          // Format to IST (Asia/Kolkata) since Curefoods operates in India
+          const options = { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", hour12: false };
+          const localTimeStr = dateObj.toLocaleTimeString("en-US", options); // "HH:MM"
+          
+          if (filters.timeFrom && localTimeStr < filters.timeFrom) return false;
+          if (filters.timeTo && localTimeStr > filters.timeTo) return false;
+        } catch (err) {
+          return false;
         }
+        return true;
+      });
+    }
+
+    result = result.slice(0, limit);
+
+    // Attach the correct brand, city, area, zone fields to every review for Insight functions to use
+    for (const row of result) {
+      const outlet = map.get(row.restaurant_id);
+      if (outlet) {
+        row.outlet_id = outlet.id;
+        row.brand_name = outlet.brand_name;
+        row.main_brand = getParentBrand(outlet.brand_name);
+        row.city = outlet.city;
+        row.zone = outlet.zone;
+        row.area = outlet.area || row.area;
+        row.business_entity = outlet.business_entity;
       }
-      return chunkReviews;
-    });
-
-    const results = await Promise.all(promises);
-    allReviews = results.flat();
-  } else {
-    // We have outlet filters! Query in chunks of restaurant_ids to avoid URL length issues
-    const promises = [];
-    for (let i = 0; i < validIds.length; i += ID_CHUNK_SIZE) {
-      const chunkIds = validIds.slice(i, i + ID_CHUNK_SIZE);
-      
-      const fetchChunk = async () => {
-        let chunkReviews = [];
-        let page = 0;
-        const pageSize = 1000;
-        let keepFetching = true;
-        
-        while (keepFetching && chunkReviews.length < limit) {
-          let q = supabase.from(TABLE).select('*').in('restaurant_id', chunkIds);
-          
-          if (startDate) q = q.gte("date", startDate);
-          if (endDate) q = q.lte("date", endDate);
-
-          if (extraQueryFn) q = extraQueryFn(q);
-          
-          q = q.range(page * pageSize, (page + 1) * pageSize - 1);
-          
-          const { data, error } = await q;
-          if (error) throw error;
-          
-          if (!data || data.length === 0) {
-            keepFetching = false;
-          } else {
-            chunkReviews = chunkReviews.concat(data);
-            if (data.length < pageSize) keepFetching = false;
-            else page++;
-          }
-        }
-        return chunkReviews;
-      };
-      
-      promises.push(fetchChunk());
     }
     
-    const results = await Promise.all(promises);
-    for (const r of results) {
-      allReviews = allReviews.concat(r);
-    }
+    return result;
+  } catch (err) {
+    console.error("Failed to query reviews from Postgres:", err.message);
+    throw err;
   }
-
-  let result = allReviews;
-
-  // Filter by time of day in memory since ordered_time is a full timestamp with timezone
-  // and filters.timeFrom/timeTo are simple HH:mm strings.
-  if (filters.timeFrom || filters.timeTo) {
-    result = result.filter(row => {
-      if (!row.ordered_time) return false;
-      try {
-        const dateObj = new Date(row.ordered_time);
-        if (isNaN(dateObj.getTime())) return false;
-        
-        // Format to IST (Asia/Kolkata) since Curefoods operates in India
-        const options = { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", hour12: false };
-        const localTimeStr = dateObj.toLocaleTimeString("en-US", options); // "HH:MM"
-        
-        if (filters.timeFrom && localTimeStr < filters.timeFrom) return false;
-        if (filters.timeTo && localTimeStr > filters.timeTo) return false;
-      } catch (err) {
-        return false;
-      }
-      return true;
-    });
-  }
-
-  result = result.slice(0, limit);
-
-  // Attach the correct brand, city, area, zone fields to every review for Insight functions to use
-  for (const row of result) {
-    const outlet = map.get(row.restaurant_id);
-    if (outlet) {
-      row.outlet_id = outlet.id;
-      row.brand_name = outlet.brand_name;
-      row.city = outlet.city;
-      row.zone = outlet.zone;
-      row.area = outlet.area || row.area;
-      row.business_entity = outlet.business_entity;
-    }
-  }
-  
-  return result;
 }
 
 function groupBy(rows, keyFn, valFn) {
@@ -243,7 +229,7 @@ function groupBy(rows, keyFn, valFn) {
 }
 
 async function fetchLowRatingComments(filters) {
-  const data = await fetchJoined(filters, 100, q => q.lte("restaurant_rating", 3).not("comments", "is", null));
+  const data = await fetchJoined(filters, 100, 'AND restaurant_rating <= 3 AND comments IS NOT NULL');
   return data.map((r) => r.comments).filter(Boolean).join("\n");
 }
 
@@ -456,6 +442,229 @@ router.post("/:id", async (req, res) => {
           has_comment: !!(r.comments && r.comments.trim() !== ""),
           order_id: r.order_id
         }));
+        break;
+      }
+      case 23: {
+        const rows = await fetchJoined(filters);
+        const dayparts = {
+          "Morning (06:00 - 12:00)": [],
+          "Afternoon (12:00 - 16:00)": [],
+          "Evening (16:00 - 19:00)": [],
+          "Night (19:00 - 06:00)": []
+        };
+        rows.forEach(r => {
+          if (!r.ordered_time) return;
+          const h = new Date(r.ordered_time).getHours();
+          let dp = "Night (19:00 - 06:00)";
+          if (h >= 6 && h < 12) dp = "Morning (06:00 - 12:00)";
+          else if (h >= 12 && h < 16) dp = "Afternoon (12:00 - 16:00)";
+          else if (h >= 16 && h < 19) dp = "Evening (16:00 - 19:00)";
+          dayparts[dp].push(r.restaurant_rating);
+        });
+        data = Object.entries(dayparts).map(([name, vals]) => {
+          const nums = vals.filter(v => v != null && !isNaN(v));
+          return {
+            name,
+            avg: nums.length ? +(nums.reduce((a, b) => a + b, 0) / nums.length).toFixed(2) : 0,
+            count: vals.length
+          };
+        });
+        break;
+      }
+      case 26: {
+        const rows = await fetchJoined(filters);
+        const groupMap = new Map();
+        rows.forEach(r => {
+          const loc = r.city;
+          const brand = r.brand_name;
+          if (!loc || !brand) return;
+          const key = `${loc}::${brand}`;
+          if (!groupMap.has(key)) groupMap.set(key, { loc, brand, ratings: [] });
+          if (r.restaurant_rating != null) groupMap.get(key).ratings.push(Number(r.restaurant_rating));
+        });
+        const locBrands = {};
+        for (const [_, item] of groupMap) {
+          if (!locBrands[item.loc]) locBrands[item.loc] = [];
+          const nums = item.ratings.filter(v => v != null && !isNaN(v));
+          if (nums.length >= 5) {
+            locBrands[item.loc].push({
+              brand: item.brand,
+              avg: +(nums.reduce((a, b) => a + b, 0) / nums.length).toFixed(2),
+              count: nums.length
+            });
+          }
+        }
+        data = Object.entries(locBrands).map(([city, list]) => {
+          if (list.length === 0) return null;
+          const sorted = [...list].sort((a, b) => b.avg - a.avg);
+          return {
+            city,
+            bestBrand: sorted[0].brand,
+            bestAvg: sorted[0].avg,
+            worstBrand: sorted[sorted.length - 1].brand,
+            worstAvg: sorted[sorted.length - 1].avg
+          };
+        }).filter(Boolean);
+        break;
+      }
+      case 27: {
+        const rows = await fetchJoined(filters);
+        const areaBrandMap = new Map();
+        const outletMap = new Map();
+        rows.forEach(r => {
+          const area = r.area;
+          const brand = r.brand_name;
+          const outletId = r.restaurant_id;
+          const rating = r.restaurant_rating;
+          if (!area || !brand || !outletId || rating == null) return;
+          const abKey = `${area}::${brand}`;
+          if (!areaBrandMap.has(abKey)) areaBrandMap.set(abKey, []);
+          areaBrandMap.get(abKey).push(rating);
+          const oKey = `${outletId}::${brand}`;
+          if (!outletMap.has(oKey)) outletMap.set(oKey, { area, outletId, brand, ratings: [] });
+          outletMap.get(oKey).ratings.push(rating);
+        });
+        const abAvg = {};
+        for (const [key, vals] of areaBrandMap) {
+          abAvg[key] = +(vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(2);
+        }
+        data = [];
+        for (const [_, item] of outletMap) {
+          const oAvg = +(item.ratings.reduce((a, b) => a + b, 0) / item.ratings.length).toFixed(2);
+          const abKey = `${item.area}::${item.brand}`;
+          const kAvg = abAvg[abKey] || oAvg;
+          const gap = +(oAvg - kAvg).toFixed(2);
+          data.push({
+            outletId: item.outletId,
+            area: item.area,
+            brand: item.brand,
+            outletAvg: oAvg,
+            kitchenAvg: kAvg,
+            gap,
+            status: gap <= -0.5 ? "⚠️ Outlier (Poor)" : gap >= 0.5 ? "🟢 Star Store" : "Normal"
+          });
+        }
+        data.sort((a, b) => a.gap - b.gap);
+        break;
+      }
+      case 28: {
+        const rows = await fetchJoined(filters);
+        const outletItemMap = new Map();
+        rows.forEach(r => {
+          const outletId = r.restaurant_id;
+          const item = r.item_name;
+          const rating = r.restaurant_rating;
+          if (!outletId || !item || item === "NO_ITEM" || rating == null) return;
+          const key = `${outletId}::${item}`;
+          if (!outletItemMap.has(key)) outletItemMap.set(key, { outletId, item, ratings: [] });
+          outletItemMap.get(key).ratings.push(rating);
+        });
+        const outletBests = {};
+        for (const [_, val] of outletItemMap) {
+          const avg = +(val.ratings.reduce((a, b) => a + b, 0) / val.ratings.length).toFixed(2);
+          if (!outletBests[val.outletId] || outletBests[val.outletId].avg < avg) {
+            outletBests[val.outletId] = { item: val.item, avg, count: val.ratings.length };
+          }
+        }
+        const names = {};
+        rows.forEach(r => { if (r.restaurant_id) names[r.restaurant_id] = r.area || r.restaurant_id; });
+        data = Object.entries(outletBests).map(([outletId, itemObj]) => ({
+          outletId,
+          name: names[outletId] || outletId,
+          bestItem: itemObj.item,
+          rating: itemObj.avg,
+          count: itemObj.count
+        })).sort((a, b) => b.rating - a.rating);
+        break;
+      }
+      case 29: {
+        const rows = await fetchJoined(filters);
+        const itemMap = new Map();
+        rows.forEach(r => {
+          const item = r.item_name;
+          const rating = r.restaurant_rating;
+          if (!item || item === "NO_ITEM" || rating == null) return;
+          if (!itemMap.has(item)) itemMap.set(item, []);
+          itemMap.get(item).push(rating);
+        });
+        data = [...itemMap.entries()].map(([name, ratings]) => {
+          const count = ratings.length;
+          if (count < 5) return null;
+          const avg = +(ratings.reduce((a, b) => a + b, 0) / count).toFixed(2);
+          const variance = ratings.reduce((sum, r) => sum + Math.pow(r - avg, 2), 0) / count;
+          const stddev = +Math.sqrt(variance).toFixed(2);
+          return {
+            name,
+            avg,
+            count,
+            stddev,
+            status: stddev <= 0.5 ? "🟢 Highly Consistent" : stddev >= 1.2 ? "🔴 Inconsistent" : "Moderate"
+          };
+        }).filter(Boolean).sort((a, b) => b.stddev - a.stddev);
+        break;
+      }
+      case 30: {
+        const rows = await fetchJoined(filters);
+        const itemLocMap = new Map();
+        rows.forEach(r => {
+          const item = r.item_name;
+          const city = r.city;
+          const rating = r.restaurant_rating;
+          if (!item || item === "NO_ITEM" || !city || rating == null) return;
+          const key = `${item}::${city}`;
+          if (!itemLocMap.has(key)) itemLocMap.set(key, []);
+          itemLocMap.get(key).push(rating);
+        });
+        data = [...itemLocMap.entries()].map(([key, ratings]) => {
+          const [item, city] = key.split("::");
+          const avg = +(ratings.reduce((a, b) => a + b, 0) / ratings.length).toFixed(2);
+          return { item, city, avg, count: ratings.length };
+        }).sort((a, b) => b.count - a.count);
+        break;
+      }
+      case 31: {
+        const rows = await fetchJoined(filters);
+        const itemTrend = new Map();
+        rows.forEach(r => {
+          const item = r.item_name;
+          const date = r.date;
+          const rating = r.restaurant_rating;
+          if (!item || item === "NO_ITEM" || !date || rating == null) return;
+          const month = date.substring(0, 7);
+          const key = `${item}::${month}`;
+          if (!itemTrend.has(key)) itemTrend.set(key, []);
+          itemTrend.get(key).push(rating);
+        });
+        data = [...itemTrend.entries()].map(([key, ratings]) => {
+          const [item, month] = key.split("::");
+          const avg = +(ratings.reduce((a, b) => a + b, 0) / ratings.length).toFixed(2);
+          return { item, month, avg, count: ratings.length };
+        }).sort((a, b) => a.month.localeCompare(b.month));
+        break;
+      }
+      case 32: {
+        const rows = await fetchJoined(filters);
+        const companyRatings = rows.map(r => r.restaurant_rating).filter(v => v != null);
+        const companyAvg = companyRatings.length ? +(companyRatings.reduce((a, b) => a + b, 0) / companyRatings.length).toFixed(2) : 0;
+        const itemMap = new Map();
+        rows.forEach(r => {
+          const item = r.item_name;
+          const rating = r.restaurant_rating;
+          if (!item || item === "NO_ITEM" || rating == null) return;
+          if (!itemMap.has(item)) itemMap.set(item, []);
+          itemMap.get(item).push(rating);
+        });
+        data = [...itemMap.entries()].map(([name, ratings]) => {
+          const avg = +(ratings.reduce((a, b) => a + b, 0) / ratings.length).toFixed(2);
+          const gap = +(avg - companyAvg).toFixed(2);
+          return {
+            name,
+            avg,
+            companyAvg,
+            gap,
+            status: gap >= 0.2 ? "🟢 Above Avg" : gap <= -0.2 ? "🔴 Below Avg" : "Average"
+          };
+        }).sort((a, b) => a.gap - b.gap);
         break;
       }
       default:

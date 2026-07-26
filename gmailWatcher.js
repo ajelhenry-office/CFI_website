@@ -1,6 +1,10 @@
-const fs = require('fs');
-const path = require('path');
-const { google } = require('googleapis');
+import fs from 'fs';
+import path from 'path';
+import { google } from 'googleapis';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const CREDENTIALS_PATH = path.join(__dirname, 'gmail_credentials.json');
 const TOKEN_PATH = path.join(__dirname, 'gmail_token.json');
@@ -61,20 +65,28 @@ function getAttachmentParts(part) {
   return attachments;
 }
 
-async function checkForNewReports(targetDateStr) {
+async function checkForNewReports(targetDateStr, forceAll = false) {
   const auth = await getAuthClient();
   const gmail = google.gmail({ version: 'v1', auth });
+  const drive = google.drive({ version: 'v3', auth });
   const downloadedFiles = [];
 
-  let query = `from:ranjith.r@swiggy.in subject:"Funnel,IGCC,RDC,Serviceability & RHI - Report"`;
-  if (!targetDateStr) {
+  let query = `from:ranjith.r@swiggy.in`;
+  if (!targetDateStr && !forceAll) {
     query += ` -label:swiggy-processed`;
   }
 
   console.log(`Checking Gmail for Swiggy reports...`);
   
-  const res = await gmail.users.messages.list({ userId: 'me', q: query });
-  const messages = res.data.messages || [];
+  let messages = [];
+  let pageToken = undefined;
+  do {
+    const res = await gmail.users.messages.list({ userId: 'me', q: query, maxResults: 100, pageToken });
+    if (res.data.messages) {
+      messages = messages.concat(res.data.messages);
+    }
+    pageToken = res.data.nextPageToken;
+  } while (pageToken);
 
   if (messages.length === 0) {
     console.log('No new reports found.');
@@ -89,23 +101,29 @@ async function checkForNewReports(targetDateStr) {
 
   for (const message of messages) {
     const msgData = await gmail.users.messages.get({ userId: 'me', id: message.id });
+    const payload = msgData.data.payload;
+    const headers = payload.headers;
+    const subject = headers.find(h => h.name.toLowerCase() === 'subject')?.value || '';
+    
+    if (!subject.toLowerCase().includes("funnel")) continue; // Only care about funnel reports
 
-    // Strict JavaScript date filtering (ignores Gmail's confusing search engine logic)
+    // Strict JavaScript date filtering
     if (targetDateObj) {
-      const headers = msgData.data.payload.headers;
-      const dateHeader = headers.find(h => h.name === 'Date')?.value;
+      const dateHeader = headers.find(h => h.name.toLowerCase() === 'date')?.value;
       if (dateHeader) {
         const emailDate = new Date(dateHeader);
         if (emailDate.getFullYear() !== targetDateObj.getFullYear() ||
             emailDate.getMonth() !== targetDateObj.getMonth() ||
             emailDate.getDate() !== targetDateObj.getDate()) {
-          continue; // Instantly skip emails that don't match the exact day
+          continue; // Skip emails that don't match the exact day
         }
       }
     }
 
+    let fileDownloadedFromEmail = false;
+
     // 1. Process standard file attachments
-    const attachmentParts = getAttachmentParts(msgData.data.payload);
+    const attachmentParts = getAttachmentParts(payload);
     for (const part of attachmentParts) {
       console.log(`Downloading attachment: ${part.filename}`);
       const attachmentId = part.body.attachmentId;
@@ -120,17 +138,73 @@ async function checkForNewReports(targetDateStr) {
       const filePath = path.join(DOWNLOAD_DIR, `${Date.now()}_${part.filename}`);
       fs.writeFileSync(filePath, buffer);
       downloadedFiles.push(filePath);
+      fileDownloadedFromEmail = true;
     }
 
     // 2. Extract and download from links in the email body
-    const bodyText = getEmailBody(msgData.data.payload);
+    const bodyText = getEmailBody(payload);
     const urlRegex = /(https?:\/\/[^\s"'<>]+)/g;
     const urls = bodyText.match(urlRegex) || [];
 
-    for (let url of urls) {
-      url = url.replace(/&amp;/g, '&'); // Fix HTML escaped ampersands
+    // Deduplicate URLs to avoid downloading the same sheet twice
+    const uniqueUrls = [...new Set(urls.map(u => u.replace(/&amp;/g, '&')))];
+
+    for (let url of uniqueUrls) {
       const lowerUrl = url.toLowerCase();
-      if (lowerUrl.includes('.xlsx') || lowerUrl.includes('.xls') || lowerUrl.includes('.csv')) {
+      const sheetMatch = url.match(/docs\.google\.com\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+      
+      if (sheetMatch) {
+        const fileId = sheetMatch[1];
+        console.log(`Found Google Sheet link in email. Downloading file ID: ${fileId}...`);
+        try {
+          const response = await drive.files.export(
+            { fileId: fileId, mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' },
+            { responseType: 'stream' }
+          );
+          
+          const safeSubject = subject.replace(/[^a-z0-9]/gi, '_').substring(0, 50);
+          const filePath = path.join(DOWNLOAD_DIR, `${Date.now()}_${safeSubject}.xlsx`);
+          const dest = fs.createWriteStream(filePath);
+          
+          await new Promise((resolve, reject) => {
+            response.data
+              .on('end', () => resolve())
+              .on('error', err => reject(err))
+              .pipe(dest);
+          });
+          downloadedFiles.push(filePath);
+          fileDownloadedFromEmail = true;
+          console.log(`Successfully downloaded Google Sheet: ${filePath}`);
+        } catch (err) {
+          if (err.message && err.message.toLowerCase().includes('export only supports docs editors files')) {
+            console.log(`File is not a Google Sheet, downloading raw media for ID: ${fileId}...`);
+            try {
+              const response = await drive.files.get(
+                { fileId: fileId, alt: 'media' },
+                { responseType: 'stream' }
+              );
+              
+              const safeSubject = subject.replace(/[^a-z0-9]/gi, '_').substring(0, 50);
+              const filePath = path.join(DOWNLOAD_DIR, `${Date.now()}_${safeSubject}.xlsx`);
+              const dest = fs.createWriteStream(filePath);
+              
+              await new Promise((resolve, reject) => {
+                response.data
+                  .on('end', () => resolve())
+                  .on('error', err => reject(err))
+                  .pipe(dest);
+              });
+              downloadedFiles.push(filePath);
+              fileDownloadedFromEmail = true;
+              console.log(`Successfully downloaded raw file: ${filePath}`);
+            } catch (err2) {
+              console.error(`Failed to download raw file from Drive:`, err2.message);
+            }
+          } else {
+            console.error(`Failed to download Google Sheet:`, err.message);
+          }
+        }
+      } else if (lowerUrl.includes('.xlsx') || lowerUrl.includes('.xls') || lowerUrl.includes('.csv')) {
         console.log(`Found report link in email: ${url}`);
         try {
           const response = await fetch(url);
@@ -141,6 +215,7 @@ async function checkForNewReports(targetDateStr) {
             const filePath = path.join(DOWNLOAD_DIR, `${Date.now()}_${fileName}`);
             fs.writeFileSync(filePath, buffer);
             downloadedFiles.push(filePath);
+            fileDownloadedFromEmail = true;
           }
         } catch (err) {
           console.error(`Failed to download from link:`, err.message);
@@ -148,9 +223,9 @@ async function checkForNewReports(targetDateStr) {
       }
     }
 
-    if (!targetDateStr) {
+    if (!targetDateStr && fileDownloadedFromEmail) {
       await markEmailAsProcessed(gmail, message.id);
-    } else {
+    } else if (targetDateStr) {
       console.log(`Testing mode (Target Date Provided): Skipping label application so email can be fetched again.`);
     }
   }
@@ -179,4 +254,4 @@ async function markEmailAsProcessed(gmail, messageId) {
   });
 }
 
-module.exports = { checkForNewReports };
+export { checkForNewReports };

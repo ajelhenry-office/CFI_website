@@ -1,29 +1,13 @@
-import { supabase } from './supabaseClient.js';
+import { pool } from './db.js';
 
 /**
  * Main handler to fetch ALL outlet master data once so the frontend can do instant cascading filtering.
  */
 async function handleFilterRequest(req, res) {
   try {
-    // Fetch ALL necessary columns handling pagination
-    let allData = [];
-    let page = 0;
-    const pageSize = 1000;
-    
-    while (true) {
-      const { data, error } = await supabase
-        .from('outlet_master')
-        .select('brand_name, city, zone, area')
-        .range(page * pageSize, (page + 1) * pageSize - 1)
-        .order('brand_name'); // Stabilize sort to prevent missed rows
-
-      if (error) throw error;
-      if (!data || data.length === 0) break;
-      
-      allData = allData.concat(data);
-      if (data.length < pageSize) break;
-      page++;
-    }
+    // Fetch ALL outlets in a single query since Postgres has no 1000-row return limit
+    const outletsResult = await pool.query('SELECT brand_name, city, zone, area FROM outlet_master ORDER BY brand_name');
+    const allData = outletsResult.rows;
 
     // Clean the data (spaces & trim)
     const cleanedData = allData.map(row => ({
@@ -34,12 +18,17 @@ async function handleFilterRequest(req, res) {
     }));
 
     // Fetch max date from order_reviews
-    const { data: maxDateData } = await supabase
-      .from('order_reviews')
-      .select('date')
-      .order('date', { ascending: false })
-      .limit(1);
-    const maxDate = (maxDateData && maxDateData[0]) ? maxDateData[0].date : null;
+    const dateResult = await pool.query('SELECT date FROM order_reviews ORDER BY date DESC LIMIT 1');
+    
+    // Format date string to YYYY-MM-DD safely
+    let maxDate = null;
+    if (dateResult.rows.length > 0 && dateResult.rows[0].date) {
+      const d = new Date(dateResult.rows[0].date);
+      const year = d.getFullYear();
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      maxDate = `${year}-${month}-${day}`;
+    }
 
     res.json({ masterData: cleanedData, maxDate });
   } catch (error) {

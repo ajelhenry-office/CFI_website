@@ -83,7 +83,15 @@ export default function BrandDashboard({ reviews, onClose, allBrands = [], maste
     const g = brandGroupMap.get(brandName);
     const bMeta = brandMetaMap.get(brandName);
 
-    const zonesCount = bMeta ? bMeta.zones.size : 0;
+    const zoneAbbrs = [];
+    if (bMeta) {
+      if (bMeta.zones.has("North")) zoneAbbrs.push("N");
+      if (bMeta.zones.has("South")) zoneAbbrs.push("S");
+      if (bMeta.zones.has("East")) zoneAbbrs.push("E");
+      if (bMeta.zones.has("West")) zoneAbbrs.push("W");
+    }
+    const zonesStr = zoneAbbrs.join(", ") || "-";
+
     const citiesCount = bMeta ? bMeta.cities.size : 0;
     const areasCount = bMeta ? bMeta.areas.size : 0;
     const outletsCount = bMeta ? bMeta.outletsCount : 0;
@@ -96,7 +104,7 @@ export default function BrandDashboard({ reviews, onClose, allBrands = [], maste
       return {
         brand: brandName,
         rating: avgRating === "-" ? "-" : `${avgRating}★`,
-        zonesCount,
+        zonesStr,
         citiesCount,
         areasCount,
         outletsCount,
@@ -109,7 +117,7 @@ export default function BrandDashboard({ reviews, onClose, allBrands = [], maste
       return {
         brand: brandName,
         rating: "-",
-        zonesCount,
+        zonesStr,
         citiesCount,
         areasCount,
         outletsCount,
@@ -164,7 +172,7 @@ export default function BrandDashboard({ reviews, onClose, allBrands = [], maste
     const rows = brandSummaryRows.map(r => ({
       Brand: r.brand,
       Rating: r.rating,
-      Zones: r.zonesCount,
+      Zones: r.zonesStr,
       Cities: r.citiesCount,
       Areas: r.areasCount,
       Outlets: r.outletsCount,
@@ -258,8 +266,17 @@ export default function BrandDashboard({ reviews, onClose, allBrands = [], maste
                     }}>
                       {row.brand}
                     </td>
-                    <td style={{ padding: "8px 12px", fontWeight: "700", color: "#132664", borderBottom: "1px solid rgba(19, 38, 100, 0.08)", borderRight: "1px solid rgba(19, 38, 100, 0.08)" }}>{row.rating}</td>
-                    <td style={{ padding: "8px 12px", color: "#132664", borderBottom: "1px solid rgba(19, 38, 100, 0.08)", borderRight: "1px solid rgba(19, 38, 100, 0.08)" }}>{row.zonesCount}</td>
+                    <td style={{ 
+                      padding: "8px 12px", 
+                      fontWeight: "700", 
+                      color: "#132664", 
+                      borderBottom: row.rating !== "-" ? "1px solid rgba(19, 38, 100, 0.08)" : "1px solid transparent", 
+                      borderRight: row.rating !== "-" ? "1px solid rgba(19, 38, 100, 0.08)" : "1px solid transparent",
+                      backgroundColor: row.rating !== "-" ? "transparent" : "transparent"
+                    }}>
+                      {row.rating !== "-" ? row.rating : ""}
+                    </td>
+                    <td style={{ padding: "8px 12px", color: "#132664", borderBottom: "1px solid rgba(19, 38, 100, 0.08)", borderRight: "1px solid rgba(19, 38, 100, 0.08)", whiteSpace: "nowrap" }}>{row.zonesStr}</td>
                     <td style={{ padding: "8px 12px", color: "#132664", borderBottom: "1px solid rgba(19, 38, 100, 0.08)", borderRight: "1px solid rgba(19, 38, 100, 0.08)" }}>{row.citiesCount}</td>
                     <td style={{ padding: "8px 12px", color: "#132664", borderBottom: "1px solid rgba(19, 38, 100, 0.08)", borderRight: "1px solid rgba(19, 38, 100, 0.08)" }}>{row.areasCount}</td>
                     <td style={{ padding: "8px 12px", color: "#132664", borderBottom: "1px solid rgba(19, 38, 100, 0.08)", borderRight: "1px solid rgba(19, 38, 100, 0.08)" }}>{row.outletsCount}</td>

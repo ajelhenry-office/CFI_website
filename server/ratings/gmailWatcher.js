@@ -102,11 +102,32 @@ async function downloadGoogleSheet(auth, fileId, destPath) {
     }
   });
   console.log(`Download response status: ${response.status}`);
-  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  if (response.ok) {
+    const buffer = await response.arrayBuffer();
+    fs.writeFileSync(destPath, Buffer.from(buffer));
+    return destPath;
+  }
 
-  const buffer = await response.arrayBuffer();
-  fs.writeFileSync(destPath, Buffer.from(buffer));
-  return destPath;
+  console.log(`Export failed with HTTP ${response.status}. Attempting direct file download for ID: ${fileId}...`);
+  const drive = google.drive({ version: 'v3', auth });
+  try {
+    const rawResponse = await drive.files.get(
+      { fileId: fileId, alt: 'media' },
+      { responseType: 'stream' }
+    );
+    const dest = fs.createWriteStream(destPath);
+    await new Promise((resolve, reject) => {
+      rawResponse.data
+        .on('end', () => resolve())
+        .on('error', err => reject(err))
+        .pipe(dest);
+    });
+    console.log(`Direct file download successful! Saved to: ${destPath}`);
+    return destPath;
+  } catch (err) {
+    console.error("Direct file download failed:", err.message);
+    throw new Error(`HTTP ${response.status} & Drive error: ${err.message}`);
+  }
 }
 
 async function checkForNewReports(targetDateStr) {
@@ -115,8 +136,8 @@ async function checkForNewReports(targetDateStr) {
   const drive = google.drive({ version: 'v3', auth });
   const downloadedFiles = [];
 
-  // Use keywords instead of an exact phrase to make the search more robust.
-  let query = `from:ranjith.r@swiggy.in subject:(Funnel IGCC RDC Serviceability Report)`;
+  // Search for emails containing all these words in the subject in any order
+  let query = `from:ranjith.r@swiggy.in subject:(Funnel IGCC RDC Serviceability RHI)`;
   if (!targetDateStr) {
     query += ` -label:swiggy-processed`;
   }

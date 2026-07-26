@@ -1,13 +1,8 @@
 import 'dotenv/config';
 import fs from 'fs';
 import xlsx from 'xlsx';
-import { createClient } from '@supabase/supabase-js';
+import { pool } from './db.js';
 import { checkForNewReports } from './gmailWatcher.js';
-
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_KEY
-);
 
 // ─── HELPERS ──────────────────────────────────────────────────
 
@@ -126,92 +121,57 @@ async function syncOutletMaster(rows) {
   // 1. Fetch all existing restaurant_id + area combinations from outlet_master along with city and zone
   console.log('Fetching existing outlets from database...');
   let existingOutlets = [];
-  let page = 0;
-  const pageSize = 1000;
-  while (true) {
-    const { data, error } = await supabase
-      .from('outlet_master')
-      .select('restaurant_id, area, city, zone')
-      .range(page * pageSize, (page + 1) * pageSize - 1);
-    if (error) {
-      console.error('Error fetching existing outlets:', error.message);
-      break;
-    }
-    if (!data || data.length === 0) break;
-    existingOutlets = existingOutlets.concat(data);
-    if (data.length < pageSize) break;
-    page++;
+  try {
+    const res = await pool.query('SELECT restaurant_id, area, city, zone FROM outlet_master');
+    existingOutlets = res.rows || [];
+  } catch (err) {
+    console.error('Error fetching existing outlets:', err.message);
   }
 
-  // Set of existing keys: "restaurant_id_area"
-  const existingSet = new Set(
-    existingOutlets.map(o => `${String(o.restaurant_id).trim()}_${String(o.area || '').trim()}`)
-  );
-
-  // Build city -> zone map from reference file (zMap) and existing DB records
-  const dbCityToZone = new Map();
-  
-  // First, populate from reference zMap keys (format is "city_area")
-  for (const [key, zone] of zMap.entries()) {
-    const cityPart = key.split('_')[0];
-    if (cityPart && zone) {
-      dbCityToZone.set(cityPart.toLowerCase(), String(zone).trim());
-    }
-  }
-
-  // Next, populate/override from existing database records (which contain validated zone data)
-  for (const o of existingOutlets) {
-    if (o.city && o.zone) {
-      const cleanCity = String(o.city).trim().toLowerCase();
-      const cleanZone = String(o.zone).trim();
-      if (cleanCity && cleanZone) {
-        dbCityToZone.set(cleanCity, cleanZone);
-      }
-    }
-  }
-
-  // 2. Identify new unique outlets from the parsed Excel sheet
+  // Create lookup maps/sets for fast checking
+  const existingSet = new Set(existingOutlets.map(o => `${o.restaurant_id}_${o.area}`));
   const uniqueNewMap = new Map();
+
   for (const row of rows) {
-    if (!row.restaurant_id) continue;
-    const restId = String(row.restaurant_id).replace(/\.0$/, '').trim();
-    const area = row.area ? String(row.area).trim() : '';
+    if (!row.restaurant_id || !row.area) continue;
+    const restId = String(row.restaurant_id).trim();
+    const area = String(row.area).trim();
     const key = `${restId}_${area}`;
 
-    if (!existingSet.has(key) && !uniqueNewMap.has(key)) {
-      // Map the zone based on city and area from our reference file
-      const city = row.city ? String(row.city).trim() : '';
-      const zoneKey = `${city.toLowerCase()}_${area.toLowerCase()}`;
-      
-      let mappedZone = zMap.get(zoneKey) || row.zone || row.Zone || null;
-      
-      // Fallback 1: Look up zone of similar city from database / reference map
-      if (!mappedZone && city) {
-        mappedZone = dbCityToZone.get(city.toLowerCase()) || null;
-      }
-      
-      // Fallback 2: Look at other rows in the incoming Excel sheet for a zone
-      if (!mappedZone && city) {
-        for (const r of rows) {
-          if (r.city && String(r.city).trim().toLowerCase() === city.toLowerCase()) {
-            const z = r.zone || r.Zone || null;
-            if (z) {
-              mappedZone = String(z).trim();
-              break;
-            }
-          }
+    if (existingSet.has(key) || uniqueNewMap.has(key)) continue;
+
+    const brandName = row.brand_name ? String(row.brand_name).trim() : null;
+    const businessEntity = row.business_entity ? String(row.business_entity).trim() : null;
+    const city = row.city ? String(row.city).trim() : null;
+
+    let zone = null;
+    if (city) {
+      const cleanCity = city.toLowerCase();
+      // 1. Check if the reference map has it
+      if (zMap[cleanCity]) {
+        zone = zMap[cleanCity];
+      } else {
+        // 2. Fallback to common zones mapping
+        const commonZones = {
+          'bangalore': 'South', 'bengaluru': 'South', 'hyderabad': 'South', 'chennai': 'South',
+          'mumbai': 'West', 'bombay': 'West', 'pune': 'West', 'ahmedabad': 'West',
+          'delhi': 'North', 'new delhi': 'North', 'gurgaon': 'North', 'gurugram': 'North',
+          'guwahati': 'East', 'kolkata': 'East', 'calcutta': 'East', 'bhubaneswar': 'East'
+        };
+        if (commonZones[cleanCity]) {
+          zone = commonZones[cleanCity];
         }
       }
-
-      uniqueNewMap.set(key, {
-        restaurant_id:  restId,
-        brand_name:     row.brand_name      || null,
-        business_entity:row.business_entity || null,
-        city:           row.city            || null,
-        area:           row.area            || null,
-        zone:           mappedZone,
-      });
     }
+
+    uniqueNewMap.set(key, {
+      restaurant_id: restId,
+      brand_name: brandName,
+      business_entity: businessEntity,
+      city: city,
+      area: area,
+      zone: zone
+    });
   }
 
   const outletsToInsert = Array.from(uniqueNewMap.values());
@@ -221,13 +181,18 @@ async function syncOutletMaster(rows) {
   }
 
   console.log(`Inserting ${outletsToInsert.length} new unique outlets into outlet_master...`);
-  const CHUNK = 500;
-  for (let i = 0; i < outletsToInsert.length; i += CHUNK) {
-    const chunk = outletsToInsert.slice(i, i + CHUNK);
-    const { error } = await supabase.from('outlet_master').insert(chunk);
-    if (error) console.error(`outlet_master insert error (batch ${i}):`, error.message);
-    else console.log(`Inserted outlet_master rows ${i + 1}–${i + chunk.length}`);
+  for (const o of outletsToInsert) {
+    try {
+      await pool.query(`
+        INSERT INTO outlet_master (restaurant_id, brand_name, business_entity, city, area, zone)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        ON CONFLICT (restaurant_id, area) DO NOTHING
+      `, [o.restaurant_id, o.brand_name, o.business_entity, o.city, o.area, o.zone]);
+    } catch (err) {
+      console.error(`outlet_master insert error for ID ${o.restaurant_id}:`, err.message);
+    }
   }
+  console.log('Successfully completed outlet_master sync.');
 }
 
 // ─── STEP 3: PUSH ORDER REVIEWS ───────────────────────────────
@@ -238,21 +203,24 @@ async function pushOrderReviews(rows) {
   for (const row of rows) {
     const orderId  = row.order_id    != null ? String(row.order_id).replace(/\.0$/, '').trim() : null;
     const restId   = row.restaurant_id != null ? String(row.restaurant_id).replace(/\.0$/, '').trim() : null;
-    const itemName = row.item_name   != null ? String(row.item_name).replace(/\u00A0/g, ' ').trim() : null;
-    if (!orderId || !restId || !itemName) continue;
+    const itemName = row.item_name   != null ? String(row.item_name).replace(/\u00A0/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase() : '';
+
+    if (!orderId || orderId === 'null' || !restId || restId === 'null') continue;
 
     const key = `${orderId}_${restId}_${itemName}`;
     if (!uniqueMap.has(key)) {
       uniqueMap.set(key, {
-        order_id:          orderId,
-        restaurant_id:     restId,
-        date:              normalizeDate(row.date),
-        ordered_time:      normalizeTime(row.ordered_time),
-        gmv_total:         row.gmv_total         ?? null,
-        item_name:         itemName,
-        comments:          row.comments          ?? null,
-        restaurant_rating: row.restaurant_rating ?? null,
-        post_status:       row.post_status       ?? null,
+        order_id: orderId,
+        restaurant_id: restId,
+        area: row.area ? String(row.area).trim() : null,
+        item_name: row.item_name ? String(row.item_name).replace(/\u00A0/g, ' ').replace(/\s+/g, ' ').trim() : 'NO_ITEM',
+        date: normalizeDate(row.date),
+        ordered_time: normalizeTime(row.ordered_time),
+        gmv_total: row.gmv_total != null ? parseFloat(row.gmv_total) : null,
+        comments: row.comments ? String(row.comments).trim() : null,
+        restaurant_rating: row.restaurant_rating != null ? parseInt(row.restaurant_rating) : null,
+        post_status: row.post_status ? String(row.post_status).trim() : null,
+        updated_at: new Date().toISOString()
       });
     }
   }
@@ -260,24 +228,23 @@ async function pushOrderReviews(rows) {
   const localRecords = Array.from(uniqueMap.values());
   console.log(`Unique records after local dedupe: ${localRecords.length}`);
 
-  // Check Supabase for already existing rows
+  // Check PostgreSQL for already existing rows
   const allOrderIds = [...new Set(localRecords.map(r => r.order_id))];
   const existingKeys = new Set();
   const FETCH_CHUNK = 200;
 
   for (let i = 0; i < allOrderIds.length; i += FETCH_CHUNK) {
-    const chunk = allOrderIds.slice(i, i + FETCH_CHUNK);
-    let from = 0;
-    while (true) {
-      const { data, error } = await supabase
-        .from('order_reviews')
-        .select('order_id, restaurant_id, item_name')
-        .in('order_id', chunk)
-        .range(from, from + 999);
-      if (error) { console.error('Fetch error:', error.message); break; }
-      (data || []).forEach(r => existingKeys.add(`${r.order_id}_${r.restaurant_id}_${r.item_name}`));
-      if (!data || data.length < 1000) break;
-      from += 1000;
+    const chunkIds = allOrderIds.slice(i, i + FETCH_CHUNK);
+    try {
+      const res = await pool.query(
+        `SELECT order_id, restaurant_id, item_name 
+         FROM order_reviews 
+         WHERE order_id = ANY($1)`,
+        [chunkIds]
+      );
+      (res.rows || []).forEach(r => existingKeys.add(`${r.order_id}_${r.restaurant_id}_${r.item_name}`));
+    } catch (err) {
+      console.error('Fetch error from Postgres:', err.message);
     }
   }
 
@@ -287,13 +254,26 @@ async function pushOrderReviews(rows) {
 
   if (toInsert.length === 0) return console.log('Nothing new to insert.');
 
-  const INSERT_CHUNK = 500;
-  for (let i = 0; i < toInsert.length; i += INSERT_CHUNK) {
-    const chunk = toInsert.slice(i, i + INSERT_CHUNK);
-    const { error } = await supabase.from('order_reviews').insert(chunk);
-    if (error) console.error(`Insert error (batch ${i}):`, error.message);
-    else console.log(`Inserted rows ${i + 1}–${i + chunk.length}`);
+  for (const r of toInsert) {
+    try {
+      await pool.query(`
+        INSERT INTO order_reviews (
+          order_id, restaurant_id, area, item_name, date, 
+          ordered_time, gmv_total, comments, restaurant_rating, 
+          post_status, updated_at
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        ON CONFLICT (order_id, restaurant_id, item_name) DO NOTHING
+      `, [
+        r.order_id, r.restaurant_id, r.area, r.item_name, r.date,
+        r.ordered_time, r.gmv_total, r.comments, r.restaurant_rating,
+        r.post_status, r.updated_at
+      ]);
+    } catch (err) {
+      console.error(`Insert error for order ${r.order_id}:`, err.message);
+    }
   }
+  console.log('Successfully completed order_reviews sync.');
 }
 
 // ─── MAIN PIPELINE ────────────────────────────────────────────
@@ -314,20 +294,24 @@ async function runPipeline(targetDate, attempt = 1, maxRetries = 3) {
     }
 
     for (const filePath of newFiles) {
-      console.log(`\nProcessing: ${filePath}`);
-      const rows = parseFile(filePath);
-      if (rows.length === 0) { fs.unlinkSync(filePath); continue; }
+      try {
+        console.log(`\nProcessing: ${filePath}`);
+        const rows = parseFile(filePath);
+        if (rows.length === 0) continue;
 
-      console.log(`Total rows in sheet: ${rows.length}`);
+        console.log(`Total rows in sheet: ${rows.length}`);
 
-      // Step 1: Add any new restaurants to outlet_master
-      await syncOutletMaster(rows);
+        // Step 1: Add any new restaurants to outlet_master
+        await syncOutletMaster(rows);
 
-      // Step 2: Push order data to order_reviews
-      await pushOrderReviews(rows);
-
-      fs.unlinkSync(filePath);
-      console.log(`Deleted processed file: ${filePath}`);
+        // Step 2: Push order data to order_reviews
+        await pushOrderReviews(rows);
+      } finally {
+        if (fs.existsSync(filePath)) {
+          fs.unlinkSync(filePath);
+          console.log(`Deleted processed file: ${filePath}`);
+        }
+      }
     }
   } catch (error) {
     console.error(`Pipeline error (attempt ${attempt}):`, error.message);

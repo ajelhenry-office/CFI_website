@@ -12,7 +12,7 @@ import reviewsRouter from "./server/reviews/reviewsRouter.js";
 import automationRoutes from "./server/ratings/automation.routes.js";
 import insightsRoutes from "./server/ratings/insights.routes.js";
 import { handleFilterRequest } from "./server/ratings/filters.js";
-import { supabase } from "./server/ratings/supabaseClient.js";
+import { pool } from "./server/ratings/db.js";
 
 const app = express();
 app.use(cors());
@@ -30,15 +30,8 @@ app.get("/health", (req, res) => {
 // ─── DB TEST ENDPOINT ─────────────────────────────────────────
 app.get("/test-db", async (req, res) => {
   try {
-    // If your table is actually named 'order_reviews', replace 'swiggy_ratings_feedback' below
-    const { data, error } = await supabase
-      .from('swiggy_ratings_feedback')
-      .select('*')
-      .limit(1);
-      
-    if (error) throw error;
-    
-    res.json({ success: true, data });
+    const result = await pool.query('SELECT * FROM order_reviews LIMIT 1');
+    res.json({ success: true, data: result.rows });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
