@@ -1,175 +1,120 @@
-import React, { useState } from "react";
+import { useState } from "react";
+import { C, FONT, cardStyle, pillButton, spinnerStyle } from "../../theme";
 
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "http://localhost:3001";
+const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:3001";
 
-const TIME_OPTIONS = ["None"];
-for (let h = 0; h < 24; h++) {
-  for (let m = 0; m < 60; m += 15) {
-    const ampm = h < 12 ? 'AM' : 'PM';
-    const hour12 = h % 12 || 12;
-    const mins = m === 0 ? '00' : m;
-    TIME_OPTIONS.push(`${hour12}:${mins} ${ampm}`);
-  }
-}
+export default function TimingPage() {
+  const [form, setForm] = useState({
+    location_id: "",
+    store_name: "",
+    opening_time: "",
+    closing_time: "",
+    opening_time_2: "",
+    closing_time_2: "",
+    slot: "1",
+  });
+  const [loading, setLoading] = useState(false);
+  const [status, setStatus] = useState(null);
 
-function TimingRow({ store }) {
-  const [open1, setOpen1] = useState("10:00 AM");
-  const [close1, setClose1] = useState("11:00 PM");
-  const [open2, setOpen2] = useState("None");
-  const [close2, setClose2] = useState("None");
-  const [savingSlot, setSavingSlot] = useState(null);
+  const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
 
-  const handleSave = async (slotNumber) => {
-    if (!store.zomato_id) {
-      alert("Please add zomato_id to this store in your stores.js file to update Zomato.");
+  const submit = async () => {
+    if (!form.location_id || !form.opening_time) {
+      setStatus({ ok: false, msg: "Store ID and opening time are required." });
       return;
     }
-
-    setSavingSlot(slotNumber);
+    setLoading(true);
+    setStatus(null);
     try {
-      const response = await fetch(`${BACKEND_URL}/api/timing`, {
+      const res = await fetch(`${API_BASE}/api/timing`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          store_id: store.id,
-          location_id: store.location_id || store.id || "",
-          zomato_id: store.zomato_id,
-          brand: store.brand,
-          store_name: store.name,
-          opening_time: open1,
-          closing_time: close1,
-          opening_time_2: open2,
-          closing_time_2: close2,
-          slot: slotNumber
-        }),
+        body: JSON.stringify(form),
       });
-      const data = await response.json();
-      if (!response.ok) {
-        alert(`Backend Error: ${data.error}`);
-      }
-      setTimeout(() => setSavingSlot(null), 3000);
-    } catch (error) {
-      console.error("Connection error:", error);
-      alert("Cannot connect to backend! Please open a second terminal and run 'node server.js'");
-      setSavingSlot(null);
+      const d = await res.json();
+      setStatus({ ok: d.success, msg: d.message || d.error || "Unknown response" });
+    } catch (e) {
+      setStatus({ ok: false, msg: e.message });
+    } finally {
+      setLoading(false);
     }
   };
 
-  const selectStyle = {
-    background: "#ffffff",
-    border: "1px solid #132664",
-    borderRadius: 6,
-    padding: "6px 10px",
-    color: "#132664",
-    outline: "none",
-    width: 110,
-    fontSize: 12,
-    fontWeight: "600",
-    cursor: "pointer"
-  };
-
-  const btnStyle = (slot) => ({
-    padding: "7px 14px",
-    borderRadius: 20,
-    fontSize: 11,
-    fontWeight: 700,
-    cursor: "pointer",
-    border: "1px solid #132664",
-    color: savingSlot === slot ? "#132664" : "#ffffff",
-    background: savingSlot === slot ? "#ffffff" : "#132664",
-    transition: "all 0.2s ease"
-  });
-
-  return (
-    <div style={{ background: "#ffffff", border: "1px solid rgba(19, 38, 100, 0.15)", borderRadius: 12, padding: "16px 20px", marginBottom: 12, display: "flex", flexDirection: "column", gap: 12, boxShadow: "0 2px 6px rgba(19, 38, 100, 0.02)" }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <div style={{ flex: 1 }}>
-          <div style={{ fontSize: 14, fontWeight: 700, color: "#132664" }}>{store.name}</div>
-          <div style={{ fontSize: 10, color: "rgba(19, 38, 100, 0.6)", fontFamily: "ui-monospace, monospace", textTransform: "uppercase", marginTop: 2, fontWeight: "600" }}>
-            {store.brand} {store.zomato_id ? `| ZOMATO: ${store.zomato_id}` : ""}
-          </div>
-        </div>
+  const Field = ({ label, fieldKey, type = "text", placeholder = "" }) => (
+    <div>
+      <div style={{ fontSize: 10, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>
+        {label}
       </div>
-      
-      <div style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
-        {/* SLOT 1 */}
-        <div style={{ display: "flex", alignItems: "center", gap: 8, background: "rgba(19, 38, 100, 0.03)", padding: "8px 12px", borderRadius: 8, border: "1px solid rgba(19, 38, 100, 0.06)" }}>
-          <span style={{ fontSize: 11, color: "#132664", fontWeight: 700 }}>SLOT 1:</span>
-          <select value={open1} onChange={e => setOpen1(e.target.value)} style={selectStyle}>
-            {TIME_OPTIONS.map(t => <option key={t} value={t}>{t}</option>)}
-          </select>
-          <span style={{ fontSize: 11, color: "#132664", fontWeight: "600" }}>to</span>
-          <select value={close1} onChange={e => setClose1(e.target.value)} style={selectStyle}>
-            {TIME_OPTIONS.map(t => <option key={t} value={t}>{t}</option>)}
-          </select>
-          <button style={btnStyle(1)} onClick={() => handleSave(1)} disabled={savingSlot !== null}>
-            {savingSlot === 1 ? "✓ SAVED" : "APPLY S1"}
-          </button>
-        </div>
-
-        {/* SLOT 2 */}
-        <div style={{ display: "flex", alignItems: "center", gap: 8, background: "rgba(19, 38, 100, 0.03)", padding: "8px 12px", borderRadius: 8, border: "1px solid rgba(19, 38, 100, 0.06)" }}>
-          <span style={{ fontSize: 11, color: "#132664", fontWeight: 700 }}>SLOT 2:</span>
-          <select value={open2} onChange={e => setOpen2(e.target.value)} style={selectStyle}>
-            {TIME_OPTIONS.map(t => <option key={t} value={t}>{t}</option>)}
-          </select>
-          <span style={{ fontSize: 11, color: "#132664", fontWeight: "600" }}>to</span>
-          <select value={close2} onChange={e => setClose2(e.target.value)} style={selectStyle}>
-            {TIME_OPTIONS.map(t => <option key={t} value={t}>{t}</option>)}
-          </select>
-          <button style={btnStyle(2)} onClick={() => handleSave(2)} disabled={savingSlot !== null}>
-            {savingSlot === 2 ? "✓ SAVED" : "APPLY S2"}
-          </button>
-        </div>
-      </div>
+      <input
+        type={type}
+        value={form[fieldKey]}
+        onChange={(e) => set(fieldKey, e.target.value)}
+        placeholder={placeholder}
+        style={{ width: "100%", boxSizing: "border-box", padding: "9px 12px", borderRadius: 9, border: `1.5px solid ${C.border}`, fontSize: 12.5, color: C.text, fontFamily: FONT, outline: "none" }}
+      />
     </div>
   );
-}
-
-export default function TimingPage({ stores, globalFilters }) {
-  const [search, setSearch] = useState("");
-
-  const filtered = stores.filter(s => {
-    const matchBrand = !globalFilters?.brands || globalFilters.brands.length === 0 || globalFilters.brands.some(b => b.toLowerCase() === s.brand.toLowerCase());
-    const matchSearch = s.name.toLowerCase().includes(search.toLowerCase()) || (s.zomato_id && s.zomato_id.includes(search));
-    return matchBrand && matchSearch;
-  });
 
   return (
-    <div style={{ padding: "32px 40px", overflowY: "auto", height: "100%", boxSizing: "border-box", backgroundColor: "#ffffff" }}>
-      <div style={{ marginBottom: 20, padding: "16px", background: "rgba(19, 38, 100, 0.03)", borderRadius: 12, border: "1px solid #132664", borderLeft: "4px solid #132664" }}>
-        <div style={{ fontSize: 11, color: "#132664", fontWeight: "800", fontFamily: "ui-monospace, monospace", marginBottom: 4, letterSpacing: "1px" }}>ZOMATO EXCLUSIVE PORTAL INTEGRATION</div>
-        <div style={{ fontSize: 12, color: "rgba(19, 38, 100, 0.8)", lineHeight: "1.5" }}>
-          Operating timings push directly to the partner portal listing database via custom automated jobs. Changes require up to 60 seconds to populate fully.
+    <div style={{ display: "flex", flexDirection: "column", gap: 20, maxWidth: 560, fontFamily: FONT }}>
+      <div style={{ ...cardStyle, padding: "22px 24px" }}>
+        <div style={{ fontSize: 15, fontWeight: 800, color: C.primary }}>Update Store Operating Hours</div>
+        <div style={{ fontSize: 12, color: C.muted, marginTop: 4, lineHeight: 1.6 }}>
+          Triggers a GitHub Actions workflow that syncs the updated timing across aggregator platforms. Changes apply in ~60 seconds.
         </div>
-      </div>
-      
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
-        <span style={{ fontSize: 12, color: "#132664", fontWeight: "700" }}>{filtered.length} listings</span>
-        <div style={{ display: "flex", alignItems: "center", background: "#ffffff", border: "1px solid #132664", borderRadius: 20, padding: "6px 14px" }}>
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#132664" strokeWidth="2.5" style={{ marginRight: 8 }}>
-            <circle cx="11" cy="11" r="8"></circle>
-            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
-          </svg>
-          <input 
-            type="text" 
-            placeholder="Search Zomato ID or Store..." 
-            value={search} 
-            onChange={e => setSearch(e.target.value)} 
-            style={{ background: "transparent", border: "none", outline: "none", color: "#132664", fontSize: 12, width: 220, fontWeight: "600" }} 
-          />
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 14, marginTop: 20 }}>
+          <Field label="Location / Store ID *" fieldKey="location_id" placeholder="e.g. ER-KOR-001" />
+          <Field label="Store Name" fieldKey="store_name" placeholder="e.g. EatFit Koramangala" />
+
+          <div>
+            <div style={{ fontSize: 10, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8 }}>
+              Slot 1 — Primary Hours *
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <Field label="Opening Time" fieldKey="opening_time" type="time" />
+              <Field label="Closing Time" fieldKey="closing_time" type="time" />
+            </div>
+          </div>
+
+          <div>
+            <div style={{ fontSize: 10, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8 }}>
+              Slot 2 — Secondary Hours (optional)
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <Field label="Opening Time" fieldKey="opening_time_2" type="time" />
+              <Field label="Closing Time" fieldKey="closing_time_2" type="time" />
+            </div>
+          </div>
+
+          <div>
+            <div style={{ fontSize: 10, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>
+              Active Slot
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              {["1", "2"].map((s) => (
+                <button key={s} style={{ ...pillButton(form.slot === s), padding: "8px 24px" }} onClick={() => set("slot", s)}>
+                  Slot {s}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
-      </div>
-      
-      <div>
-        {filtered.map(store => (
-          <TimingRow key={store.id} store={store} />
-        ))}
-        {filtered.length === 0 && (
-          <div style={{ color: "rgba(19, 38, 100, 0.6)", textAlign: "center", padding: "40px" }}>
-            No stores found matching active search or filters.
+
+        {status && (
+          <div style={{ marginTop: 16, padding: "10px 14px", borderRadius: 9, fontSize: 12.5, fontWeight: 700, backgroundColor: status.ok ? "#dcfce7" : "#fee2e2", color: status.ok ? "#15803d" : "#b91c1c" }}>
+            {status.ok ? "✓" : "✗"} {status.msg}
           </div>
         )}
+
+        <button
+          onClick={submit}
+          disabled={loading}
+          style={{ ...pillButton(true), marginTop: 20, padding: "11px 28px", borderRadius: 12, display: "flex", alignItems: "center", gap: 8, opacity: loading ? 0.7 : 1, cursor: loading ? "not-allowed" : "pointer" }}
+        >
+          {loading && <span style={{ ...spinnerStyle, borderColor: "#fff", borderTopColor: "transparent" }} />}
+          {loading ? "Triggering..." : "Update Timing"}
+        </button>
       </div>
     </div>
   );

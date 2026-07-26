@@ -114,6 +114,16 @@ function getParentBrand(brandName) {
   return brandName.replace(/_/g, " ").replace(/\s+/g, " ").trim();
 }
 
+// The `date` column can come back from Postgres as a JS Date object (for
+// DATE/TIMESTAMP columns) or as a string. Extract the "YYYY-MM" month safely
+// in both cases — calling .substring() directly on a Date throws.
+function toMonth(d) {
+  if (!d) return null;
+  if (typeof d === "string") return d.substring(0, 7);
+  if (d instanceof Date) return d.toISOString().substring(0, 7);
+  return String(d).substring(0, 7);
+}
+
 async function fetchJoined(filters, limit = 200000, extraSQL = '') {
   const map = await getOutletMap();
   
@@ -228,6 +238,45 @@ function groupBy(rows, keyFn, valFn) {
   return result;
 }
 
+// Returns ALL active breakdown dimensions (city → zone → area → brand order).
+// Each active multi-value filter gets its own column in the breakdown table.
+function getBreakdownDimensions(filters) {
+  const dims = [];
+  if (filters.cities && filters.cities.length > 1) dims.push({ field: "city", label: "City" });
+  if (filters.zones && filters.zones.length > 1) dims.push({ field: "zone", label: "Zone" });
+  if (filters.areas && filters.areas.length > 1) dims.push({ field: "area", label: "Area" });
+  if (filters.brands && filters.brands.length > 1) dims.push({ field: "brand_name", label: "Brand" });
+  if (dims.length === 0) {
+    const hasFilter = (filters.brands?.length || filters.cities?.length || filters.zones?.length || filters.areas?.length);
+    if (!hasFilter) dims.push({ field: "brand_name", label: "Brand" });
+  }
+  return dims;
+}
+
+// Groups rows by all active breakdown dimensions into a Map.
+// Returns Map<compositeKey, { dimVals: {field: value, ...}, rows: [] }>
+function buildDimMap(rows, dims) {
+  const map = new Map();
+  rows.forEach(r => {
+    const keyParts = dims.map(d => r[d.field]);
+    if (keyParts.some(k => !k)) return;
+    const key = keyParts.join('|||');
+    if (!map.has(key)) {
+      const dimVals = {};
+      dims.forEach((d, i) => { dimVals[d.field] = keyParts[i]; });
+      map.set(key, { dimVals, rows: [] });
+    }
+    map.get(key).rows.push(r);
+  });
+  return map;
+}
+
+// Legacy single-dim helper kept for any callers that still use it.
+function getBreakdownDimension(filters) {
+  const dims = getBreakdownDimensions(filters);
+  return dims.length ? dims[0] : null;
+}
+
 async function fetchLowRatingComments(filters) {
   const data = await fetchJoined(filters, 100, 'AND restaurant_rating <= 3 AND comments IS NOT NULL');
   return data.map((r) => r.comments).filter(Boolean).join("\n");
@@ -236,7 +285,7 @@ async function fetchLowRatingComments(filters) {
 async function callGroq(prompt) {
   const completion = await groq.chat.completions.create({
     messages: [{ role: "user", content: prompt }],
-    model: "llama3-8b-8192",
+    model: "llama-3.1-8b-instant",
     max_tokens: 400,
   });
   return completion.choices[0].message.content;
@@ -279,17 +328,53 @@ router.post("/:id", async (req, res) => {
       }
       case 6: {
         const rows = await fetchJoined(filters);
-        data = groupBy(rows, r => r.item_name, r => r.restaurant_rating).filter(r => r.name !== 'NO_ITEM' && r.count >= 10).sort((a, b) => b.avg - a.avg).slice(0, 20);
+        const overall6 = groupBy(rows, r => r.item_name, r => r.restaurant_rating).filter(r => r.name !== 'NO_ITEM' && r.count >= 10).sort((a, b) => b.avg - a.avg).slice(0, 20);
+        const dims6 = getBreakdownDimensions(filters);
+        if (dims6.length) {
+          const dmap6 = buildDimMap(rows, dims6);
+          const breakdown = [...dmap6.values()].map(({ dimVals, rows: gr }) => {
+            const iMap = new Map();
+            gr.forEach(r => { const item = r.item_name; const v = r.restaurant_rating; if (!item || item==='NO_ITEM' || v==null) return; if (!iMap.has(item)) iMap.set(item,[]); iMap.get(item).push(v); });
+            const items = [...iMap.entries()].map(([item,vals]) => { const n=vals.filter(v=>v!=null); return {item,avg:n.length?+(n.reduce((a,b)=>a+b,0)/n.length).toFixed(2):0,count:n.length}; }).filter(i=>i.count>=3).sort((a,b)=>b.avg-a.avg);
+            const top = items[0] || { item: '-', avg: 0, count: 0 };
+            return { ...dimVals, topItem: top.item, topAvg: top.avg, topCount: top.count };
+          }).sort((a,b)=>(a[dims6[0].field]||'').localeCompare(b[dims6[0].field]||'')||b.topAvg-a.topAvg);
+          data = { overall: overall6, breakdown, breakdownDims: dims6 };
+        } else { data = overall6; }
         break;
       }
       case 7: {
         const rows = await fetchJoined(filters);
-        data = groupBy(rows, r => r.item_name, r => r.restaurant_rating).filter(r => r.name !== 'NO_ITEM' && r.count >= 10).sort((a, b) => a.avg - b.avg).slice(0, 20);
+        const overall7 = groupBy(rows, r => r.item_name, r => r.restaurant_rating).filter(r => r.name !== 'NO_ITEM' && r.count >= 10).sort((a, b) => a.avg - b.avg).slice(0, 20);
+        const dims7 = getBreakdownDimensions(filters);
+        if (dims7.length) {
+          const dmap7 = buildDimMap(rows, dims7);
+          const breakdown = [...dmap7.values()].map(({ dimVals, rows: gr }) => {
+            const iMap = new Map();
+            gr.forEach(r => { const item = r.item_name; const v = r.restaurant_rating; if (!item || item==='NO_ITEM' || v==null) return; if (!iMap.has(item)) iMap.set(item,[]); iMap.get(item).push(v); });
+            const items = [...iMap.entries()].map(([item,vals]) => { const n=vals.filter(v=>v!=null); return {item,avg:n.length?+(n.reduce((a,b)=>a+b,0)/n.length).toFixed(2):0,count:n.length}; }).filter(i=>i.count>=3).sort((a,b)=>a.avg-b.avg);
+            const worst = items[0] || { item: '-', avg: 0, count: 0 };
+            return { ...dimVals, worstItem: worst.item, worstAvg: worst.avg, worstCount: worst.count };
+          }).sort((a,b)=>(a[dims7[0].field]||'').localeCompare(b[dims7[0].field]||'')||a.worstAvg-b.worstAvg);
+          data = { overall: overall7, breakdown, breakdownDims: dims7 };
+        } else { data = overall7; }
         break;
       }
       case 8: {
         const rows = await fetchJoined(filters);
-        data = groupBy(rows, r => r.item_name, r => r.restaurant_rating).filter(r => r.name !== 'NO_ITEM').sort((a, b) => b.count - a.count).slice(0, 20);
+        const overall8 = groupBy(rows, r => r.item_name, r => r.restaurant_rating).filter(r => r.name !== 'NO_ITEM').sort((a, b) => b.count - a.count).slice(0, 20);
+        const dims8 = getBreakdownDimensions(filters);
+        if (dims8.length) {
+          const dmap8 = buildDimMap(rows, dims8);
+          const breakdown = [...dmap8.values()].map(({ dimVals, rows: gr }) => {
+            const iMap = new Map();
+            gr.forEach(r => { const item = r.item_name; const v = r.restaurant_rating; if (!item || item==='NO_ITEM' || v==null) return; if (!iMap.has(item)) iMap.set(item,[]); iMap.get(item).push(v); });
+            const items = [...iMap.entries()].map(([item,vals]) => { const n=vals.filter(v=>v!=null); return {item,avg:n.length?+(n.reduce((a,b)=>a+b,0)/n.length).toFixed(2):0,count:n.length}; }).sort((a,b)=>b.count-a.count);
+            const top = items[0] || { item: '-', avg: 0, count: 0 };
+            return { ...dimVals, topItem: top.item, topCount: top.count, topAvg: top.avg };
+          }).sort((a,b)=>(a[dims8[0].field]||'').localeCompare(b[dims8[0].field]||'')||b.topCount-a.topCount);
+          data = { overall: overall8, breakdown, breakdownDims: dims8 };
+        } else { data = overall8; }
         break;
       }
       case 9: {
@@ -307,15 +392,33 @@ router.post("/:id", async (req, res) => {
           }
           if (!matched) cats.Other.push(r.restaurant_rating);
         });
-        data = Object.entries(cats).map(([name, vals]) => {
+        const overall9 = Object.entries(cats).map(([name, vals]) => {
           const nums = vals.filter(v => v != null);
           return { name, avg: nums.length ? +(nums.reduce((a, b) => a + b, 0) / nums.length).toFixed(2) : 0, count: nums.length };
         });
+        const dims9 = getBreakdownDimensions(filters);
+        if (dims9.length) {
+          const dmap9 = buildDimMap(rows, dims9);
+          const breakdown = [...dmap9.values()].map(({ dimVals, rows: gr }) => {
+            const nums = gr.map(r => r.restaurant_rating).filter(v => v != null);
+            return { ...dimVals, avg: nums.length ? +(nums.reduce((a,b)=>a+b,0)/nums.length).toFixed(2) : 0, count: nums.length };
+          }).sort((a, b) => b.avg - a.avg);
+          data = { overall: overall9, breakdown, breakdownDims: dims9 };
+        } else { data = overall9; }
         break;
       }
       case 10: {
         const rows = await fetchJoined(filters);
-        data = groupBy(rows, r => r.area, r => r.restaurant_rating).filter(r => r.count >= 50 && r.avg < 3.5).sort((a, b) => a.avg - b.avg);
+        const overall10 = groupBy(rows, r => r.area, r => r.restaurant_rating).filter(r => r.count >= 50 && r.avg < 3.5).sort((a, b) => a.avg - b.avg);
+        const dims10 = getBreakdownDimensions(filters).filter(d => d.field !== "area");
+        if (dims10.length) {
+          const dmap10 = buildDimMap(rows, dims10);
+          const breakdown = [...dmap10.values()].map(({ dimVals, rows: gr }) => {
+            const nums = gr.map(r => r.restaurant_rating).filter(v => v != null);
+            return { ...dimVals, avg: nums.length ? +(nums.reduce((a,b)=>a+b,0)/nums.length).toFixed(2) : 0, count: nums.length };
+          }).sort((a, b) => a.avg - b.avg);
+          data = { overall: overall10, breakdown, breakdownDims: dims10 };
+        } else { data = overall10; }
         break;
       }
       case 11: {
@@ -323,22 +426,48 @@ router.post("/:id", async (req, res) => {
         const dist = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
         rows.forEach(r => { if (r.restaurant_rating >= 1 && r.restaurant_rating <= 5) dist[r.restaurant_rating]++; });
         const total = Object.values(dist).reduce((a, b) => a + b, 0);
-        data = Object.entries(dist).map(([star, count]) => ({ name: `${star}★`, star: +star, count, pct: total ? +((count / total) * 100).toFixed(1) : 0 }));
+        const overall11 = Object.entries(dist).map(([star, count]) => ({ name: `${star}★`, star: +star, count, pct: total ? +((count / total) * 100).toFixed(1) : 0 }));
+        const dims11 = getBreakdownDimensions(filters);
+        if (dims11.length) {
+          const dmap11 = buildDimMap(rows, dims11);
+          const breakdown = [...dmap11.values()].map(({ dimVals, rows: gr }) => {
+            const d = { 1:0,2:0,3:0,4:0,5:0 };
+            gr.forEach(r => { const v = r.restaurant_rating; if (v >= 1 && v <= 5) d[v]++; });
+            const tot = d[1]+d[2]+d[3]+d[4]+d[5];
+            const wAvg = tot ? +((1*d[1]+2*d[2]+3*d[3]+4*d[4]+5*d[5])/tot).toFixed(2) : 0;
+            return { ...dimVals, weightedAvg: wAvg, promoterPct: tot ? +((d[4]+d[5])/tot*100).toFixed(1) : 0, detractorPct: tot ? +((d[1]+d[2])/tot*100).toFixed(1) : 0, total: tot };
+          }).sort((a, b) => b.weightedAvg - a.weightedAvg);
+          data = { overall: overall11, breakdown, breakdownDims: dims11 };
+        } else { data = overall11; }
         break;
       }
       case 12: {
         const rows = await fetchJoined(filters);
-        const map = new Map();
+        const map12 = new Map();
         rows.forEach(r => {
           if (!r.date) return;
-          const month = r.date.substring(0, 7);
-          if (!map.has(month)) map.set(month, []);
-          map.get(month).push(r.restaurant_rating);
+          const month = toMonth(r.date);
+          if (!map12.has(month)) map12.set(month, []);
+          map12.get(month).push(r.restaurant_rating);
         });
-        data = [...map.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([month, vals]) => {
+        const overall12 = [...map12.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([month, vals]) => {
           const nums = vals.filter(v => v != null);
           return { name: month, avg: nums.length ? +(nums.reduce((a, b) => a + b, 0) / nums.length).toFixed(2) : 0 };
         });
+        const dims12 = getBreakdownDimensions(filters);
+        if (dims12.length) {
+          const dmap12 = buildDimMap(rows, dims12);
+          const breakdown = [...dmap12.values()].map(({ dimVals, rows: gr }) => {
+            const monthMap = new Map();
+            gr.forEach(r => { if (!r.date || r.restaurant_rating == null) return; const m = toMonth(r.date); if (!monthMap.has(m)) monthMap.set(m,[]); monthMap.get(m).push(r.restaurant_rating); });
+            const months = [...monthMap.entries()].sort(([a],[b]) => a.localeCompare(b));
+            const avgs = months.map(([,vals]) => { const n=vals.filter(v=>v!=null); return n.length ? +(n.reduce((a,b)=>a+b,0)/n.length).toFixed(2) : 0; });
+            const n = avgs.length; let slope = 0;
+            if (n >= 2) { const xM=(n-1)/2, yM=avgs.reduce((a,b)=>a+b,0)/n; const num=avgs.reduce((s,y,i)=>s+(i-xM)*(y-yM),0), den=avgs.reduce((s,_,i)=>s+(i-xM)**2,0); slope=den?+(num/den).toFixed(4):0; }
+            return { ...dimVals, avgRating: avgs.length ? +(avgs.reduce((a,b)=>a+b,0)/avgs.length).toFixed(2) : 0, trend: slope > 0.005 ? "↑ Rising" : slope < -0.005 ? "↓ Falling" : "→ Stable", bestMonth: months[avgs.indexOf(Math.max(...avgs))]?.[0]||"-", worstMonth: months[avgs.indexOf(Math.min(...avgs))]?.[0]||"-" };
+          }).sort((a, b) => b.avgRating - a.avgRating);
+          data = { overall: overall12, breakdown, breakdownDims: dims12 };
+        } else { data = overall12; }
         break;
       }
       case 13: {
@@ -348,31 +477,42 @@ router.post("/:id", async (req, res) => {
       }
       case 14: {
         const rows = await fetchJoined(filters);
-        const weekend = [], weekday = [];
-        rows.forEach(r => {
-          if (!r.ordered_time) return;
-          const day = new Date(r.ordered_time).getDay();
-          (day === 0 || day === 6 ? weekend : weekday).push(r.restaurant_rating);
-        });
-        const calcAvg = arr => arr.length ? +(arr.filter(v => v != null).reduce((a, b) => a + b, 0) / arr.length).toFixed(2) : 0;
-        data = [
-          { name: "Weekday", avg: calcAvg(weekday), count: weekday.length },
-          { name: "Weekend", avg: calcAvg(weekend), count: weekend.length },
-        ];
+        const calcAvg14 = arr => arr.length ? +(arr.filter(v => v != null).reduce((a, b) => a + b, 0) / arr.length).toFixed(2) : 0;
+        const wkd14 = [], wke14 = [];
+        rows.forEach(r => { if (!r.ordered_time) return; ([0,6].includes(new Date(r.ordered_time).getDay()) ? wke14 : wkd14).push(r.restaurant_rating); });
+        const overall14 = [{ name: "Weekday", avg: calcAvg14(wkd14), count: wkd14.length }, { name: "Weekend", avg: calcAvg14(wke14), count: wke14.length }];
+        const dims14 = getBreakdownDimensions(filters);
+        if (dims14.length) {
+          const dmap14 = buildDimMap(rows, dims14);
+          const breakdown = [...dmap14.values()].map(({ dimVals, rows: gr }) => {
+            const wd = [], we = [];
+            gr.forEach(r => { if (!r.ordered_time || r.restaurant_rating == null) return; ([0,6].includes(new Date(r.ordered_time).getDay()) ? we : wd).push(r.restaurant_rating); });
+            return { ...dimVals, weekdayAvg: calcAvg14(wd), weekdayCount: wd.length, weekendAvg: calcAvg14(we), weekendCount: we.length, delta: +(calcAvg14(we) - calcAvg14(wd)).toFixed(2) };
+          }).sort((a, b) => (a[dims14[0].field] || '').localeCompare(b[dims14[0].field] || '') || b.weekdayAvg - a.weekdayAvg);
+          data = { overall: overall14, breakdown, breakdownDims: dims14 };
+        } else { data = overall14; }
         break;
       }
       case 15: {
         const rows = await fetchJoined(filters);
-        const hourMap = {};
-        for (let h = 0; h < 24; h++) hourMap[h] = 0;
-        rows.forEach(r => {
-          if (!r.ordered_time || r.restaurant_rating > 2) return;
-          const h = new Date(r.ordered_time).getHours();
-          hourMap[h]++;
-        });
-        const arr = Object.entries(hourMap).map(([h, count]) => ({ name: `${h}:00`, hour: +h, count }));
-        const max3 = [...arr].sort((a, b) => b.count - a.count).slice(0, 3).map(r => r.hour);
-        data = arr.sort((a, b) => a.hour - b.hour).map(r => ({ ...r, worst: max3.includes(r.hour) }));
+        const hourMap15 = {};
+        for (let h = 0; h < 24; h++) hourMap15[h] = 0;
+        rows.forEach(r => { if (!r.ordered_time || r.restaurant_rating > 2) return; hourMap15[new Date(r.ordered_time).getHours()]++; });
+        const arr15 = Object.entries(hourMap15).map(([h, count]) => ({ name: `${h}:00`, hour: +h, count }));
+        const max3 = [...arr15].sort((a, b) => b.count - a.count).slice(0, 3).map(r => r.hour);
+        const overall15 = arr15.sort((a, b) => a.hour - b.hour).map(r => ({ ...r, worst: max3.includes(r.hour) }));
+        const dims15 = getBreakdownDimensions(filters);
+        if (dims15.length) {
+          const dmap15 = buildDimMap(rows, dims15);
+          const breakdown = [...dmap15.values()].map(({ dimVals, rows: gr }) => {
+            const hMap = {};
+            gr.forEach(r => { if (!r.ordered_time || r.restaurant_rating > 2 || r.restaurant_rating == null) return; const h = new Date(r.ordered_time).getHours(); hMap[h] = (hMap[h]||0)+1; });
+            const total = Object.values(hMap).reduce((a,b)=>a+b,0);
+            const worst = Object.entries(hMap).sort(([,a],[,b])=>b-a)[0];
+            return { ...dimVals, totalComplaints: total, peakHour: worst ? `${worst[0]}:00` : "-", peakCount: worst ? worst[1] : 0 };
+          }).sort((a, b) => (a[dims15[0].field]||'').localeCompare(b[dims15[0].field]||'') || b.totalComplaints - a.totalComplaints);
+          data = { overall: overall15, breakdown, breakdownDims: dims15 };
+        } else { data = overall15; }
         break;
       }
       case 16: {
@@ -446,29 +586,26 @@ router.post("/:id", async (req, res) => {
       }
       case 23: {
         const rows = await fetchJoined(filters);
-        const dayparts = {
-          "Morning (06:00 - 12:00)": [],
-          "Afternoon (12:00 - 16:00)": [],
-          "Evening (16:00 - 19:00)": [],
-          "Night (19:00 - 06:00)": []
-        };
-        rows.forEach(r => {
-          if (!r.ordered_time) return;
-          const h = new Date(r.ordered_time).getHours();
-          let dp = "Night (19:00 - 06:00)";
-          if (h >= 6 && h < 12) dp = "Morning (06:00 - 12:00)";
-          else if (h >= 12 && h < 16) dp = "Afternoon (12:00 - 16:00)";
-          else if (h >= 16 && h < 19) dp = "Evening (16:00 - 19:00)";
-          dayparts[dp].push(r.restaurant_rating);
-        });
-        data = Object.entries(dayparts).map(([name, vals]) => {
+        const DAYPARTS = ["Morning (06:00 - 12:00)", "Afternoon (12:00 - 16:00)", "Evening (16:00 - 19:00)", "Night (19:00 - 06:00)"];
+        const getDaypart = h => { if (h>=6&&h<12) return DAYPARTS[0]; if (h>=12&&h<16) return DAYPARTS[1]; if (h>=16&&h<19) return DAYPARTS[2]; return DAYPARTS[3]; };
+        const dayparts23 = { [DAYPARTS[0]]: [], [DAYPARTS[1]]: [], [DAYPARTS[2]]: [], [DAYPARTS[3]]: [] };
+        rows.forEach(r => { if (!r.ordered_time) return; dayparts23[getDaypart(new Date(r.ordered_time).getHours())].push(r.restaurant_rating); });
+        const overall23 = Object.entries(dayparts23).map(([name, vals]) => {
           const nums = vals.filter(v => v != null && !isNaN(v));
-          return {
-            name,
-            avg: nums.length ? +(nums.reduce((a, b) => a + b, 0) / nums.length).toFixed(2) : 0,
-            count: vals.length
-          };
+          return { name, avg: nums.length ? +(nums.reduce((a, b) => a + b, 0) / nums.length).toFixed(2) : 0, count: vals.length };
         });
+        const calcAvg23 = arr => { const n=arr.filter(v=>v!=null&&!isNaN(v)); return n.length?+(n.reduce((a,b)=>a+b,0)/n.length).toFixed(2):0; };
+        const dims23 = getBreakdownDimensions(filters);
+        if (dims23.length) {
+          const dmap23 = buildDimMap(rows, dims23);
+          const breakdown = [...dmap23.values()].map(({ dimVals, rows: gr }) => {
+            const dps = { [DAYPARTS[0]]:[], [DAYPARTS[1]]:[], [DAYPARTS[2]]:[], [DAYPARTS[3]]:[] };
+            gr.forEach(r => { if (!r.ordered_time || r.restaurant_rating == null) return; dps[getDaypart(new Date(r.ordered_time).getHours())].push(r.restaurant_rating); });
+            const dpAvgs = DAYPARTS.map(dp => ({ dp, avg: calcAvg23(dps[dp]) })).sort((a,b)=>b.avg-a.avg);
+            return { ...dimVals, overallAvg: calcAvg23(DAYPARTS.flatMap(dp=>dps[dp])), bestDaypart: dpAvgs[0].dp.split(" ")[0], bestAvg: dpAvgs[0].avg, worstDaypart: dpAvgs[dpAvgs.length-1].dp.split(" ")[0], worstAvg: dpAvgs[dpAvgs.length-1].avg };
+          }).sort((a, b) => (a[dims23[0].field]||'').localeCompare(b[dims23[0].field]||'') || b.overallAvg - a.overallAvg);
+          data = { overall: overall23, breakdown, breakdownDims: dims23 };
+        } else { data = overall23; }
         break;
       }
       case 26: {
@@ -630,7 +767,7 @@ router.post("/:id", async (req, res) => {
           const date = r.date;
           const rating = r.restaurant_rating;
           if (!item || item === "NO_ITEM" || !date || rating == null) return;
-          const month = date.substring(0, 7);
+          const month = toMonth(date);
           const key = `${item}::${month}`;
           if (!itemTrend.has(key)) itemTrend.set(key, []);
           itemTrend.get(key).push(rating);

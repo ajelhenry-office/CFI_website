@@ -1,174 +1,109 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from "react";
+import { C, FONT } from "../../theme";
 
-const BACKEND = import.meta.env.VITE_BACKEND_URL || "http://localhost:3001";
+const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:3001";
 
-export default function AuditModal({ onClose }) {
+export default function AuditModal({ onClose, stores = [], selectedBrand = "" }) {
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showSystemSyncs, setShowSystemSyncs] = useState(false);
 
   useEffect(() => {
-    fetch(`${BACKEND}/api/toggle/audit-log`)
-      .then(res => res.json())
-      .then(json => {
-        if (json.success) setLogs(json.logs);
-        setLoading(false);
-      })
-      .catch(err => {
-        console.error(err);
-        setLoading(false);
-      });
+    fetch(`${API_BASE}/api/toggle/audit-log`)
+      .then((r) => r.json())
+      .then((d) => setLogs(d.logs || []))
+      .catch(() => setLogs([]))
+      .finally(() => setLoading(false));
   }, []);
 
-  const handleExportCSV = () => {
-    window.location.href = `${BACKEND}/api/toggle/history/download`;
-  };
+  // Only show logs for stores belonging to the currently selected brand.
+  // When no brand is selected (""), show all.
+  const validStoreIds = useMemo(() => {
+    if (!selectedBrand) return null;
+    return new Set(stores.filter((s) => s.brand === selectedBrand).map((s) => s.location_id));
+  }, [stores, selectedBrand]);
 
-  const styles = {
-    overlay: {
-      position: 'fixed',
-      top: 0, left: 0, right: 0, bottom: 0,
-      backgroundColor: 'rgba(19, 38, 100, 0.4)',
-      backdropFilter: 'blur(4px)',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      zIndex: 9999,
-      padding: '40px'
-    },
-    modal: {
-      backgroundColor: '#fff',
-      borderRadius: '16px',
-      width: '100%',
-      maxWidth: '1000px',
-      height: '80vh',
-      display: 'flex',
-      flexDirection: 'column',
-      boxShadow: '0 24px 48px rgba(0,0,0,0.2)'
-    },
-    header: {
-      padding: '24px',
-      borderBottom: '1px solid rgba(19, 38, 100, 0.1)',
-      display: 'flex',
-      justifyContent: 'space-between',
-      alignItems: 'center'
-    },
-    title: {
-      fontSize: '20px',
-      fontWeight: '700',
-      color: '#132664'
-    },
-    closeBtn: {
-      background: 'none',
-      border: 'none',
-      fontSize: '24px',
-      cursor: 'pointer',
-      color: '#132664',
-      opacity: 0.5
-    },
-    exportBtn: {
-      backgroundColor: '#132664',
-      color: 'white',
-      border: 'none',
-      padding: '8px 16px',
-      borderRadius: '8px',
-      cursor: 'pointer',
-      fontWeight: '600',
-      fontSize: '13px'
-    },
-    tableContainer: {
-      flex: 1,
-      overflow: 'auto',
-      padding: '0 24px'
-    },
-    table: {
-      width: '100%',
-      borderCollapse: 'collapse',
-      textAlign: 'left'
-    },
-    th: {
-      position: 'sticky',
-      top: 0,
-      backgroundColor: '#f8fafc',
-      padding: '16px 12px',
-      color: '#132664',
-      fontSize: '12px',
-      textTransform: 'uppercase',
-      fontWeight: '700',
-      borderBottom: '2px solid rgba(19,38,100,0.1)'
-    },
-    td: {
-      padding: '16px 12px',
-      borderBottom: '1px solid rgba(19,38,100,0.05)',
-      fontSize: '13px',
-      color: '#334155'
-    },
-    resultBadge: (isSuccess) => ({
-      display: 'inline-block',
-      padding: '4px 8px',
-      borderRadius: '12px',
-      fontSize: '11px',
-      fontWeight: '700',
-      backgroundColor: isSuccess ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)',
-      color: isSuccess ? '#22c55e' : '#ef4444'
-    })
-  };
+  const filteredLogs = useMemo(
+    () =>
+      logs.filter((log) => {
+        if (!showSystemSyncs && log.is_automated) return false;
+        if (validStoreIds && !validStoreIds.has(log.store_id)) return false;
+        return true;
+      }),
+    [logs, showSystemSyncs, validStoreIds]
+  );
 
   return (
-    <div style={styles.overlay} onClick={onClose}>
-      <div style={styles.modal} onClick={e => e.stopPropagation()}>
-        <div style={styles.header}>
-          <div style={styles.title}>Audit Log History</div>
-          <div style={{ display: 'flex', gap: '16px', alignItems: 'center' }}>
-            <label style={{ fontSize: '13px', fontWeight: '600', color: '#64748b', display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
-              <input type="checkbox" checked={showSystemSyncs} onChange={e => setShowSystemSyncs(e.target.checked)} />
-              Show System Syncs
+    <div
+      style={{ position: "fixed", inset: 0, backgroundColor: "rgba(19,38,100,0.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 2000, fontFamily: FONT }}
+      onMouseDown={(e) => e.target === e.currentTarget && onClose()}
+    >
+      <div style={{ width: "min(860px, 94vw)", maxHeight: "82vh", backgroundColor: "#ffffff", borderRadius: 16, display: "flex", flexDirection: "column", overflow: "hidden", boxShadow: "0 16px 48px rgba(19,38,100,0.22)" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "18px 24px", borderBottom: `1px solid ${C.border}` }}>
+          <div>
+            <div style={{ fontSize: 15, fontWeight: 800, color: C.primary }}>
+              Toggle Audit Log{selectedBrand ? ` (${selectedBrand})` : ""}
+            </div>
+            <div style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>Full history of all toggle actions</div>
+          </div>
+          <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 700, color: C.muted, cursor: "pointer", userSelect: "none" }}>
+              <input
+                type="checkbox"
+                checked={showSystemSyncs}
+                onChange={(e) => setShowSystemSyncs(e.target.checked)}
+                style={{ accentColor: C.primary, cursor: "pointer" }}
+              />
+              System syncs
             </label>
-            <button style={styles.exportBtn} onClick={handleExportCSV}>📥 Download 48h CSV</button>
-            <button style={styles.closeBtn} onClick={onClose}>&times;</button>
+            <a
+              href={`${API_BASE}/api/history/download`}
+              style={{ fontSize: 12, fontWeight: 700, color: C.primary, textDecoration: "none", border: `1.5px solid ${C.primary}`, borderRadius: 8, padding: "6px 14px" }}
+            >
+              ⬇ CSV
+            </a>
+            <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 20, color: C.muted, cursor: "pointer", lineHeight: 1 }}>×</button>
           </div>
         </div>
-        
-        <div style={styles.tableContainer}>
+
+        <div style={{ overflowY: "auto", flex: 1 }}>
           {loading ? (
-            <div style={{ padding: '40px', textAlign: 'center', color: '#64748b' }}>Loading logs...</div>
+            <div style={{ padding: 32, textAlign: "center", color: C.muted, fontSize: 13 }}>Loading…</div>
+          ) : filteredLogs.length === 0 ? (
+            <div style={{ padding: 32, textAlign: "center", color: C.muted, fontSize: 13 }}>
+              No recent activity for {selectedBrand || "all brands"}.
+            </div>
           ) : (
-            <table style={styles.table}>
-              <thead>
-                <tr>
-                  <th style={styles.th}>Date & Time</th>
-                  <th style={styles.th}>Store Name</th>
-                  <th style={styles.th}>Type</th>
-                  <th style={styles.th}>Action</th>
-                  <th style={styles.th}>Result</th>
-                  <th style={styles.th}>Initiated By</th>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+              <thead style={{ position: "sticky", top: 0 }}>
+                <tr style={{ backgroundColor: C.primary, color: "#fff" }}>
+                  {["Store Name", "Store ID", "By", "Action", "Result", "Time"].map((h) => (
+                    <th key={h} style={{ padding: "9px 14px", textAlign: "left", fontWeight: 700, whiteSpace: "nowrap" }}>{h}</th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
-                {logs.filter(log => showSystemSyncs || !log.is_automated).map(log => (
-                  <tr key={log.id}>
-                    <td style={styles.td}>{new Date(log.created_at).toLocaleString('en-IN')}</td>
-                    <td style={{...styles.td, fontWeight: '600', color: '#132664'}}>{log.store_name}</td>
-                    <td style={styles.td}>
-                      {log.is_automated ? <span style={{ color: '#94a3b8', fontWeight: '600' }}>Bot</span> : 
-                       log.is_bulk ? <span style={{ color: '#8b5cf6', fontWeight: '600' }}>Bulk</span> : 'Manual'}
-                    </td>
-                    <td style={styles.td}>{log.action}</td>
-                    <td style={styles.td}>
-                      <span style={styles.resultBadge(log.result === 'SUCCESS')}>
-                        {log.result}
-                      </span>
-                    </td>
-                    <td style={styles.td}>{log.email}</td>
-                  </tr>
-                ))}
-                {logs.filter(log => showSystemSyncs || !log.is_automated).length === 0 && (
-                  <tr>
-                    <td colSpan="6" style={{ padding: '40px', textAlign: 'center', color: '#64748b' }}>
-                      No recent activity.
-                    </td>
-                  </tr>
-                )}
+                {filteredLogs.map((l, i) => {
+                  const ok = l.result === "SUCCESS";
+                  return (
+                    <tr key={i} style={{ backgroundColor: i % 2 ? "rgba(19,38,100,0.01)" : "#fff" }}>
+                      <td style={{ padding: "7px 14px", color: C.text }}>{l.store_name}</td>
+                      <td style={{ padding: "7px 14px", color: C.muted, fontFamily: "monospace", fontSize: 11 }}>{l.store_id}</td>
+                      <td style={{ padding: "7px 14px", color: C.muted }}>
+                        {l.is_automated ? (
+                          <span style={{ fontSize: 10, fontWeight: 800, color: "#fff", backgroundColor: C.primary, borderRadius: 6, padding: "2px 7px" }}>🤖 Bot</span>
+                        ) : (
+                          l.email || "—"
+                        )}
+                      </td>
+                      <td style={{ padding: "7px 14px", fontWeight: 700, color: l.action === "ENABLE" ? "#15803d" : "#b91c1c" }}>{l.action}</td>
+                      <td style={{ padding: "7px 14px", fontWeight: 800, color: ok ? "#15803d" : "#b91c1c" }}>{l.result}</td>
+                      <td style={{ padding: "7px 14px", color: C.muted, whiteSpace: "nowrap" }}>
+                        {new Date(l.created_at).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           )}

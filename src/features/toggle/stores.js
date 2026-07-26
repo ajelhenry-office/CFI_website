@@ -1,7 +1,9 @@
 import CAKEZONE_STORES from './cakezone_stores.json';
+import EATFIT_STORES from './eatfit_stores.json';
 
 export const STORES = [
   ...CAKEZONE_STORES,
+  ...EATFIT_STORES,
   { id:"ST01", name:"Commissary", brand:"Ovenfresh", city:"Chennai", location_id:"STP-L-63039", status:"offline" },
   { id:"ST02", name:"Keelkattalai", brand:"Ovenfresh", city:"Chennai", location_id:"STP-L-55601", status:"offline" },
   { id:"ST03", name:"Madipakkam", brand:"Ovenfresh", city:"Chennai", location_id:"STP-L-55602", status:"offline" },
