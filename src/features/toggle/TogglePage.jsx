@@ -5,7 +5,7 @@ import AuditModal from "./AuditModal";
 import BulkProgressIsland from "./BulkProgressIsland";
 import { toggleStore, bulkToggleStores } from "../../api";
 
-const BACKEND = import.meta.env.VITE_BACKEND_URL || "http://localhost:3001";
+const BACKEND = import.meta.env.VITE_BACKEND_URL || (import.meta.env.PROD ? "" : "http://localhost:3001");
 
 export default function TogglePage({ stores, setStores, logs, setLogs }) {
   const [searchQuery, setSearchQuery] = useState("");
