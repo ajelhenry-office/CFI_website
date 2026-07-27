@@ -64,11 +64,13 @@ export default function StoreCard({ store, onToggle, isBulking, dbState }) {
           </div>
           <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
             <span style={{ fontSize: 10, fontWeight: 800, color: isOnline ? "#15803d" : "#dc2626", border: `1px solid ${isOnline ? "#15803d" : "#dc2626"}33`, borderRadius: 20, padding: "3px 9px" }}>
-              {isOnline ? "LIVE: ONLINE" : "LIVE: OFFLINE"}
+              {isOnline ? "ONLINE" : "OFFLINE"}
             </span>
-            <span style={{ fontSize: 9, fontWeight: 700, color: C.muted }}>
-              Desired: {desiredState}
-            </span>
+            {desiredState && desiredState.toLowerCase() !== (isOnline ? "online" : "offline") && (
+              <span style={{ fontSize: 9, fontWeight: 700, color: "#d97706", backgroundColor: "#fef3c7", padding: "2px 6px", borderRadius: 4 }}>
+                Target: {desiredState}
+              </span>
+            )}
           </div>
         </div>
 
