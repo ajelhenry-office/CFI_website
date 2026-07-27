@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import Sidebar, { NAV_ITEMS } from "./Sidebar";
+import Sidebar, { NAV_ITEMS, ROLE_PERMISSIONS } from "./Sidebar";
 import GlobalFilters from "./GlobalFilters";
 import { C, FONT } from "./theme";
 import TogglePage from "./features/toggle/TogglePage";
@@ -7,6 +7,7 @@ import TimingPage from "./features/timing/TimingPage";
 import ReviewsPage from "./features/reviews/ReviewsPage";
 import RouteBackfillingPage from "./features/backfilling/RouteBackfillingPage";
 import RatingsPage from "./features/ratings/RatingsPage";
+import OpsMatrixPage from "./features/ops_matrix/OpsMatrixPage";
 import { SettingsPage, ThemePage } from "./features/static/StaticPages";
 import LoginPage from "./features/auth/LoginPage";
 import { fetchFilters } from "./features/ratings/ratingsApi";
@@ -34,7 +35,15 @@ export default function App() {
     return saved ? JSON.parse(saved) : null;
   });
 
-  const [activeTab, setActiveTab] = useState("toggle");
+  const [activeTab, setActiveTab] = useState(() => {
+    const savedUser = localStorage.getItem("user");
+    if (savedUser) {
+      const parsed = JSON.parse(savedUser);
+      const allowed = ROLE_PERMISSIONS[parsed.role] || ["ratings"];
+      return allowed[0];
+    }
+    return "toggle";
+  });
   const [collapsed, setCollapsed] = useState(false);
   const [globalFilters, setGlobalFilters] = useState(DEFAULT_FILTERS);
   const [masterData, setMasterData] = useState([]);
@@ -79,6 +88,7 @@ export default function App() {
         }}
         collapsed={collapsed}
         onToggleCollapse={() => setCollapsed(true)}
+        role={user.role}
       />
 
       <main style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", position: "relative" }}>
@@ -145,6 +155,7 @@ export default function App() {
               onUpdateFilters={updateFilters}
             />
           )}
+          {activeTab === "ops_matrix" && <OpsMatrixPage />}
           {activeTab === "settings" && <SettingsPage />}
           {activeTab === "theme" && <ThemePage />}
         </div>

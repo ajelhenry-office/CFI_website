@@ -14,6 +14,7 @@ export function SettingsPage() {
   const [users, setUsers] = useState([]);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [role, setRole] = useState("dark_kitchen");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [activeTab, setActiveTab] = useState("general");
@@ -42,7 +43,7 @@ export function SettingsPage() {
       const res = await fetch(`${API_BASE}/api/auth/users`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...getAuthHeaders() },
-        body: JSON.stringify({ email, password })
+        body: JSON.stringify({ email, password, role })
       });
       const data = await res.json();
       if (data.success) {
@@ -143,6 +144,16 @@ export function SettingsPage() {
               required
               style={{ flex: 1, padding: "10px 14px", borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 13, outline: "none", fontFamily: FONT }}
             />
+            <select 
+              value={role}
+              onChange={e => setRole(e.target.value)}
+              style={{ padding: "10px 14px", borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 13, outline: "none", fontFamily: FONT, backgroundColor: "#fff" }}
+            >
+              <option value="dark_kitchen">Dark Kitchen</option>
+              <option value="supervisor">Supervisor</option>
+              <option value="control_tower">Control Tower</option>
+              <option value="admin">Admin</option>
+            </select>
             <button 
               type="submit" 
               disabled={loading}
@@ -174,7 +185,7 @@ export function SettingsPage() {
                   <td style={{ padding: "16px 8px", fontSize: 13, color: C.muted }}>{u.email}</td>
                   <td style={{ padding: "16px 8px" }}>
                     <span style={{ fontSize: 11, fontWeight: 700, color: "#0284c7", backgroundColor: "#e0f2fe", padding: "4px 8px", borderRadius: 4, textTransform: "capitalize" }}>
-                      {u.role === 'admin' ? 'Business Admin' : 'Store Manager'}
+                      {u.role === 'admin' ? 'Business Admin' : u.role.replace('_', ' ')}
                     </span>
                   </td>
                   <td style={{ padding: "16px 8px", textAlign: "right" }}>
