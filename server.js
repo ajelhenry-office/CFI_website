@@ -11,7 +11,7 @@ import timingRoutes from "./server/timing/timing.routes.js";
 import reviewsRouter from "./server/reviews/reviewsRouter.js";
 import automationRoutes from "./server/ratings/automation.routes.js";
 import insightsRoutes from "./server/ratings/insights.routes.js";
-import authRoutes from "./server/auth/auth.routes.js";
+import authRoutes, { authMiddleware } from "./server/auth/auth.routes.js";
 import { handleFilterRequest } from "./server/ratings/filters.js";
 import { pool } from "./server/ratings/db.js";
 
@@ -39,7 +39,12 @@ app.get("/test-db", async (req, res) => {
 });
 
 // ─── MOUNT MODULAR ROUTES ─────────────────────────────────────
+// Open route for login
 app.use("/api/auth", authRoutes);
+
+// Strictly secure all other API routes
+app.use("/api", authMiddleware);
+
 app.use("/api", toggleRoutes);
 app.use("/api", timingRoutes);
 app.use("/api/reviews", reviewsRouter);
