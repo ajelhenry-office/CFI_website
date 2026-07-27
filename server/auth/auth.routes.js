@@ -7,7 +7,7 @@ const router = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET || 'CurefoodsSuperSecret2026';
 
 // Middleware to verify token and extract user
-export const authMiddleware = (req, res, next) => {
+export const authMiddleware = async (req, res, next) => {
   const authHeader = req.headers.authorization;
   if (!authHeader) {
     return res.status(401).json({ success: false, error: 'Unauthorized: No token provided' });
@@ -16,6 +16,13 @@ export const authMiddleware = (req, res, next) => {
   const token = authHeader.split(' ')[1];
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
+    
+    // Real-time block: Ensure user is not locked in the DB
+    const { rows } = await pool.query('SELECT is_locked FROM authorized_users WHERE id = $1', [decoded.id]);
+    if (rows.length === 0 || rows[0].is_locked) {
+      return res.status(403).json({ success: false, error: 'Account has been locked by admin' });
+    }
+    
     req.user = decoded; // { id, email, role }
     next();
   } catch (err) {
@@ -46,6 +53,10 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ success: false, error: 'Invalid credentials' });
     }
 
+    if (user.is_locked) {
+      return res.status(403).json({ success: false, error: 'Account has been locked by admin' });
+    }
+
     const isMatch = await bcrypt.compare(password, user.password_hash);
     if (!isMatch) {
       return res.status(401).json({ success: false, error: 'Invalid credentials' });
@@ -67,7 +78,7 @@ router.post('/login', async (req, res) => {
 // 2. Get all users (Admin only)
 router.get('/users', authMiddleware, adminMiddleware, async (req, res) => {
   try {
-    const { rows } = await pool.query('SELECT id, email, role, created_at FROM authorized_users ORDER BY id ASC');
+    const { rows } = await pool.query('SELECT id, email, role, is_locked, created_at FROM authorized_users ORDER BY id ASC');
     res.json({ success: true, users: rows });
   } catch (err) {
     console.error('Fetch users error:', err);
@@ -115,6 +126,27 @@ router.delete('/users/:id', authMiddleware, adminMiddleware, async (req, res) =>
     res.json({ success: true, message: 'User deleted successfully' });
   } catch (err) {
     console.error('Delete user error:', err);
+    res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+});
+
+// 5. Toggle Lock Status (Admin only)
+router.patch('/users/:id/lock', authMiddleware, adminMiddleware, async (req, res) => {
+  const { id } = req.params;
+  const { is_locked } = req.body;
+  
+  if (parseInt(id) === req.user.id) {
+    return res.status(400).json({ success: false, error: 'Cannot lock your own admin account' });
+  }
+
+  try {
+    const { rowCount } = await pool.query('UPDATE authorized_users SET is_locked = $1 WHERE id = $2', [is_locked, id]);
+    if (rowCount === 0) {
+      return res.status(404).json({ success: false, error: 'User not found' });
+    }
+    res.json({ success: true, message: is_locked ? 'User locked successfully' : 'User unlocked successfully' });
+  } catch (err) {
+    console.error('Lock user error:', err);
     res.status(500).json({ success: false, error: 'Internal server error' });
   }
 });

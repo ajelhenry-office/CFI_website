@@ -8,7 +8,7 @@ const row = (label, value) => (
 );
 
 import { useState, useEffect } from "react";
-import { API_BASE } from "../../api";
+import { API_BASE, getAuthHeaders } from "../../api";
 
 export function SettingsPage() {
   const [users, setUsers] = useState([]);
@@ -16,6 +16,7 @@ export function SettingsPage() {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [activeTab, setActiveTab] = useState("general");
   
   const currentUser = JSON.parse(localStorage.getItem("user") || "{}");
   const isAdmin = currentUser.email === "ajel.henry@curefoods.in" || currentUser.role === "admin";
@@ -23,7 +24,7 @@ export function SettingsPage() {
   const fetchUsers = async () => {
     if (!isAdmin) return;
     try {
-      const res = await fetch(`${API_BASE}/api/auth/users`);
+      const res = await fetch(`${API_BASE}/api/auth/users`, { headers: getAuthHeaders() });
       const data = await res.json();
       if (data.success) setUsers(data.users);
     } catch (err) {}
@@ -40,7 +41,7 @@ export function SettingsPage() {
     try {
       const res = await fetch(`${API_BASE}/api/auth/users`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify({ email, password })
       });
       const data = await res.json();
@@ -58,42 +59,81 @@ export function SettingsPage() {
     }
   };
 
-  const handleDeleteUser = async (id) => {
-    if (!confirm("Remove access for this user?")) return;
+  const handleToggleLock = async (id, currentLockedStatus) => {
     try {
-      const res = await fetch(`${API_BASE}/api/auth/users/${id}`, { method: "DELETE" });
+      const res = await fetch(`${API_BASE}/api/auth/users/${id}/lock`, { 
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({ is_locked: !currentLockedStatus })
+      });
       const data = await res.json();
       if (data.success) fetchUsers();
       else alert(data.error);
-    } catch (err) {}
+    } catch (err) {
+      alert("Failed to toggle lock status");
+    }
   };
 
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 24, maxWidth: 620 }}>
-      <div style={cardStyle}>
-        <div style={{ fontSize: 14, fontWeight: 800, color: C.primary, marginBottom: 8 }}>User Profile</div>
-        {row("Name", currentUser.email ? currentUser.email.split('@')[0] : "Curefoods Admin")}
-        {row("Email", currentUser.email || "Unknown")}
-        {row("Role", currentUser.role === "admin" ? "Administrator" : "Operations Manager")}
-      </div>
-      
-      <div style={cardStyle}>
-        <div style={{ fontSize: 14, fontWeight: 800, color: C.primary, marginBottom: 8 }}>Connected Platforms</div>
-        {["Swiggy", "Zomato", "Google"].map((p) => row(p, "Connected"))}
-      </div>
+  const formatName = (email) => {
+    const parts = email.split('@')[0].split('.');
+    return parts.map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(' ');
+  };
 
+  const formatUsername = (email) => email.split('@')[0];
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 24, width: "100%", maxWidth: activeTab === "employees" ? 1100 : 620 }}>
+      
       {isAdmin && (
-        <div style={cardStyle}>
-          <div style={{ fontSize: 14, fontWeight: 800, color: C.primary, marginBottom: 12 }}>User Management (Admin Only)</div>
+        <div style={{ display: "flex", gap: 16, borderBottom: `1px solid ${C.border}`, paddingBottom: 12, marginBottom: 8 }}>
+          <button 
+            onClick={() => setActiveTab("general")}
+            style={{ background: "none", border: "none", fontSize: 14, fontWeight: 800, color: activeTab === "general" ? C.primary : C.muted, cursor: "pointer", borderBottom: activeTab === "general" ? `2px solid ${C.primary}` : "none", paddingBottom: 4 }}
+          >
+            General Settings
+          </button>
+          <button 
+            onClick={() => setActiveTab("employees")}
+            style={{ background: "none", border: "none", fontSize: 14, fontWeight: 800, color: activeTab === "employees" ? C.primary : C.muted, cursor: "pointer", borderBottom: activeTab === "employees" ? `2px solid ${C.primary}` : "none", paddingBottom: 4 }}
+          >
+            Employees
+          </button>
+        </div>
+      )}
+
+      {activeTab === "general" && (
+        <>
+          <div style={cardStyle}>
+            <div style={{ fontSize: 14, fontWeight: 800, color: C.primary, marginBottom: 8 }}>User Profile</div>
+            {row("Name", currentUser.email ? formatName(currentUser.email) : "Curefoods Admin")}
+            {row("Email", currentUser.email || "Unknown")}
+            {row("Role", currentUser.role === "admin" ? "Administrator" : "Operations Manager")}
+          </div>
           
-          <form onSubmit={handleAddUser} style={{ display: "flex", gap: 10, marginBottom: 20 }}>
+          <div style={cardStyle}>
+            <div style={{ fontSize: 14, fontWeight: 800, color: C.primary, marginBottom: 8 }}>Connected Platforms</div>
+            {["Swiggy", "Zomato", "Google"].map((p) => row(p, "Connected"))}
+          </div>
+        </>
+      )}
+
+      {activeTab === "employees" && isAdmin && (
+        <div style={{ ...cardStyle, padding: "24px 32px" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
+            <div>
+              <div style={{ fontSize: 18, fontWeight: 800, color: C.text }}>Employees</div>
+              <div style={{ fontSize: 13, color: C.muted, marginTop: 4 }}>Manage team members &amp; access</div>
+            </div>
+          </div>
+          
+          <form onSubmit={handleAddUser} style={{ display: "flex", gap: 10, marginBottom: 24, padding: 16, backgroundColor: "#f9fafb", borderRadius: 12, border: `1px solid ${C.borderSoft}` }}>
             <input 
               type="email" 
-              placeholder="Email address" 
+              placeholder="Employee Email" 
               value={email}
               onChange={e => setEmail(e.target.value)}
               required
-              style={{ flex: 1, padding: "8px 12px", borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 13, outline: "none", fontFamily: FONT }}
+              style={{ flex: 1, padding: "10px 14px", borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 13, outline: "none", fontFamily: FONT }}
             />
             <input 
               type="password" 
@@ -101,37 +141,71 @@ export function SettingsPage() {
               value={password}
               onChange={e => setPassword(e.target.value)}
               required
-              style={{ flex: 1, padding: "8px 12px", borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 13, outline: "none", fontFamily: FONT }}
+              style={{ flex: 1, padding: "10px 14px", borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 13, outline: "none", fontFamily: FONT }}
             />
             <button 
               type="submit" 
               disabled={loading}
-              style={{ padding: "8px 16px", borderRadius: 8, backgroundColor: C.primary, color: "#fff", border: "none", fontWeight: 700, fontSize: 12, cursor: loading ? "not-allowed" : "pointer" }}
+              style={{ padding: "10px 20px", borderRadius: 8, backgroundColor: "#0284c7", color: "#fff", border: "none", fontWeight: 700, fontSize: 13, cursor: loading ? "not-allowed" : "pointer" }}
             >
-              Add User
+              + Add Employee
             </button>
           </form>
 
-          {error && <div style={{ color: "#dc2626", fontSize: 12, marginBottom: 10, fontWeight: 600 }}>{error}</div>}
+          {error && <div style={{ color: "#dc2626", fontSize: 13, marginBottom: 16, fontWeight: 600 }}>{error}</div>}
 
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {users.map(u => (
-              <div key={u.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px", backgroundColor: "#f9fafb", borderRadius: 8, border: `1px solid ${C.borderSoft}` }}>
-                <div>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{u.email}</div>
-                  <div style={{ fontSize: 11, color: C.muted, textTransform: "capitalize" }}>{u.role}</div>
-                </div>
-                {u.email !== currentUser.email && (
-                  <button 
-                    onClick={() => handleDeleteUser(u.id)}
-                    style={{ padding: "6px 12px", borderRadius: 6, backgroundColor: "#fee2e2", color: "#dc2626", border: "none", fontWeight: 700, fontSize: 11, cursor: "pointer" }}
-                  >
-                    Revoke Access
-                  </button>
-                )}
-              </div>
-            ))}
-          </div>
+          <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left" }}>
+            <thead>
+              <tr style={{ borderBottom: `2px solid ${C.borderSoft}` }}>
+                <th style={{ padding: "12px 8px", fontSize: 11, fontWeight: 800, color: C.muted, textTransform: "uppercase" }}>#</th>
+                <th style={{ padding: "12px 8px", fontSize: 11, fontWeight: 800, color: C.muted, textTransform: "uppercase" }}>Name</th>
+                <th style={{ padding: "12px 8px", fontSize: 11, fontWeight: 800, color: C.muted, textTransform: "uppercase" }}>Username</th>
+                <th style={{ padding: "12px 8px", fontSize: 11, fontWeight: 800, color: C.muted, textTransform: "uppercase" }}>Email</th>
+                <th style={{ padding: "12px 8px", fontSize: 11, fontWeight: 800, color: C.muted, textTransform: "uppercase" }}>Roles</th>
+                <th style={{ padding: "12px 8px", fontSize: 11, fontWeight: 800, color: C.muted, textTransform: "uppercase", textAlign: "right" }}>Lock</th>
+              </tr>
+            </thead>
+            <tbody>
+              {users.map((u, i) => (
+                <tr key={u.id} style={{ borderBottom: `1px solid ${C.borderSoft}`, transition: "background-color 0.2s" }} onMouseOver={e => e.currentTarget.style.backgroundColor = "#f9fafb"} onMouseOut={e => e.currentTarget.style.backgroundColor = "transparent"}>
+                  <td style={{ padding: "16px 8px", fontSize: 12, color: C.muted, fontWeight: 600 }}>{i + 1}</td>
+                  <td style={{ padding: "16px 8px", fontSize: 13, color: C.text, fontWeight: 700 }}>{formatName(u.email)}</td>
+                  <td style={{ padding: "16px 8px", fontSize: 13, color: C.muted }}>{formatUsername(u.email)}</td>
+                  <td style={{ padding: "16px 8px", fontSize: 13, color: C.muted }}>{u.email}</td>
+                  <td style={{ padding: "16px 8px" }}>
+                    <span style={{ fontSize: 11, fontWeight: 700, color: "#0284c7", backgroundColor: "#e0f2fe", padding: "4px 8px", borderRadius: 4, textTransform: "capitalize" }}>
+                      {u.role === 'admin' ? 'Business Admin' : 'Store Manager'}
+                    </span>
+                  </td>
+                  <td style={{ padding: "16px 8px", textAlign: "right" }}>
+                    <div 
+                      onClick={() => u.email !== currentUser.email && handleToggleLock(u.id, u.is_locked)}
+                      style={{ 
+                        display: "inline-block", 
+                        width: 36, height: 20, 
+                        borderRadius: 20, 
+                        backgroundColor: u.is_locked ? "#ef4444" : "#e5e7eb",
+                        position: "relative",
+                        cursor: u.email === currentUser.email ? "not-allowed" : "pointer",
+                        transition: "background-color 0.3s",
+                        opacity: u.email === currentUser.email ? 0.5 : 1
+                      }}
+                    >
+                      <div style={{
+                        width: 16, height: 16, 
+                        borderRadius: "50%", 
+                        backgroundColor: "#fff",
+                        position: "absolute", top: 2, 
+                        left: u.is_locked ? 18 : 2,
+                        transition: "left 0.3s",
+                        boxShadow: "0 1px 3px rgba(0,0,0,0.2)"
+                      }} />
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </div>
