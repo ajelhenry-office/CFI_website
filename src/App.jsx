@@ -8,6 +8,7 @@ import ReviewsPage from "./features/reviews/ReviewsPage";
 import RouteBackfillingPage from "./features/backfilling/RouteBackfillingPage";
 import RatingsPage from "./features/ratings/RatingsPage";
 import { SettingsPage, ThemePage, LogoutPage } from "./features/static/StaticPages";
+import LoginPage from "./features/auth/LoginPage";
 import { fetchFilters } from "./features/ratings/ratingsApi";
 
 const iso = (offsetDays) => {
@@ -28,12 +29,18 @@ const DEFAULT_FILTERS = {
 };
 
 export default function App() {
+  const [user, setUser] = useState(() => {
+    const saved = localStorage.getItem("user");
+    return saved ? JSON.parse(saved) : null;
+  });
+
   const [activeTab, setActiveTab] = useState("ratings");
   const [collapsed, setCollapsed] = useState(false);
   const [globalFilters, setGlobalFilters] = useState(DEFAULT_FILTERS);
   const [masterData, setMasterData] = useState([]);
 
   useEffect(() => {
+    if (!user) return;
     let alive = true;
     fetchFilters()
       .then((res) => {
@@ -43,7 +50,11 @@ export default function App() {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [user]);
+
+  if (!user) {
+    return <LoginPage onLogin={setUser} />;
+  }
 
   const allBrands = useMemo(() => [...new Set(masterData.map((r) => r.brand))].sort(), [masterData]);
 
@@ -103,7 +114,7 @@ export default function App() {
             <h1 style={{ fontSize: 24, fontWeight: 800, color: C.primary, margin: 0, letterSpacing: -0.3 }}>{title}</h1>
             <div style={{ fontSize: 13, color: C.muted, marginTop: 3 }}>{subtitle}</div>
           </div>
-          {activeTab !== "toggle" && activeTab !== "logout" && (
+          {activeTab !== "toggle" && activeTab !== "logout" && activeTab !== "settings" && (
             <GlobalFilters
               filters={globalFilters}
               masterData={masterData}

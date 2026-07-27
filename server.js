@@ -11,6 +11,7 @@ import timingRoutes from "./server/timing/timing.routes.js";
 import reviewsRouter from "./server/reviews/reviewsRouter.js";
 import automationRoutes from "./server/ratings/automation.routes.js";
 import insightsRoutes from "./server/ratings/insights.routes.js";
+import authRoutes from "./server/auth/auth.routes.js";
 import { handleFilterRequest } from "./server/ratings/filters.js";
 import { pool } from "./server/ratings/db.js";
 
@@ -38,6 +39,7 @@ app.get("/test-db", async (req, res) => {
 });
 
 // ─── MOUNT MODULAR ROUTES ─────────────────────────────────────
+app.use("/api/auth", authRoutes);
 app.use("/api", toggleRoutes);
 app.use("/api", timingRoutes);
 app.use("/api/reviews", reviewsRouter);
