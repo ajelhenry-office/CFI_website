@@ -8,9 +8,6 @@ import AuditModal from "./AuditModal";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || (import.meta.env.PROD ? "" : "http://localhost:3001");
 
-const BRANDS = ["All", ...new Set(STORES.map((s) => s.brand))];
-const CITIES = ["All", ...new Set(STORES.map((s) => s.city).filter(Boolean))].sort();
-
 async function post(path, body) {
   const res = await fetch(`${API_BASE}${path}`, {
     method: "POST",
@@ -20,15 +17,23 @@ async function post(path, body) {
   return res.json();
 }
 
+const selectStyle = { padding: "7px 12px", borderRadius: 10, border: `1.5px solid ${C.primary}`, color: C.primary, fontSize: 12, fontWeight: 700, fontFamily: FONT, cursor: "pointer", outline: "none" };
+
 export default function TogglePage() {
   const [stores, setStores] = useState(STORES);
   const [brand, setBrand] = useState("All");
+  const [zone, setZone] = useState("All");
   const [city, setCity] = useState("All");
+  const [area, setArea] = useState("All");
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("Total");
   const [sidebarData, setSidebarData] = useState(null);
   const [isBulking, setIsBulking] = useState(false);
   const [showAudit, setShowAudit] = useState(false);
+
+  const handleBrandChange = (b) => { setBrand(b); setZone("All"); setCity("All"); setArea("All"); };
+  const handleZoneChange = (z) => { setZone(z); setCity("All"); setArea("All"); };
+  const handleCityChange = (c) => { setCity(c); setArea("All"); };
 
   const fetchSidebar = useCallback(() => {
     fetch(`${API_BASE}/api/toggle/sidebar-data`)
@@ -43,15 +48,47 @@ export default function TogglePage() {
     return () => clearInterval(timer);
   }, [fetchSidebar]);
 
+  const brandsList = useMemo(() => ["All", ...new Set(stores.map(s => s.brand).filter(Boolean))].sort(), [stores]);
+  
+  const zonesList = useMemo(() => {
+    const list = stores.filter(s => brand === "All" || s.brand === brand)
+                       .map(s => s.zone)
+                       .filter(Boolean);
+    return ["All", ...new Set(list)].sort();
+  }, [stores, brand]);
+
+  const citiesList = useMemo(() => {
+    const list = stores.filter(s => 
+                          (brand === "All" || s.brand === brand) &&
+                          (zone === "All" || s.zone === zone)
+                       )
+                       .map(s => s.city)
+                       .filter(Boolean);
+    return ["All", ...new Set(list)].sort();
+  }, [stores, brand, zone]);
+
+  const areasList = useMemo(() => {
+    const list = stores.filter(s => 
+                          (brand === "All" || s.brand === brand) &&
+                          (zone === "All" || s.zone === zone) &&
+                          (city === "All" || s.city === city)
+                       )
+                       .map(s => s.name)
+                       .filter(Boolean);
+    return ["All", ...new Set(list)].sort();
+  }, [stores, brand, zone, city]);
+
   const baseFiltered = useMemo(() => {
     const q = search.toLowerCase();
     return stores.filter((s) => {
       if (brand !== "All" && s.brand !== brand) return false;
+      if (zone !== "All" && s.zone !== zone) return false;
       if (city !== "All" && s.city !== city) return false;
+      if (area !== "All" && s.name !== area) return false;
       if (q && !s.name.toLowerCase().includes(q) && !s.location_id.toLowerCase().includes(q)) return false;
       return true;
     });
-  }, [stores, brand, city, search]);
+  }, [stores, brand, zone, city, area, search]);
 
   const onlineCount = baseFiltered.filter((s) => s.status === "online").length;
   const offlineCount = baseFiltered.length - onlineCount;
@@ -124,22 +161,20 @@ export default function TogglePage() {
       {/* Filters + actions */}
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
         
-        {/* Brand dropdown */}
-        <select
-          value={brand}
-          onChange={(e) => setBrand(e.target.value)}
-          style={{ padding: "7px 12px", borderRadius: 10, border: `1.5px solid ${C.primary}`, color: C.primary, fontSize: 12, fontWeight: 700, fontFamily: FONT, cursor: "pointer", outline: "none" }}
-        >
-          {BRANDS.map((b) => <option key={b} value={b}>{b === "All" ? "All Brands" : b}</option>)}
+        <select value={brand} onChange={(e) => handleBrandChange(e.target.value)} style={selectStyle}>
+          {brandsList.map((b) => <option key={b} value={b}>{b === "All" ? "All Brands" : b}</option>)}
+        </select>
+        
+        <select value={zone} onChange={(e) => handleZoneChange(e.target.value)} style={selectStyle}>
+          {zonesList.map((z) => <option key={z} value={z}>{z === "All" ? "All Zones" : z}</option>)}
         </select>
 
-        {/* City dropdown */}
-        <select
-          value={city}
-          onChange={(e) => setCity(e.target.value)}
-          style={{ padding: "7px 12px", borderRadius: 10, border: `1.5px solid ${C.primary}`, color: C.primary, fontSize: 12, fontWeight: 700, fontFamily: FONT, cursor: "pointer", outline: "none" }}
-        >
-          {CITIES.map((c) => <option key={c} value={c}>{c === "All" ? "All Cities" : c}</option>)}
+        <select value={city} onChange={(e) => handleCityChange(e.target.value)} style={selectStyle}>
+          {citiesList.map((c) => <option key={c} value={c}>{c === "All" ? "All Cities" : c}</option>)}
+        </select>
+        
+        <select value={area} onChange={(e) => setArea(e.target.value)} style={selectStyle}>
+          {areasList.map((a) => <option key={a} value={a}>{a === "All" ? "All Areas" : a}</option>)}
         </select>
 
         {/* Search */}
