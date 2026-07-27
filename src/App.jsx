@@ -68,7 +68,15 @@ export default function App() {
     <div style={{ display: "flex", minHeight: "100vh", backgroundColor: C.bg, color: C.text, fontFamily: FONT }}>
       <Sidebar
         active={activeTab}
-        onNavigate={setActiveTab}
+        onNavigate={(tab) => {
+          if (tab === "logout") {
+            localStorage.removeItem("token");
+            localStorage.removeItem("user");
+            setUser(null);
+          } else {
+            setActiveTab(tab);
+          }
+        }}
         collapsed={collapsed}
         onToggleCollapse={() => setCollapsed(true)}
       />
@@ -114,7 +122,7 @@ export default function App() {
             <h1 style={{ fontSize: 24, fontWeight: 800, color: C.primary, margin: 0, letterSpacing: -0.3 }}>{title}</h1>
             <div style={{ fontSize: 13, color: C.muted, marginTop: 3 }}>{subtitle}</div>
           </div>
-          {activeTab !== "toggle" && activeTab !== "logout" && activeTab !== "settings" && (
+          {activeTab !== "toggle" && activeTab !== "settings" && (
             <GlobalFilters
               filters={globalFilters}
               masterData={masterData}
@@ -139,7 +147,6 @@ export default function App() {
           )}
           {activeTab === "settings" && <SettingsPage />}
           {activeTab === "theme" && <ThemePage />}
-          {activeTab === "logout" && <LogoutPage onSignIn={() => setActiveTab("toggle")} />}
         </div>
       </main>
     </div>

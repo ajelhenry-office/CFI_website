@@ -155,33 +155,3 @@ export function ThemePage() {
   );
 }
 
-export function LogoutPage({ onSignIn }) {
-  return (
-    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "80px 20px", gap: 14, fontFamily: FONT }}>
-      <svg width="46" height="46" viewBox="0 0 24 24" fill="none" stroke={C.primary} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
-        <path d="M16 17l5-5-5-5" />
-        <path d="M21 12H9" />
-      </svg>
-      <div style={{ fontSize: 20, fontWeight: 900, color: C.primary }}>Logged Out</div>
-      <div style={{ fontSize: 12.5, color: C.muted }}>Your session has been closed on this device.</div>
-      <button
-        onClick={onSignIn}
-        style={{
-          marginTop: 6,
-          padding: "10px 22px",
-          borderRadius: 22,
-          border: "none",
-          backgroundColor: C.primary,
-          color: "#ffffff",
-          fontSize: 13,
-          fontWeight: 700,
-          cursor: "pointer",
-          fontFamily: FONT,
-        }}
-      >
-        Sign In Again
-      </button>
-    </div>
-  );
-}
