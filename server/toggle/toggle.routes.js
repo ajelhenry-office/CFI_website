@@ -110,6 +110,11 @@ router.post("/toggle", async (req, res) => {
   if (!location_id || !action) return res.status(400).json({ error: "location_id and action required" });
   if (!["enable", "disable"].includes(action)) return res.status(400).json({ error: 'action must be enable or disable' });
 
+  const brandKey = brand.toLowerCase().replace(/[^a-z]/g, "_");
+  if (brandKey.includes("cake_zone") || brandKey.includes("cakezone") || brandKey.includes("eatfit")) {
+    return res.status(403).json({ success: false, error: `Action blocked: ${brand} is frozen to prevent accidental modification to live accounts.` });
+  }
+
   // Update desired state in DB
   const desiredState = action === 'enable' ? 'ONLINE' : 'OFFLINE';
   try {
@@ -159,11 +164,20 @@ router.post("/toggle/bulk", async (req, res) => {
     return res.status(400).json({ error: "stores array and action required" });
   }
 
+  const validStores = stores.filter(store => {
+    const brandKey = (store.brand || "ovenfresh").toLowerCase().replace(/[^a-z]/g, "_");
+    return !(brandKey.includes("cake_zone") || brandKey.includes("cakezone") || brandKey.includes("eatfit"));
+  });
+
+  if (validStores.length === 0) {
+    return res.status(403).json({ success: false, error: "Action blocked: Selected live accounts (CakeZone/Eatfit) are frozen." });
+  }
+
   try {
     const desiredState = action === 'enable' ? 'ONLINE' : 'OFFLINE';
     
     // Update all desired states immediately
-    for (const store of stores) {
+    for (const store of validStores) {
       await pool.query(`
         INSERT INTO store_state (location_id, brand, desired_state) 
         VALUES ($1, $2, $3) 
@@ -174,12 +188,12 @@ router.post("/toggle/bulk", async (req, res) => {
 
     const jobRes = await pool.query(
       `INSERT INTO bulk_toggle_jobs (action, total_stores, pending_count) VALUES ($1, $2, $3) RETURNING id`,
-      [action, stores.length, stores.length]
+      [action, validStores.length, validStores.length]
     );
     const jobId = jobRes.rows[0].id;
     
     // Kick off async worker
-    runBulkJob(jobId, stores, action, filterContext, performToggleAPI).catch(err => console.error("Bulk job error:", err));
+    runBulkJob(jobId, validStores, action, filterContext, performToggleAPI).catch(err => console.error("Bulk job error:", err));
     
     return res.json({ success: true, jobId, message: "Bulk job initiated" });
   } catch (err) {
