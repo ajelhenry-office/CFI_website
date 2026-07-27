@@ -52,6 +52,33 @@ export async function runBulkJob(jobId, stores, action, filterContext, performTo
     if (status === 'CANCELLED') break;
     
     const brand = store.brand || "ovenfresh";
+
+    // ─── JUST-IN-TIME VALIDATION & THRESHOLD CHECK ───
+    try {
+      const stateRes = await pool.query(`SELECT desired_state, active_orders FROM store_state WHERE location_id = $1`, [store.location_id]);
+      if (stateRes.rows.length > 0) {
+        const { desired_state, active_orders } = stateRes.rows[0];
+        
+        // Skip if manual override happened during the queue
+        if (desired_state === 'OFFLINE' && action === 'enable') {
+          console.log(`[JIT] Skipping ${store.location_id} - user set to OFFLINE manually.`);
+          await pool.query('UPDATE bulk_toggle_jobs SET success_count = success_count + 1, pending_count = pending_count - 1 WHERE id = $1', [jobId]);
+          continue;
+        }
+
+        // Apply 8-order threshold
+        if (desired_state === 'ONLINE') {
+          if (active_orders > 8) {
+             console.log(`[THROTTLE] ${store.location_id} active_orders = ${active_orders} > 8. Auto-throttling to OFFLINE.`);
+             action = 'disable';
+          } else {
+             action = 'enable';
+          }
+        }
+      }
+    } catch (err) {
+      console.error("[JIT Check Error]", err);
+    }
     
     // Wait for rate limit
     while (true) {

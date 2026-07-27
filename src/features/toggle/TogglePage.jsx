@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { C, FONT, cardStyle, pillButton } from "../../theme";
+import { getAuthHeaders } from "../../api";
 import { STORES } from "./stores";
 import StoreCard from "./StoreCard";
 import ToggleSidebar from "./ToggleSidebar";
@@ -11,7 +12,7 @@ const API_BASE = import.meta.env.VITE_API_BASE_URL || (import.meta.env.PROD ? ""
 async function post(path, body) {
   const res = await fetch(`${API_BASE}${path}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { ...getAuthHeaders() },
     body: JSON.stringify(body),
   });
   return res.json();
@@ -30,15 +31,27 @@ export default function TogglePage() {
   const [sidebarData, setSidebarData] = useState(null);
   const [isBulking, setIsBulking] = useState(false);
   const [showAudit, setShowAudit] = useState(false);
+  const [storeStates, setStoreStates] = useState({});
 
   const handleBrandChange = (b) => { setBrand(b); setZone("All"); setCity("All"); setArea("All"); };
   const handleZoneChange = (z) => { setZone(z); setCity("All"); setArea("All"); };
   const handleCityChange = (c) => { setCity(c); setArea("All"); };
 
   const fetchSidebar = useCallback(() => {
-    fetch(`${API_BASE}/api/toggle/sidebar-data`)
+    fetch(`${API_BASE}/api/toggle/sidebar-data`, { headers: getAuthHeaders() })
       .then((r) => r.json())
       .then((d) => setSidebarData(d.data || null))
+      .catch(() => {});
+      
+    fetch(`${API_BASE}/api/toggle/store-states`, { headers: getAuthHeaders() })
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.data) {
+           const map = {};
+           d.data.forEach(st => map[st.location_id] = st);
+           setStoreStates(map);
+        }
+      })
       .catch(() => {});
   }, []);
 
@@ -217,7 +230,13 @@ export default function TogglePage() {
       ) : (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 14 }}>
           {filtered.map((store) => (
-            <StoreCard key={store.id} store={store} onToggle={handleToggle} isBulking={isBulking} />
+            <StoreCard 
+              key={store.id} 
+              store={store} 
+              dbState={storeStates[store.location_id]}
+              onToggle={handleToggle} 
+              isBulking={isBulking} 
+            />
           ))}
         </div>
       )}

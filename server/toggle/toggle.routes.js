@@ -110,6 +110,19 @@ router.post("/toggle", async (req, res) => {
   if (!location_id || !action) return res.status(400).json({ error: "location_id and action required" });
   if (!["enable", "disable"].includes(action)) return res.status(400).json({ error: 'action must be enable or disable' });
 
+  // Update desired state in DB
+  const desiredState = action === 'enable' ? 'ONLINE' : 'OFFLINE';
+  try {
+    await pool.query(`
+      INSERT INTO store_state (location_id, brand, desired_state) 
+      VALUES ($1, $2, $3) 
+      ON CONFLICT (location_id) 
+      DO UPDATE SET desired_state = $3, last_updated = NOW()
+    `, [location_id, brand, desiredState]);
+  } catch (err) {
+    console.error("Failed to update store_state:", err);
+  }
+
   // Rate Limiting check
   const rl = await checkAndIncrementRateLimit(brand);
   if (rl === -1) {
@@ -147,6 +160,18 @@ router.post("/toggle/bulk", async (req, res) => {
   }
 
   try {
+    const desiredState = action === 'enable' ? 'ONLINE' : 'OFFLINE';
+    
+    // Update all desired states immediately
+    for (const store of stores) {
+      await pool.query(`
+        INSERT INTO store_state (location_id, brand, desired_state) 
+        VALUES ($1, $2, $3) 
+        ON CONFLICT (location_id) 
+        DO UPDATE SET desired_state = $3, last_updated = NOW()
+      `, [store.location_id, store.brand || "ovenfresh", desiredState]);
+    }
+
     const jobRes = await pool.query(
       `INSERT INTO bulk_toggle_jobs (action, total_stores, pending_count) VALUES ($1, $2, $3) RETURNING id`,
       [action, stores.length, stores.length]
@@ -292,6 +317,36 @@ router.get('/history/download', async (req, res) => {
     res.send(csvStr);
   } catch (err) {
     console.error(err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ─── ORDER VOLUME ENDPOINT (WEBHOOK) ─────────────────────────
+router.post("/toggle/update-orders", async (req, res) => {
+  const { location_id, active_orders, brand } = req.body;
+  if (!location_id || active_orders === undefined) {
+    return res.status(400).json({ error: "location_id and active_orders required" });
+  }
+
+  try {
+    await pool.query(`
+      INSERT INTO store_state (location_id, brand, active_orders) 
+      VALUES ($1, $2, $3) 
+      ON CONFLICT (location_id) 
+      DO UPDATE SET active_orders = $3, last_updated = NOW()
+    `, [location_id, brand || "ovenfresh", active_orders]);
+    return res.json({ success: true });
+  } catch (err) {
+    console.error("Failed to update orders:", err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.get("/toggle/store-states", async (req, res) => {
+  try {
+    const result = await pool.query(`SELECT * FROM store_state`);
+    res.json({ success: true, data: result.rows });
+  } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 });

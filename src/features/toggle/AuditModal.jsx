@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { getAuthHeaders } from "../../api";
 import { C, FONT } from "../../theme";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || (import.meta.env.PROD ? "" : "http://localhost:3001");
@@ -9,7 +10,7 @@ export default function AuditModal({ onClose, stores = [], selectedBrand = "" })
   const [showSystemSyncs, setShowSystemSyncs] = useState(false);
 
   useEffect(() => {
-    fetch(`${API_BASE}/api/toggle/audit-log`)
+    fetch(`${API_BASE}/api/toggle/audit-log`, { headers: getAuthHeaders() })
       .then((r) => r.json())
       .then((d) => setLogs(d.logs || []))
       .catch(() => setLogs([]))

@@ -14,6 +14,7 @@ import insightsRoutes from "./server/ratings/insights.routes.js";
 import authRoutes, { authMiddleware } from "./server/auth/auth.routes.js";
 import { handleFilterRequest } from "./server/ratings/filters.js";
 import { pool } from "./server/ratings/db.js";
+import { startWorkers } from "./server/toggle/workers.js";
 
 const app = express();
 app.use(cors());
@@ -59,4 +60,7 @@ const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
   console.log(`KitchenPulse backend running on port ${PORT}`);
   console.log(`Health: http://localhost:${PORT}/health`);
+  
+  // Start automated cron jobs (Hourly Recheck and Watchdog)
+  startWorkers();
 });
