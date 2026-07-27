@@ -1,4 +1,4 @@
-import { getAuthHeaders } from "../../api";
+import { getAuthHeaders, handleApiError } from "../../api";
 const API_BASE = import.meta.env.VITE_API_BASE_URL || (import.meta.env.PROD ? "" : "http://localhost:3001");
 
 export async function fetchInsight(insightId, filters) {
@@ -7,6 +7,7 @@ export async function fetchInsight(insightId, filters) {
     headers: getAuthHeaders(),
     body: JSON.stringify(filters || {}),
   });
+  if (handleApiError(res)) throw new Error("Session expired. Redirecting to login...");
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.error || "Failed to fetch insight");
@@ -16,6 +17,7 @@ export async function fetchInsight(insightId, filters) {
 
 export async function fetchFilters() {
   const res = await fetch(`${API_BASE}/api/filters`, { headers: getAuthHeaders() });
+  if (handleApiError(res)) throw new Error("Session expired");
   if (!res.ok) throw new Error("Failed to fetch filters");
   return res.json();
 }

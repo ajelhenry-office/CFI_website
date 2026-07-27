@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { C, FONT, cardStyle, pillButton } from "../../theme";
-import { getAuthHeaders } from "../../api";
+import { getAuthHeaders, handleApiError } from "../../api";
 import { STORES } from "./stores";
 import StoreCard from "./StoreCard";
 import ToggleSidebar from "./ToggleSidebar";
@@ -15,6 +15,7 @@ async function post(path, body) {
     headers: { ...getAuthHeaders() },
     body: JSON.stringify(body),
   });
+  if (handleApiError(res)) return { success: false, error: "Session expired" };
   return res.json();
 }
 
@@ -39,12 +40,12 @@ export default function TogglePage() {
 
   const fetchSidebar = useCallback(() => {
     fetch(`${API_BASE}/api/toggle/sidebar-data`, { headers: getAuthHeaders() })
-      .then((r) => r.json())
+      .then((r) => { handleApiError(r); return r.json(); })
       .then((d) => setSidebarData(d.data || null))
       .catch(() => {});
       
     fetch(`${API_BASE}/api/toggle/store-states`, { headers: getAuthHeaders() })
-      .then((r) => r.json())
+      .then((r) => { handleApiError(r); return r.json(); })
       .then((d) => {
         if (d.data) {
            const map = {};
