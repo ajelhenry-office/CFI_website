@@ -25,6 +25,7 @@ export default function TogglePage() {
   const [brand, setBrand] = useState("All");
   const [city, setCity] = useState("All");
   const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("Total");
   const [sidebarData, setSidebarData] = useState(null);
   const [isBulking, setIsBulking] = useState(false);
   const [showAudit, setShowAudit] = useState(false);
@@ -42,7 +43,7 @@ export default function TogglePage() {
     return () => clearInterval(timer);
   }, [fetchSidebar]);
 
-  const filtered = useMemo(() => {
+  const baseFiltered = useMemo(() => {
     const q = search.toLowerCase();
     return stores.filter((s) => {
       if (brand !== "All" && s.brand !== brand) return false;
@@ -52,8 +53,13 @@ export default function TogglePage() {
     });
   }, [stores, brand, city, search]);
 
-  const onlineCount = filtered.filter((s) => s.status === "online").length;
-  const offlineCount = filtered.length - onlineCount;
+  const onlineCount = baseFiltered.filter((s) => s.status === "online").length;
+  const offlineCount = baseFiltered.length - onlineCount;
+
+  const filtered = useMemo(() => {
+    if (statusFilter === "Total") return baseFiltered;
+    return baseFiltered.filter(s => s.status === statusFilter.toLowerCase());
+  }, [baseFiltered, statusFilter]);
 
   const handleToggle = async (store, action) => {
     const res = await post("/api/toggle", {
@@ -89,32 +95,43 @@ export default function TogglePage() {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 18, fontFamily: FONT }}>
 
-      {/* Stat bar */}
+      {/* Stat bar as filters */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12 }}>
         {[
-          { label: "Filtered", value: filtered.length },
-          { label: "Online", value: onlineCount, color: "#15803d" },
-          { label: "Offline", value: offlineCount, color: "#dc2626" },
-          { label: "Today", value: sidebarData?.dailyStats?.successCount ?? "—" },
-          { label: "Problems", value: sidebarData?.dailyStats?.problemCount ?? "—", color: (sidebarData?.dailyStats?.problemCount || 0) > 0 ? "#dc2626" : undefined },
+          { label: "Total", value: baseFiltered.length, filterVal: "Total" },
+          { label: "Online", value: onlineCount, color: "#15803d", filterVal: "Online" },
+          { label: "Offline", value: offlineCount, color: "#dc2626", filterVal: "Offline" },
         ].map((s) => (
-          <div key={s.label} style={{ ...cardStyle, padding: "12px 16px" }}>
+          <button 
+            key={s.label} 
+            onClick={() => setStatusFilter(s.filterVal)}
+            style={{ 
+              ...cardStyle, 
+              padding: "12px 16px", 
+              cursor: "pointer", 
+              border: statusFilter === s.filterVal ? `2px solid ${s.color || C.primary}` : cardStyle.border,
+              textAlign: "left",
+              backgroundColor: statusFilter === s.filterVal ? (s.color ? s.color + "11" : C.primary + "11") : "#fff",
+              outline: "none"
+            }}
+          >
             <div style={{ fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: 0.5 }}>{s.label}</div>
             <div style={{ fontSize: 22, fontWeight: 900, color: s.color || C.primary, marginTop: 3 }}>{s.value}</div>
-          </div>
+          </button>
         ))}
       </div>
 
       {/* Filters + actions */}
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-        {/* Brand filter pills */}
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-          {BRANDS.map((b) => (
-            <button key={b} style={{ ...pillButton(brand === b), fontSize: 11, padding: "6px 14px" }} onClick={() => setBrand(b)}>
-              {b}
-            </button>
-          ))}
-        </div>
+        
+        {/* Brand dropdown */}
+        <select
+          value={brand}
+          onChange={(e) => setBrand(e.target.value)}
+          style={{ padding: "7px 12px", borderRadius: 10, border: `1.5px solid ${C.primary}`, color: C.primary, fontSize: 12, fontWeight: 700, fontFamily: FONT, cursor: "pointer", outline: "none" }}
+        >
+          {BRANDS.map((b) => <option key={b} value={b}>{b === "All" ? "All Brands" : b}</option>)}
+        </select>
 
         {/* City dropdown */}
         <select
