@@ -158,6 +158,52 @@ function StatCard({ label, value }) {
   );
 }
 
+function CustomDatePicker({ value, min, max, onChange, hasError }) {
+  const [val, setVal] = useState(value);
+  
+  useEffect(() => { setVal(value); }, [value]);
+
+  const handleBlur = () => {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(val)) {
+      onChange({ target: { value: val } });
+    } else {
+      setVal(value);
+    }
+  };
+
+  return (
+    <div style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
+      <input 
+        type="text" 
+        value={val}
+        onChange={(e) => setVal(e.target.value)}
+        onBlur={handleBlur}
+        placeholder="YYYY-MM-DD"
+        style={{...inputStyle, border: hasError ? "1px solid #ef4444" : inputStyle.border, paddingRight: 32, width: 110, letterSpacing: 0.5}} 
+      />
+      <input 
+        type="date"
+        value={value}
+        min={min}
+        max={max}
+        onChange={(e) => {
+          setVal(e.target.value);
+          onChange(e);
+        }}
+        style={{
+          position: "absolute",
+          right: 0,
+          opacity: 0,
+          width: 32,
+          height: "100%",
+          cursor: "pointer"
+        }}
+      />
+      <svg style={{ position: "absolute", right: 10, pointerEvents: "none", color: C.muted }} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+    </div>
+  );
+}
+
 // --- Main Page ---
 export default function OpsMatrixPage() {
   const [loading, setLoading] = useState(false);
@@ -445,9 +491,9 @@ export default function OpsMatrixPage() {
     <div style={{ display: "flex", flexDirection: "column", gap: 24, paddingBottom: 64 }}>
       {/* Top Filters (Instant Apply) */}
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center", background: C.surface, padding: "16px 24px", borderRadius: 12, border: `1px solid ${C.border}` }}>
-        <input type="date" value={startDate} onChange={handleStartDate} onClick={(e) => e.target.showPicker && e.target.showPicker()} style={{...inputStyle, border: dateError ? "1px solid #ef4444" : inputStyle.border, cursor: "pointer"}} max={endDate} />
+        <CustomDatePicker value={startDate} onChange={handleStartDate} max={endDate} hasError={!!dateError} />
         <span style={{ color: C.muted, fontWeight: 600 }}>to</span>
-        <input type="date" value={endDate} onChange={handleEndDate} onClick={(e) => e.target.showPicker && e.target.showPicker()} style={{...inputStyle, border: dateError ? "1px solid #ef4444" : inputStyle.border, cursor: "pointer"}} min={startDate} max={iso(0)} />
+        <CustomDatePicker value={endDate} onChange={handleEndDate} min={startDate} max={iso(0)} hasError={!!dateError} />
         
         {dateError && <span style={{ color: "#ef4444", fontSize: 13, fontWeight: 600 }}>{dateError}</span>}
         

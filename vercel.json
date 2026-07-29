@@ -3,17 +3,6 @@
     {
       "source": "/api/(.*)",
       "destination": "http://ec2-16-16-156-167.eu-north-1.compute.amazonaws.com:3001/api/$1"
-    },
-    {
-      "source": "/(.*)",
-      "has": [
-        {
-          "type": "header",
-          "key": "accept",
-          "value": "(?i).*text/html.*"
-        }
-      ],
-      "destination": "/index.html"
     }
   ]
 }

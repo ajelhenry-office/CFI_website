@@ -94,9 +94,12 @@ export default function App() {
           if (tab === "logout") {
             localStorage.removeItem("token");
             localStorage.removeItem("user");
+            localStorage.removeItem("activeTab");
+            window.history.pushState({}, "", "/");
             window.location.reload();
           } else {
             setActiveTab(tab);
+            localStorage.setItem("activeTab", tab);
             window.history.pushState({}, "", `/${tab === "ops_matrix" ? "CFI-operations-dashboard" : tab}`);
           }
         }}
