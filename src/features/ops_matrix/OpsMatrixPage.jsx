@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from "react";
+import React, { useState, useEffect, useRef, useMemo, startTransition } from "react";
 import { C, cardStyle } from "../../theme";
 import { API_BASE, getAuthHeaders } from "../../api";
 
@@ -85,14 +85,17 @@ function MultiSelectDropdown({ label, options, selected, onChange }) {
   }, [open]);
 
   const filteredOptions = options.filter(opt => opt.toLowerCase().includes(search.toLowerCase()));
+  const displayOptions = filteredOptions.slice(0, 50);
 
   const toggleAll = () => {
     const allVisibleSelected = filteredOptions.length > 0 && filteredOptions.every(opt => selected.includes(opt));
-    if (allVisibleSelected) {
-      onChange(selected.filter(opt => !filteredOptions.includes(opt)));
-    } else {
-      onChange(Array.from(new Set([...selected, ...filteredOptions])));
-    }
+    startTransition(() => {
+      if (allVisibleSelected) {
+        onChange(selected.filter(opt => !filteredOptions.includes(opt)));
+      } else {
+        onChange(Array.from(new Set([...selected, ...filteredOptions])));
+      }
+    });
   };
 
   const displayText = selected.length === 0 ? `All ${label}` : 
@@ -119,15 +122,22 @@ function MultiSelectDropdown({ label, options, selected, onChange }) {
             />
           </div>
           <div style={{ padding: "8px 12px", overflowY: "auto", flex: 1, display: "flex", flexDirection: "column", gap: 8 }}>
-            {filteredOptions.map(opt => (
+            {displayOptions.map(opt => (
               <label key={opt} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14, cursor: "pointer", color: C.text }}>
                 <input type="checkbox" checked={selected.includes(opt)} onChange={(e) => {
-                  if (e.target.checked) onChange([...selected, opt]);
-                  else onChange(selected.filter(x => x !== opt));
+                  startTransition(() => {
+                    if (e.target.checked) onChange([...selected, opt]);
+                    else onChange(selected.filter(x => x !== opt));
+                  });
                 }} style={{ width: 16, height: 16, cursor: "pointer" }} />
                 <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{opt}</span>
               </label>
             ))}
+            {filteredOptions.length > 50 && (
+              <div style={{ fontSize: 11, color: C.muted, textAlign: "center", paddingTop: 4 }}>
+                Showing top 50 matches. Use search for more.
+              </div>
+            )}
             {filteredOptions.length === 0 && <div style={{ fontSize: 12, color: C.muted, textAlign: "center", padding: "12px 0" }}>No matches found</div>}
           </div>
           <div style={{ padding: "8px 12px", borderTop: `1px solid ${C.borderSoft}`, background: "#f8fafc", position: "sticky", bottom: 0, borderRadius: "0 0 8px 8px" }}>

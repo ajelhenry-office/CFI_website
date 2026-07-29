@@ -50,6 +50,13 @@ export default function App() {
 
   useEffect(() => {
     if (!user) return;
+    
+    // Ensure activeTab is valid for the logged-in user's role
+    const allowed = ROLE_PERMISSIONS[user.role] || ["ratings"];
+    if (!allowed.includes(activeTab)) {
+      setActiveTab(allowed[0]);
+    }
+
     let alive = true;
     fetchFilters()
       .then((res) => {
@@ -59,7 +66,7 @@ export default function App() {
     return () => {
       alive = false;
     };
-  }, [user]);
+  }, [user, activeTab]);
 
   if (!user) {
     return <LoginPage onLogin={setUser} />;
