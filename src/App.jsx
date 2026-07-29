@@ -88,7 +88,7 @@ export default function App() {
           if (tab === "logout") {
             localStorage.removeItem("token");
             localStorage.removeItem("user");
-            setUser(null);
+            window.location.reload();
           } else {
             setActiveTab(tab);
           }

@@ -445,9 +445,9 @@ export default function OpsMatrixPage() {
     <div style={{ display: "flex", flexDirection: "column", gap: 24, paddingBottom: 64 }}>
       {/* Top Filters (Instant Apply) */}
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center", background: C.surface, padding: "16px 24px", borderRadius: 12, border: `1px solid ${C.border}` }}>
-        <input type="date" value={startDate} onChange={handleStartDate} style={{...inputStyle, border: dateError ? "1px solid #ef4444" : inputStyle.border}} max={endDate} />
+        <input type="date" value={startDate} onChange={handleStartDate} onClick={(e) => e.target.showPicker && e.target.showPicker()} style={{...inputStyle, border: dateError ? "1px solid #ef4444" : inputStyle.border, cursor: "pointer"}} max={endDate} />
         <span style={{ color: C.muted, fontWeight: 600 }}>to</span>
-        <input type="date" value={endDate} onChange={handleEndDate} style={{...inputStyle, border: dateError ? "1px solid #ef4444" : inputStyle.border}} min={startDate} max={iso(0)} />
+        <input type="date" value={endDate} onChange={handleEndDate} onClick={(e) => e.target.showPicker && e.target.showPicker()} style={{...inputStyle, border: dateError ? "1px solid #ef4444" : inputStyle.border, cursor: "pointer"}} min={startDate} max={iso(0)} />
         
         {dateError && <span style={{ color: "#ef4444", fontSize: 13, fontWeight: 600 }}>{dateError}</span>}
         
@@ -489,6 +489,31 @@ export default function OpsMatrixPage() {
             <StatCard label="P80 Kitchen Prep Time" value={`${stats.p80Kpt} min`} />
             <StatCard label="Avg Order to Dispatch" value={`${stats.avgO2d} min`} />
             <StatCard label="Avg Order to Delivery" value={`${stats.avgO2del} min`} />
+          </div>
+
+          {/* Legend Block */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 12, padding: "16px 20px", background: "#f8fafc", border: `1px solid ${C.border}`, borderRadius: 12 }}>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 24, fontSize: 13, fontWeight: 600, color: C.text }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}><div style={{ width: 14, height: 14, borderRadius: 3, background: "#28a745" }}></div>Excellent</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}><div style={{ width: 14, height: 14, borderRadius: 3, background: "#ffc107" }}></div>Good</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}><div style={{ width: 14, height: 14, borderRadius: 3, background: "#fd7e14" }}></div>Needs Attention</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}><div style={{ width: 14, height: 14, borderRadius: 3, background: "#dc3545" }}></div>Critical</div>
+              
+              <div style={{ width: 1, height: 18, background: C.border }}></div>
+              
+              <div style={{ display: "flex", gap: 16, color: C.muted }}>
+                <div><span style={{ color: C.text }}>KPT:</span> ≤12 / ≤18 / ≤25 / {'>'}25</div>
+                <div><span style={{ color: C.text }}>P80 KPT:</span> ≤18 / ≤25 / ≤35 / {'>'}35</div>
+                <div><span style={{ color: C.text }}>O2D:</span> ≤20 / ≤28 / ≤35 / {'>'}35</div>
+                <div><span style={{ color: C.text }}>O2Del:</span> ≤35 / ≤45 / ≤55 / {'>'}55</div>
+              </div>
+              
+              <div style={{ width: 1, height: 18, background: C.border }}></div>
+              <div style={{ display: "flex", gap: 12, color: C.muted }}>
+                <div><span style={{ color: "#28a745" }}>▼</span> Improved</div>
+                <div><span style={{ color: "#dc3545" }}>▲</span> Worsened (vs prev week)</div>
+              </div>
+            </div>
           </div>
 
           {/* Single Unified Table */}

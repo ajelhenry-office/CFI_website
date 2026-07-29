@@ -26,7 +26,7 @@ export default function LoginPage({ onLogin }) {
       if (data.success) {
         localStorage.setItem("token", data.token);
         localStorage.setItem("user", JSON.stringify(data.user));
-        onLogin(data.user);
+        window.location.reload();
       } else {
         setError(data.error || "Login failed");
       }
