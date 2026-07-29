@@ -2,6 +2,7 @@ import express from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { pool } from '../ratings/db.js';
+import { sendEmail } from './emailService.js';
 
 const router = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET || 'CurefoodsSuperSecret2026';
@@ -79,6 +80,46 @@ router.post('/login', async (req, res) => {
   }
 });
 
+// 1.5 Forgot Password
+router.post('/forgot-password', async (req, res) => {
+  const { email } = req.body;
+  if (!email) {
+    return res.status(400).json({ success: false, error: 'Email is required' });
+  }
+
+  try {
+    const { rows } = await pool.query('SELECT * FROM authorized_users WHERE email = $1', [email]);
+    const user = rows[0];
+
+    if (!user) {
+      // Return true anyway for security so we don't leak user existence
+      return res.json({ success: true, message: 'If the email exists, a password reset has been sent.' });
+    }
+
+    if (user.is_locked) {
+      return res.status(403).json({ success: false, error: 'Account has been locked by admin' });
+    }
+
+    // Generate random 8 character password
+    const newPassword = Math.random().toString(36).slice(-8);
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+    // Update DB
+    await pool.query('UPDATE authorized_users SET password_hash = $1 WHERE id = $2', [hashedPassword, user.id]);
+
+    // Send email
+    const subject = "Curefoods Dashboard - Password Reset";
+    const body = `Hello,\n\nYour password has been reset.\n\nYour Username: ${user.email}\nYour New Password: ${newPassword}\n\nPlease login and change your password if needed.`;
+    
+    await sendEmail(user.email, subject, body);
+
+    res.json({ success: true, message: 'If the email exists, a password reset has been sent.' });
+  } catch (err) {
+    console.error('Forgot password error:', err);
+    res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+});
+
 // 2. Get all users (Admin only)
 router.get('/users', authMiddleware, adminMiddleware, async (req, res) => {
   try {
@@ -103,12 +144,46 @@ router.post('/users', authMiddleware, adminMiddleware, async (req, res) => {
       'INSERT INTO authorized_users (email, password_hash, role) VALUES ($1, $2, $3) RETURNING id, email, role, created_at',
       [email, hashedPassword, role]
     );
+    
+    // Email the new user their credentials
+    const subject = "Welcome to Curefoods Operations Dashboard";
+    const body = `Hello,\n\nAn admin has created a new account for you on the Curefoods Operations Dashboard.\n\nUsername: ${email}\nPassword: ${password}\n\nPlease keep these credentials safe.`;
+    await sendEmail(email, subject, body);
+
     res.json({ success: true, user: rows[0] });
   } catch (err) {
     if (err.code === '23505') { // unique violation
       return res.status(400).json({ success: false, error: 'User with this email already exists' });
     }
     console.error('Add user error:', err);
+    res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+});
+
+// 3.5 Reset User Password (Admin only)
+router.post('/users/:id/reset-password', authMiddleware, adminMiddleware, async (req, res) => {
+  const { id } = req.params;
+  
+  try {
+    const { rows } = await pool.query('SELECT * FROM authorized_users WHERE id = $1', [id]);
+    const user = rows[0];
+    
+    if (!user) {
+      return res.status(404).json({ success: false, error: 'User not found' });
+    }
+
+    const newPassword = Math.random().toString(36).slice(-8);
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+    await pool.query('UPDATE authorized_users SET password_hash = $1 WHERE id = $2', [hashedPassword, id]);
+
+    const subject = "Curefoods Dashboard - Admin Password Reset";
+    const body = `Hello,\n\nAn admin has manually reset your password.\n\nYour Username: ${user.email}\nYour New Password: ${newPassword}\n\nPlease login with your new credentials.`;
+    await sendEmail(user.email, subject, body);
+
+    res.json({ success: true, message: 'Password reset successfully and emailed to the user.', newPassword });
+  } catch (err) {
+    console.error('Admin reset password error:', err);
     res.status(500).json({ success: false, error: 'Internal server error' });
   }
 });

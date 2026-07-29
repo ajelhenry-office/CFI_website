@@ -75,6 +75,24 @@ export function SettingsPage() {
     }
   };
 
+  const handleResetPassword = async (id, email) => {
+    if (!confirm(`Are you sure you want to reset the password for ${email}?`)) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/auth/users/${id}/reset-password`, { 
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() }
+      });
+      const data = await res.json();
+      if (data.success) {
+        alert(`Password for ${email} has been reset to: \n\n${data.newPassword}\n\nAn email has also been sent to them.`);
+      } else {
+        alert(data.error);
+      }
+    } catch (err) {
+      alert("Failed to reset password");
+    }
+  };
+
   const formatName = (email) => {
     const parts = email.split('@')[0].split('.');
     return parts.map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(' ');
@@ -169,10 +187,10 @@ export function SettingsPage() {
             <thead>
               <tr style={{ borderBottom: `2px solid ${C.borderSoft}` }}>
                 <th style={{ padding: "12px 8px", fontSize: 11, fontWeight: 800, color: C.muted, textTransform: "uppercase" }}>#</th>
-                <th style={{ padding: "12px 8px", fontSize: 11, fontWeight: 800, color: C.muted, textTransform: "uppercase" }}>Name</th>
-                <th style={{ padding: "12px 8px", fontSize: 11, fontWeight: 800, color: C.muted, textTransform: "uppercase" }}>Username</th>
+                <th style={{ padding: "12px 8px", fontSize: 11, fontWeight: 800, color: C.muted, textTransform: "uppercase" }}>User Name</th>
                 <th style={{ padding: "12px 8px", fontSize: 11, fontWeight: 800, color: C.muted, textTransform: "uppercase" }}>Email</th>
                 <th style={{ padding: "12px 8px", fontSize: 11, fontWeight: 800, color: C.muted, textTransform: "uppercase" }}>Roles</th>
+                <th style={{ padding: "12px 8px", fontSize: 11, fontWeight: 800, color: C.muted, textTransform: "uppercase" }}>Password</th>
                 <th style={{ padding: "12px 8px", fontSize: 11, fontWeight: 800, color: C.muted, textTransform: "uppercase", textAlign: "right" }}>Lock</th>
               </tr>
             </thead>
@@ -181,12 +199,20 @@ export function SettingsPage() {
                 <tr key={u.id} style={{ borderBottom: `1px solid ${C.borderSoft}`, transition: "background-color 0.2s" }} onMouseOver={e => e.currentTarget.style.backgroundColor = "#f9fafb"} onMouseOut={e => e.currentTarget.style.backgroundColor = "transparent"}>
                   <td style={{ padding: "16px 8px", fontSize: 12, color: C.muted, fontWeight: 600 }}>{i + 1}</td>
                   <td style={{ padding: "16px 8px", fontSize: 13, color: C.text, fontWeight: 700 }}>{formatName(u.email)}</td>
-                  <td style={{ padding: "16px 8px", fontSize: 13, color: C.muted }}>{formatUsername(u.email)}</td>
                   <td style={{ padding: "16px 8px", fontSize: 13, color: C.muted }}>{u.email}</td>
                   <td style={{ padding: "16px 8px" }}>
                     <span style={{ fontSize: 11, fontWeight: 700, color: "#0284c7", backgroundColor: "#e0f2fe", padding: "4px 8px", borderRadius: 4, textTransform: "capitalize" }}>
                       {u.role === 'admin' ? 'Business Admin' : u.role.replace('_', ' ')}
                     </span>
+                  </td>
+                  <td style={{ padding: "16px 8px" }}>
+                    <button 
+                      onClick={() => handleResetPassword(u.id, u.email)}
+                      style={{ padding: "6px 10px", borderRadius: 6, backgroundColor: "#f1f5f9", color: "#334155", border: `1px solid ${C.border}`, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: FONT, display: "flex", alignItems: "center", gap: 6 }}
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"></path></svg>
+                      Reset
+                    </button>
                   </td>
                   <td style={{ padding: "16px 8px", textAlign: "right" }}>
                     <div 
