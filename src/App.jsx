@@ -37,12 +37,18 @@ export default function App() {
 
   const [activeTab, setActiveTab] = useState(() => {
     const savedUser = localStorage.getItem("user");
+    let initialTab = "toggle";
     if (savedUser) {
       const parsed = JSON.parse(savedUser);
       const allowed = ROLE_PERMISSIONS[parsed.role] || ["ratings"];
-      return allowed[0];
+      initialTab = allowed[0];
     }
-    return "toggle";
+    
+    const path = window.location.pathname.replace("/", "");
+    if (path === "CFI-operations-dashboard") return "ops_matrix";
+    if (path && NAV_ITEMS.some(n => n.key === path)) return path;
+    
+    return initialTab;
   });
   const [collapsed, setCollapsed] = useState(false);
   const [globalFilters, setGlobalFilters] = useState(DEFAULT_FILTERS);
@@ -91,6 +97,7 @@ export default function App() {
             window.location.reload();
           } else {
             setActiveTab(tab);
+            window.history.pushState({}, "", `/${tab === "ops_matrix" ? "CFI-operations-dashboard" : tab}`);
           }
         }}
         collapsed={collapsed}
