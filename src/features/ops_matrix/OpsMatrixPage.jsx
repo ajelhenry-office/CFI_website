@@ -34,9 +34,9 @@ const iso = (offsetDays) => {
 
 const CITY_TO_ZONE = {
   "Delhi": "NORTH", "Gurgaon": "NORTH", "Noida": "NORTH", "Lucknow": "NORTH", "Chandigarh": "NORTH", "Ludhiana": "NORTH", "Jaipur": "NORTH", "Faridabad": "NORTH", "Ghaziabad": "NORTH", "Amritsar": "NORTH", "Dehradun": "NORTH",
-  "Bengaluru": "SOUTH", "Bangalore": "SOUTH", "Chennai": "SOUTH", "Hyderabad": "SOUTH", "Coimbatore": "SOUTH", "Mysuru": "SOUTH", "Cochin": "SOUTH", "Thiruvananthapuram": "SOUTH", "Vizag": "SOUTH", "Hosur": "SOUTH", "Mangalore": "SOUTH", "Manipal": "SOUTH", "Palakkad": "SOUTH", "Puducherry": "SOUTH", "Tumakuru": "SOUTH",
-  "Mumbai": "WEST", "Pune": "WEST", "Ahemadabad": "WEST", "Goa": "WEST", "Surat": "WEST", "Nagpur": "WEST", "Vadodara": "WEST", "Indore": "WEST", "Bhopal": "WEST",
-  "Kolkata": "EAST", "Guwahati": "EAST", "Bhubaneswar": "EAST", "Patna": "EAST", "Ranchi": "EAST", "Siliguri": "EAST", "Cuttack": "EAST"
+  "Bengaluru": "SOUTH", "Bangalore": "SOUTH", "Chennai": "SOUTH", "Hyderabad": "SOUTH", "Coimbatore": "SOUTH", "Mysuru": "SOUTH", "Cochin": "SOUTH", "Thiruvananthapuram": "SOUTH", "Vizag": "SOUTH", "Hosur": "SOUTH", "Mangalore": "SOUTH", "Manipal": "SOUTH", "Palakkad": "SOUTH", "Puducherry": "SOUTH", "Tumakuru": "SOUTH", "Anantapur": "SOUTH", "Calicut": "SOUTH", "Ernakulam": "SOUTH", "Kakinada": "SOUTH", "Nellore": "SOUTH", "Rajahmundry": "SOUTH", "Tirupati": "SOUTH", "Vijayawada": "SOUTH", "Warangal": "SOUTH",
+  "Mumbai": "WEST", "Pune": "WEST", "Ahemadabad": "WEST", "Goa": "WEST", "Surat": "WEST", "Nagpur": "WEST", "Vadodara": "WEST", "Indore": "WEST", "Bhopal": "WEST", "Aurangabad": "WEST", "Nashik": "WEST",
+  "Kolkata": "EAST", "Guwahati": "EAST", "Bhubaneswar": "EAST", "Patna": "EAST", "Ranchi": "EAST", "Siliguri": "EAST", "Cuttack": "EAST", "Raipur": "EAST"
 };
 
 // --- Date to Week Helpers ---
