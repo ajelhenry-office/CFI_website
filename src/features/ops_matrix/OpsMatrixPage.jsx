@@ -205,6 +205,8 @@ function CustomDatePicker({ value, min, max, onChange, hasError }) {
 }
 
 // --- Main Page ---
+const queryCache = new Map();
+
 export default function OpsMatrixPage() {
   const [loading, setLoading] = useState(false);
   const [rawData, setRawData] = useState([]);
@@ -238,6 +240,33 @@ export default function OpsMatrixPage() {
       const zPayload = zones.length === 1 ? zones[0] : "";
       const cPayload = cities.length === 1 ? cities[0] : "";
       const aPayload = areas.length === 1 ? areas[0] : "";
+
+      const cacheKey = JSON.stringify({ startDate, endDate, brand: bPayload, zone: zPayload, city: cPayload, area: aPayload });
+      if (queryCache.has(cacheKey)) {
+        const cachedData = queryCache.get(cacheKey);
+        
+        // Use cached data
+        let weekMapping = {};
+        const mappedRows = cachedData.map(r => {
+          const row = [...r];
+          if (r[4]) {
+            const wInfo = getWeekLabel(r[4]);
+            row[4] = wInfo.val;
+            weekMapping[wInfo.val] = wInfo.label;
+          }
+          return row;
+        });
+
+        const wDefs = Object.keys(weekMapping).sort((a,b) => a.localeCompare(b)).map(k => ({ val: k, label: weekMapping[k] }));
+        setRawData(mappedRows);
+        setWeekDefs(wDefs);
+        
+        if (brands.length === 0 && zones.length === 0 && cities.length === 0 && areas.length === 0) {
+          extractOptions(mappedRows, [], [], [], []);
+        }
+        setLoading(false);
+        return;
+      }
 
       const response = await fetch(`${API_BASE}/api/ops-matrix/prep-time/kitchen`, {
         method: "POST",
