@@ -169,7 +169,12 @@ export default function App() {
               onUpdateFilters={updateFilters}
             />
           )}
-          {activeTab === "ops_matrix" && <OpsMatrixPage />}
+          
+          {/* Keep Ops Matrix mounted always so data loads in background instantly */}
+          <div style={{ display: activeTab === "ops_matrix" ? "block" : "none" }}>
+            <OpsMatrixPage />
+          </div>
+
           {activeTab === "settings" && <SettingsPage />}
           {activeTab === "theme" && <ThemePage />}
         </div>
