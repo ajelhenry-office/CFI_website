@@ -1,4 +1,5 @@
 import { pool } from '../ratings/db.js';
+import { warmUpOpsCache } from '../ops_matrix/ops.routes.js';
 
 // Define the URL to hit our own bulk endpoint (assuming running on port 3000 locally, or deployed host)
 const API_URL = process.env.API_URL || "http://localhost:3000/api";
@@ -90,5 +91,13 @@ export function startWorkers() {
       console.error("[WORKERS] Watchdog failed:", err);
     }
   }, 5 * 60 * 1000); // 5 minutes
+
+  // Warmup Ops Cache (Runs every 1 hour)
+  setInterval(() => {
+    warmUpOpsCache();
+  }, 60 * 60 * 1000);
+  
+  // Initial run on startup
+  setTimeout(() => warmUpOpsCache(), 5000);
 
 }
