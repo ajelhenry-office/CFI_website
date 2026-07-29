@@ -12,6 +12,7 @@ import reviewsRouter from "./server/reviews/reviewsRouter.js";
 import automationRoutes from "./server/ratings/automation.routes.js";
 import insightsRoutes from "./server/ratings/insights.routes.js";
 import authRoutes, { authMiddleware } from "./server/auth/auth.routes.js";
+import opsRoutes from "./server/ops_matrix/ops.routes.js";
 import { handleFilterRequest } from "./server/ratings/filters.js";
 import { pool } from "./server/ratings/db.js";
 import { startWorkers } from "./server/toggle/workers.js";
@@ -51,6 +52,7 @@ app.use("/api", timingRoutes);
 app.use("/api/reviews", reviewsRouter);
 app.use("/api/automation", automationRoutes);
 app.use("/api/insights", insightsRoutes);
+app.use("/api/ops-matrix", opsRoutes);
 
 // New route for fetching filter dropdown options
 app.get("/api/filters", handleFilterRequest);

@@ -26,7 +26,11 @@ export const authMiddleware = async (req, res, next) => {
     req.user = decoded; // { id, email, role }
     next();
   } catch (err) {
-    return res.status(403).json({ success: false, error: 'Forbidden: Invalid token' });
+    console.error("Auth Middleware Error:", err);
+    if (err.name === 'JsonWebTokenError' || err.name === 'TokenExpiredError') {
+      return res.status(403).json({ success: false, error: 'Forbidden: Invalid or expired token', details: err.message });
+    }
+    return res.status(500).json({ success: false, error: 'Internal server error during authentication', details: err.message });
   }
 };
 

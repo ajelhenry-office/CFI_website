@@ -132,7 +132,7 @@ export default function App() {
             <h1 style={{ fontSize: 24, fontWeight: 800, color: C.primary, margin: 0, letterSpacing: -0.3 }}>{title}</h1>
             <div style={{ fontSize: 13, color: C.muted, marginTop: 3 }}>{subtitle}</div>
           </div>
-          {activeTab !== "toggle" && activeTab !== "settings" && (
+          {activeTab !== "toggle" && activeTab !== "settings" && activeTab !== "ops_matrix" && (
             <GlobalFilters
               filters={globalFilters}
               masterData={masterData}
