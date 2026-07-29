@@ -360,6 +360,7 @@ export default function OpsMatrixPage() {
     let sKpt = 0;
     let sP80 = 0;
     let sO2d = 0;
+    let sP80O2d = 0;
     let kitchens = new Set();
     
     filteredRows.forEach(r => {
@@ -369,6 +370,7 @@ export default function OpsMatrixPage() {
       sKpt += (r[7] || 0) * orders;
       sP80 += (r[8] || 0) * orders;
       sO2d += (r[11] || 0) * orders;
+      sP80O2d += (r[12] || 0) * orders;
     });
 
     return {
@@ -378,6 +380,7 @@ export default function OpsMatrixPage() {
       p80Kpt: tOrders ? (sP80 / tOrders).toFixed(1) : 0,
       avgO2d: tOrders ? (sO2d / tOrders).toFixed(1) : 0,
       avgO2del: tOrders ? (sO2d / tOrders + 15).toFixed(1) : 0,
+      p80O2del: tOrders ? (sP80O2d / tOrders + 15).toFixed(1) : 0,
     };
   }, [filteredRows]);
 
@@ -423,7 +426,7 @@ export default function OpsMatrixPage() {
       }
 
       if (!groups[key]) {
-        groups[key] = { name: key, orders: 0, sKpt: 0, sP80: 0, sO2d: 0, sO2del: 0, weekMap: {} };
+        groups[key] = { name: key, orders: 0, sKpt: 0, sP80: 0, sO2d: 0, sO2del: 0, sP80O2del: 0, weekMap: {} };
       }
       
       const orders = r[5] || 0;
@@ -431,6 +434,8 @@ export default function OpsMatrixPage() {
       const p80 = r[8] || 0;
       const o2d = r[11] || 0;
       const o2del = o2d + 15;
+      const p80O2d = r[12] || 0;
+      const p80O2del = p80O2d > 0 ? p80O2d + 15 : 0;
       const weekStr = r[4];
 
       groups[key].orders += orders;
@@ -438,15 +443,17 @@ export default function OpsMatrixPage() {
       groups[key].sP80 += (p80 * orders);
       groups[key].sO2d += (o2d * orders);
       groups[key].sO2del += (o2del * orders);
+      groups[key].sP80O2del += (p80O2del * orders);
 
       if (!groups[key].weekMap[weekStr]) {
-        groups[key].weekMap[weekStr] = { orders: 0, sKpt: 0, sP80: 0, sO2d: 0, sO2del: 0 };
+        groups[key].weekMap[weekStr] = { orders: 0, sKpt: 0, sP80: 0, sO2d: 0, sO2del: 0, sP80O2del: 0 };
       }
       groups[key].weekMap[weekStr].orders += orders;
       groups[key].weekMap[weekStr].sKpt += (kpt * orders);
       groups[key].weekMap[weekStr].sP80 += (p80 * orders);
       groups[key].weekMap[weekStr].sO2d += (o2d * orders);
       groups[key].weekMap[weekStr].sO2del += (o2del * orders);
+      groups[key].weekMap[weekStr].sP80O2del += (p80O2del * orders);
     });
 
     return Object.keys(groups).map(k => {
@@ -462,6 +469,7 @@ export default function OpsMatrixPage() {
           p80: wd.orders ? wd.sP80 / wd.orders : 0,
           o2d: wd.orders ? wd.sO2d / wd.orders : 0,
           o2del: wd.orders ? wd.sO2del / wd.orders : 0,
+          p80O2del: wd.orders ? wd.sP80O2del / wd.orders : 0,
         };
       }).sort((a, b) => a.weekVal.localeCompare(b.weekVal));
 
@@ -472,6 +480,7 @@ export default function OpsMatrixPage() {
         p80: g.orders ? g.sP80 / g.orders : 0,
         o2d: g.orders ? g.sO2d / g.orders : 0,
         o2del: g.orders ? g.sO2del / g.orders : 0,
+        p80O2del: g.orders ? g.sP80O2del / g.orders : 0,
         weeks
       };
     }).sort((a, b) => a.name.localeCompare(b.name));
@@ -534,7 +543,8 @@ export default function OpsMatrixPage() {
             <StatCard label="Avg Kitchen Prep Time" value={`${stats.avgKpt} min`} />
             <StatCard label="P80 Kitchen Prep Time" value={`${stats.p80Kpt} min`} />
             <StatCard label="Avg Order to Dispatch" value={`${stats.avgO2d} min`} />
-            <StatCard label="Avg Order to Delivery" value={`${stats.avgO2del} min`} />
+            <StatCard label="Avg O2Del" value={`${stats.avgO2del} min`} />
+            <StatCard label="P80 O2Del" value={`${stats.p80O2del} min`} />
           </div>
 
           {/* Legend Block */}
@@ -573,11 +583,12 @@ export default function OpsMatrixPage() {
               <th style={{ padding: "14px 20px", fontSize: 14 }}>P80 KPT (min)</th>
               <th style={{ padding: "14px 20px", fontSize: 14 }}>Avg O2D (min)</th>
               <th style={{ padding: "14px 20px", fontSize: 14 }}>Avg O2Del (min)</th>
+              <th style={{ padding: "14px 20px", fontSize: 14 }}>P80 O2Del (min)</th>
             </tr>
           </thead>
           <tbody>
-            {loading && <tr><td colSpan={6} style={{ padding: 40, textAlign: "center", color: C.muted }}>Loading...</td></tr>}
-            {!loading && groupedData.length === 0 && <tr><td colSpan={6} style={{ padding: 40, textAlign: "center", color: C.muted }}>No records match your selection.</td></tr>}
+            {loading && <tr><td colSpan={7} style={{ padding: 40, textAlign: "center", color: C.muted }}>Loading...</td></tr>}
+            {!loading && groupedData.length === 0 && <tr><td colSpan={7} style={{ padding: 40, textAlign: "center", color: C.muted }}>No records match your selection.</td></tr>}
             
             {/* If Default Mode (No filters), just show overall weeks directly */}
             {!loading && isDefault && groupedData.map(group => (
@@ -590,6 +601,7 @@ export default function OpsMatrixPage() {
                     <td style={{ padding: "12px 20px", fontWeight: 700, backgroundColor: getBgColor(row.p80, 18, 25, 35), color: getTextColor(row.p80, 18, 25, 35) }}>{row.p80?.toFixed(1)}</td>
                     <td style={{ padding: "12px 20px", fontWeight: 700, backgroundColor: getBgColor(row.o2d, 20, 28, 35), color: getTextColor(row.o2d, 20, 28, 35) }}>{row.o2d?.toFixed(1)}</td>
                     <td style={{ padding: "12px 20px", fontWeight: 700, backgroundColor: getBgColor(row.o2del, 35, 45, 55), color: getTextColor(row.o2del, 35, 45, 55) }}>{row.o2del?.toFixed(1)}</td>
+                    <td style={{ padding: "12px 20px", fontWeight: 700, backgroundColor: getBgColor(row.p80O2del, 35, 45, 55), color: getTextColor(row.p80O2del, 35, 45, 55) }}>{row.p80O2del?.toFixed(1)}</td>
                   </tr>
                 ))}
               </React.Fragment>
@@ -635,6 +647,7 @@ function AccordionTableRow({ group, isOneWeek }) {
         <td style={{ padding: "14px 20px", fontWeight: 700, backgroundColor: getBgColor(group.p80, 18, 25, 35), color: getTextColor(group.p80, 18, 25, 35) }}>{group.p80.toFixed(1)}</td>
         <td style={{ padding: "14px 20px", fontWeight: 700, backgroundColor: getBgColor(group.o2d, 20, 28, 35), color: getTextColor(group.o2d, 20, 28, 35) }}>{group.o2d.toFixed(1)}</td>
         <td style={{ padding: "14px 20px", fontWeight: 700, backgroundColor: getBgColor(group.o2del, 35, 45, 55), color: getTextColor(group.o2del, 35, 45, 55) }}>{group.o2del.toFixed(1)}</td>
+        <td style={{ padding: "14px 20px", fontWeight: 700, backgroundColor: getBgColor(group.p80O2del, 35, 45, 55), color: getTextColor(group.p80O2del, 35, 45, 55) }}>{group.p80O2del.toFixed(1)}</td>
       </tr>
       
       {/* Expanded Weeks Rows */}
@@ -646,6 +659,7 @@ function AccordionTableRow({ group, isOneWeek }) {
           <td style={{ padding: "10px 20px", fontWeight: 600, fontSize: 13, backgroundColor: getBgColor(row.p80, 18, 25, 35), color: getTextColor(row.p80, 18, 25, 35) }}>{row.p80?.toFixed(1)}</td>
           <td style={{ padding: "10px 20px", fontWeight: 600, fontSize: 13, backgroundColor: getBgColor(row.o2d, 20, 28, 35), color: getTextColor(row.o2d, 20, 28, 35) }}>{row.o2d?.toFixed(1)}</td>
           <td style={{ padding: "10px 20px", fontWeight: 600, fontSize: 13, backgroundColor: getBgColor(row.o2del, 35, 45, 55), color: getTextColor(row.o2del, 35, 45, 55) }}>{row.o2del?.toFixed(1)}</td>
+          <td style={{ padding: "10px 20px", fontWeight: 600, fontSize: 13, backgroundColor: getBgColor(row.p80O2del, 35, 45, 55), color: getTextColor(row.p80O2del, 35, 45, 55) }}>{row.p80O2del?.toFixed(1)}</td>
         </tr>
       ))}
     </React.Fragment>
