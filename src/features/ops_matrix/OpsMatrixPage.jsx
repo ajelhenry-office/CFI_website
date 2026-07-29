@@ -268,23 +268,53 @@ export default function OpsMatrixPage() {
         return;
       }
 
-      const response = await fetch(`${API_BASE}/api/ops-matrix/prep-time/kitchen`, {
-        method: "POST",
-        headers: { 
-          "Content-Type": "application/json",
-          ...getAuthHeaders()
-        },
-        body: JSON.stringify({
-          startDate,
-          endDate,
-          brand: bPayload,
-          zone: zPayload,
-          city: cPayload,
-          area: aPayload
-        })
-      });
+      let json = null;
+      let fetchSuccess = false;
 
-      const json = await response.json();
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          const response = await fetch(`${API_BASE}/api/ops-matrix/prep-time/kitchen`, {
+            method: "POST",
+            headers: { 
+              "Content-Type": "application/json",
+              ...getAuthHeaders()
+            },
+            body: JSON.stringify({
+              startDate,
+              endDate,
+              brand: bPayload,
+              zone: zPayload,
+              city: cPayload,
+              area: aPayload
+            })
+          });
+
+          if (response.ok) {
+            json = await response.json();
+            fetchSuccess = true;
+            break;
+          } else if (response.status === 504 && attempt < 3) {
+            console.warn(`[OpsMatrix] Vercel 504 Timeout on attempt ${attempt}. Waiting 4s for Metabase cache...`);
+            await new Promise(r => setTimeout(r, 4000));
+          } else {
+            break; // Break on 4xx or 500 errors
+          }
+        } catch (err) {
+          if (attempt < 3) {
+            console.warn(`[OpsMatrix] Fetch error on attempt ${attempt}:`, err);
+            await new Promise(r => setTimeout(r, 3000));
+          } else {
+            console.error("Failed to fetch after 3 attempts", err);
+          }
+        }
+      }
+
+      if (!fetchSuccess || !json) {
+        setRawData([]);
+        setWeekDefs([]);
+        setLoading(false);
+        return;
+      }
       
       if (json.success && json.data && json.data.rows) {
         // Map raw row[4] (date) to week format
