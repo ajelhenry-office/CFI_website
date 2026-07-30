@@ -28,10 +28,19 @@ export default function AuditModal({ onClose, stores = [], selectedBrands = [] }
     () =>
       logs.filter((log) => {
         if (!showSystemSyncs && log.is_automated) return false;
-        if (validStoreIds && !validStoreIds.has(log.store_id)) return false;
+        if (selectedBrands && selectedBrands.length > 0) {
+          if (log.is_bulk) {
+            // Match bulk logs by checking if store_name contains the selected brand(s)
+            const matchesBrand = selectedBrands.some(b => log.store_name.includes(b));
+            if (!matchesBrand) return false;
+          } else {
+            // Match single action logs by specific store_id
+            if (validStoreIds && !validStoreIds.has(log.store_id)) return false;
+          }
+        }
         return true;
       }),
-    [logs, showSystemSyncs, validStoreIds]
+    [logs, showSystemSyncs, validStoreIds, selectedBrands]
   );
 
   return (

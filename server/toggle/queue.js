@@ -121,6 +121,7 @@ export async function runBulkJob(jobId, stores, action, filterContext, performTo
   await pool.query('UPDATE bulk_toggle_jobs SET status = $1 WHERE id = $2 AND status IN ($3, $4)', ['COMPLETED', jobId, 'RUNNING', 'PAUSED']);
   const finalJob = await pool.query('SELECT * FROM bulk_toggle_jobs WHERE id = $1', [jobId]);
   const j = finalJob.rows[0];
-  const summaryMsg = `Bulk ${action.toUpperCase()}${filterContext} — ${j.total_stores} Total ✅ ${j.success_count} ❌ ${j.failed_count}`;
+  const uniqueBrands = [...new Set(stores.map(s => s.brand))].filter(Boolean).join(", ");
+  const summaryMsg = `Bulk ${action.toUpperCase()} [${uniqueBrands}]${filterContext} — ${j.total_stores} Total ✅ ${j.success_count} ❌ ${j.failed_count}`;
   await pool.query(`INSERT INTO toggle_activity (store_name, email, action, result, is_bulk, bulk_job_id) VALUES ($1, $2, $3, $4, $5, $6)`, [summaryMsg, 'ajel@curefoods.in', action.toUpperCase(), 'SUCCESS', true, jobId]);
 }
