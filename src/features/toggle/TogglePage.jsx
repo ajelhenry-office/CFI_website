@@ -200,20 +200,29 @@ export default function TogglePage() {
         />
 
         <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
-          <button
-            style={{ ...pillButton(false), fontSize: 11, padding: "7px 16px", backgroundColor: "#dcfce7", borderColor: "#15803d", color: "#15803d" }}
-            onClick={() => handleBulk("enable")}
-            disabled={isBulking}
-          >
-            Enable Visible
-          </button>
-          <button
-            style={{ ...pillButton(false), fontSize: 11, padding: "7px 16px", backgroundColor: "#fee2e2", borderColor: "#dc3545", color: "#dc3545" }}
-            onClick={() => handleBulk("disable")}
-            disabled={isBulking}
-          >
-            Disable Visible
-          </button>
+          {(() => {
+            const hasCakeZone = filtered.some(s => s.brand === "Cake Zone");
+            return (
+              <>
+                <button
+                  style={{ ...pillButton(false), fontSize: 11, padding: "7px 16px", backgroundColor: "#dcfce7", borderColor: "#15803d", color: "#15803d", opacity: hasCakeZone ? 0.5 : 1 }}
+                  onClick={() => handleBulk("enable")}
+                  disabled={isBulking || hasCakeZone}
+                  title={hasCakeZone ? "Bulk Actions are disabled for Cake Zone" : ""}
+                >
+                  Enable Visible
+                </button>
+                <button
+                  style={{ ...pillButton(false), fontSize: 11, padding: "7px 16px", backgroundColor: "#fee2e2", borderColor: "#dc3545", color: "#dc3545", opacity: hasCakeZone ? 0.5 : 1 }}
+                  onClick={() => handleBulk("disable")}
+                  disabled={isBulking || hasCakeZone}
+                  title={hasCakeZone ? "Bulk Actions are disabled for Cake Zone" : ""}
+                >
+                  Disable Visible
+                </button>
+              </>
+            );
+          })()}
           <button
             style={{ ...pillButton(false), fontSize: 11, padding: "7px 16px" }}
             onClick={() => setShowAudit(true)}

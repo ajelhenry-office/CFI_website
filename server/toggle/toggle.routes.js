@@ -41,7 +41,7 @@ async function performToggleAPI(location_id, action, brand) {
   const creds = UP_BRANDS[brandKey];
   if (!creds) return { success: false, error: `Unknown brand: ${brand}` };
 
-  if (brandKey === "cake_zone" || brandKey === "eatfit___") {
+  if (brandKey === "eatfit___") {
     return { success: true, message: `[TEST MODE] Store ${action}d (API bypassed for ${brand})` };
   }
 
@@ -111,7 +111,7 @@ router.post("/toggle", async (req, res) => {
   if (!["enable", "disable"].includes(action)) return res.status(400).json({ error: 'action must be enable or disable' });
 
   const brandKey = brand.toLowerCase().replace(/[^a-z]/g, "_");
-  if (brandKey.includes("cake_zone") || brandKey.includes("cakezone") || brandKey.includes("eatfit")) {
+  if (brandKey.includes("eatfit")) {
     return res.status(403).json({ success: false, error: `Action blocked: ${brand} is frozen to prevent accidental modification to live accounts.` });
   }
 
@@ -166,6 +166,7 @@ router.post("/toggle/bulk", async (req, res) => {
 
   const validStores = stores.filter(store => {
     const brandKey = (store.brand || "ovenfresh").toLowerCase().replace(/[^a-z]/g, "_");
+    // Cake Zone is strictly blocked from BULK actions, but allowed for SINGLE actions
     return !(brandKey.includes("cake_zone") || brandKey.includes("cakezone") || brandKey.includes("eatfit"));
   });
 
