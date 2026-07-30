@@ -111,8 +111,8 @@ router.post("/toggle", async (req, res) => {
   if (!["enable", "disable"].includes(action)) return res.status(400).json({ error: 'action must be enable or disable' });
 
   const brandKey = brand.toLowerCase().replace(/[^a-z]/g, "_");
-  if (brandKey.includes("eatfit")) {
-    return res.status(403).json({ success: false, error: `Action blocked: ${brand} is frozen to prevent accidental modification to live accounts.` });
+  if (brandKey.includes("cake_zone") || brandKey.includes("cakezone") || brandKey.includes("eatfit")) {
+    return res.status(403).json({ success: false, error: `Action blocked: ${brand} API is disabled completely.` });
   }
 
   // Update desired state in DB
@@ -338,18 +338,40 @@ router.get('/history/download', async (req, res) => {
 
 // ─── ORDER VOLUME ENDPOINT (WEBHOOK) ─────────────────────────
 router.post("/toggle/update-orders", async (req, res) => {
-  const { location_id, active_orders, brand } = req.body;
+  const { location_id, active_orders, brand, store_name } = req.body;
   if (!location_id || active_orders === undefined) {
     return res.status(400).json({ error: "location_id and active_orders required" });
   }
 
+  const brandClean = brand || "ovenfresh";
+  const brandKey = brandClean.toLowerCase().replace(/[^a-z]/g, "_");
+
   try {
-    await pool.query(`
+    const currentStateRes = await pool.query(`
       INSERT INTO store_state (location_id, brand, active_orders) 
       VALUES ($1, $2, $3) 
       ON CONFLICT (location_id) 
       DO UPDATE SET active_orders = $3, last_updated = NOW()
-    `, [location_id, brand || "ovenfresh", active_orders]);
+      RETURNING desired_state
+    `, [location_id, brandClean, active_orders]);
+    
+    const desiredState = currentStateRes.rows[0]?.desired_state;
+
+    // Auto-disable Ovenfresh logic
+    if (brandKey === "ovenfresh" && active_orders >= 15 && desiredState === 'ONLINE') {
+      console.log(`[AUTO-TOGGLE] ${location_id} has ${active_orders} orders. Disabling.`);
+      
+      const apiRes = await performToggleAPI(location_id, 'disable', brandClean);
+      
+      if (apiRes.success) {
+        await pool.query(`INSERT INTO toggle_activity (store_name, store_id, email, action, result, is_automated) VALUES ($1, $2, $3, $4, $5, $6)`, 
+          [store_name || location_id, location_id, 'system@curefoods.in', 'DISABLE', 'SUCCESS', true]);
+      } else {
+        await pool.query(`INSERT INTO toggle_activity (store_name, store_id, email, action, result, is_automated, error_msg) VALUES ($1, $2, $3, $4, $5, $6, $7)`, 
+          [store_name || location_id, location_id, 'system@curefoods.in', 'DISABLE', 'FAILED', true, apiRes.error]);
+      }
+    }
+
     return res.json({ success: true });
   } catch (err) {
     console.error("Failed to update orders:", err);
@@ -361,6 +383,46 @@ router.get("/toggle/store-states", async (req, res) => {
   try {
     const result = await pool.query(`SELECT * FROM store_state`);
     res.json({ success: true, data: result.rows });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ─── STORE MANAGEMENT ENDPOINTS ──────────────────────────────
+router.get("/toggle/stores", async (req, res) => {
+  try {
+    const result = await pool.query(`SELECT * FROM managed_stores ORDER BY brand, name`);
+    res.json({ success: true, data: result.rows });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.post("/toggle/stores", async (req, res) => {
+  const { id, name, brand, city, zone, location_id, status } = req.body;
+  if (!name || !brand || !location_id) {
+    return res.status(400).json({ error: "name, brand, and location_id required" });
+  }
+  const storeId = id || \`ST-\${Date.now()}\`;
+
+  try {
+    await pool.query(`
+      INSERT INTO managed_stores (id, name, brand, city, zone, location_id, status)
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
+      ON CONFLICT (location_id) DO UPDATE 
+      SET name=$2, brand=$3, city=$4, zone=$5, status=$7
+    `, [storeId, name, brand, city || null, zone || null, location_id, status || 'offline']);
+    res.json({ success: true, message: "Store saved successfully" });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.delete("/toggle/stores/:location_id", async (req, res) => {
+  const { location_id } = req.params;
+  try {
+    await pool.query(`DELETE FROM managed_stores WHERE location_id = $1`, [location_id]);
+    res.json({ success: true });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }

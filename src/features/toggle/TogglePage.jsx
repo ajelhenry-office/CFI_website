@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { C, FONT, cardStyle, pillButton } from "../../theme";
 import { getAuthHeaders, handleApiError } from "../../api";
-import { STORES } from "./stores";
 import StoreCard from "./StoreCard";
 import ToggleSidebar from "./ToggleSidebar";
+import BulkProgressIsland from "./BulkProgressIsland";
+import AuditModal from "./AuditModal";
+import ManageStoresModal from "./ManageStoresModal";
 import BulkProgressIsland from "./BulkProgressIsland";
 import AuditModal from "./AuditModal";
 
@@ -21,8 +23,8 @@ async function post(path, body) {
 
 const selectStyle = { padding: "7px 12px", borderRadius: 10, border: `1.5px solid ${C.primary}`, color: C.primary, fontSize: 12, fontWeight: 700, fontFamily: FONT, cursor: "pointer", outline: "none" };
 
-export default function TogglePage() {
-  const [stores, setStores] = useState(STORES);
+export default function TogglePage({ userRole }) {
+  const [stores, setStores] = useState([]);
   const [brand, setBrand] = useState("All");
   const [zone, setZone] = useState("All");
   const [city, setCity] = useState("All");
@@ -32,13 +34,21 @@ export default function TogglePage() {
   const [sidebarData, setSidebarData] = useState(null);
   const [isBulking, setIsBulking] = useState(false);
   const [showAudit, setShowAudit] = useState(false);
+  const [showManage, setShowManage] = useState(false);
   const [storeStates, setStoreStates] = useState({});
+
+  const canManageStores = userRole === "admin" || userRole === "control_tower";
 
   const handleBrandChange = (b) => { setBrand(b); setZone("All"); setCity("All"); setArea("All"); };
   const handleZoneChange = (z) => { setZone(z); setCity("All"); setArea("All"); };
   const handleCityChange = (c) => { setCity(c); setArea("All"); };
 
   const fetchSidebar = useCallback(() => {
+    fetch(`${API_BASE}/api/toggle/stores`, { headers: getAuthHeaders() })
+      .then((r) => { handleApiError(r); return r.json(); })
+      .then((d) => { if (d.data) setStores(d.data); })
+      .catch(() => {});
+
     fetch(`${API_BASE}/api/toggle/sidebar-data`, { headers: getAuthHeaders() })
       .then((r) => { handleApiError(r); return r.json(); })
       .then((d) => setSidebarData(d.data || null))
@@ -223,6 +233,14 @@ export default function TogglePage() {
               </>
             );
           })()}
+          {canManageStores && (
+            <button
+              style={{ ...pillButton(false), fontSize: 11, padding: "7px 16px", backgroundColor: "#fff", color: C.primary, borderColor: C.primary }}
+              onClick={() => setShowManage(true)}
+            >
+              Manage Stores
+            </button>
+          )}
           <button
             style={{ ...pillButton(false), fontSize: 11, padding: "7px 16px" }}
             onClick={() => setShowAudit(true)}
@@ -255,6 +273,7 @@ export default function TogglePage() {
       <ToggleSidebar data={sidebarData} fetchData={fetchSidebar} />
       <BulkProgressIsland activeBulkJob={sidebarData?.activeBulkJob} fetchData={fetchSidebar} />
       {showAudit && <AuditModal onClose={() => setShowAudit(false)} stores={stores} selectedBrand={brand === "All" ? "" : brand} />}
+      {showManage && <ManageStoresModal onClose={() => setShowManage(false)} refreshStores={fetchSidebar} stores={stores} />}
     </div>
   );
 }

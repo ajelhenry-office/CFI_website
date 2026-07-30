@@ -161,7 +161,7 @@ export default function App() {
         </header>
 
         <div style={{ flex: 1, overflowY: "auto", padding: "22px 28px 60px" }}>
-          {activeTab === "toggle" && <TogglePage />}
+          {activeTab === "toggle" && <TogglePage userRole={user.role} />}
           {activeTab === "timing" && <TimingPage globalFilters={globalFilters} />}
           {activeTab === "reviews" && <ReviewsPage globalFilters={globalFilters} />}
           {activeTab === "backfilling" && <RouteBackfillingPage globalFilters={globalFilters} />}
