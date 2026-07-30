@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { C, FONT, pillButton, modalBackdrop, modalContainer } from "../../theme";
+import { C, FONT, pillButton } from "../../theme";
 import { getAuthHeaders } from "../../api";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || (import.meta.env.PROD ? "" : "http://localhost:3001");
@@ -64,8 +64,11 @@ export default function ManageStoresModal({ onClose, refreshStores, stores }) {
   };
 
   return (
-    <div style={modalBackdrop} onClick={onClose}>
-      <div style={{ ...modalContainer, width: 800, padding: 30, display: "flex", flexDirection: "column", gap: 24, height: '80vh' }} onClick={e => e.stopPropagation()}>
+    <div 
+      style={{ position: "fixed", inset: 0, backgroundColor: "rgba(19,38,100,0.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 2000, fontFamily: FONT }} 
+      onClick={onClose}
+    >
+      <div style={{ backgroundColor: "#ffffff", borderRadius: 16, boxShadow: "0 16px 48px rgba(19,38,100,0.22)", width: 800, padding: 30, display: "flex", flexDirection: "column", gap: 24, height: '80vh' }} onClick={e => e.stopPropagation()}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: `1px solid ${C.border}`, paddingBottom: 16 }}>
           <div>
             <h2 style={{ fontSize: 22, fontWeight: 800, margin: 0, color: C.text }}>Manage Stores</h2>
