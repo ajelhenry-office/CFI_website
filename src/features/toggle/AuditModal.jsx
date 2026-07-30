@@ -4,7 +4,7 @@ import { C, FONT } from "../../theme";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || (import.meta.env.PROD ? "" : "http://localhost:3001");
 
-export default function AuditModal({ onClose, stores = [], selectedBrand = "" }) {
+export default function AuditModal({ onClose, stores = [], selectedBrands = [] }) {
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showSystemSyncs, setShowSystemSyncs] = useState(false);
@@ -17,12 +17,12 @@ export default function AuditModal({ onClose, stores = [], selectedBrand = "" })
       .finally(() => setLoading(false));
   }, []);
 
-  // Only show logs for stores belonging to the currently selected brand.
-  // When no brand is selected (""), show all.
+  // Only show logs for stores belonging to the currently selected brands.
+  // When no brands are selected (length === 0), show all.
   const validStoreIds = useMemo(() => {
-    if (!selectedBrand) return null;
-    return new Set(stores.filter((s) => s.brand === selectedBrand).map((s) => s.location_id));
-  }, [stores, selectedBrand]);
+    if (!selectedBrands || selectedBrands.length === 0) return null;
+    return new Set(stores.filter((s) => selectedBrands.includes(s.brand)).map((s) => s.location_id));
+  }, [stores, selectedBrands]);
 
   const filteredLogs = useMemo(
     () =>
@@ -43,7 +43,7 @@ export default function AuditModal({ onClose, stores = [], selectedBrand = "" })
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "18px 24px", borderBottom: `1px solid ${C.border}` }}>
           <div>
             <div style={{ fontSize: 15, fontWeight: 800, color: C.primary }}>
-              Toggle Audit Log{selectedBrand ? ` (${selectedBrand})` : ""}
+              Toggle Audit Log{selectedBrands && selectedBrands.length > 0 ? ` (${selectedBrands.join(", ")})` : ""}
             </div>
             <div style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>Full history of all toggle actions</div>
           </div>
@@ -72,7 +72,7 @@ export default function AuditModal({ onClose, stores = [], selectedBrand = "" })
             <div style={{ padding: 32, textAlign: "center", color: C.muted, fontSize: 13 }}>Loading…</div>
           ) : filteredLogs.length === 0 ? (
             <div style={{ padding: 32, textAlign: "center", color: C.muted, fontSize: 13 }}>
-              No recent activity for {selectedBrand || "all brands"}.
+              No recent activity for {selectedBrands && selectedBrands.length > 0 ? selectedBrands.join(", ") : "all brands"}.
             </div>
           ) : (
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>

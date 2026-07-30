@@ -292,7 +292,7 @@ export default function TogglePage({ userRole }) {
       {/* Sidebar, bulk island, audit modal */}
       <ToggleSidebar data={sidebarData} fetchData={fetchSidebar} />
       <BulkProgressIsland activeBulkJob={sidebarData?.activeBulkJob} fetchData={fetchSidebar} />
-      {showAudit && <AuditModal onClose={() => setShowAudit(false)} stores={stores} selectedBrand={brand === "All" ? "" : brand} />}
+      {showAudit && <AuditModal onClose={() => setShowAudit(false)} stores={stores} selectedBrands={activeFilters.brand} />}
       {showManage && <ManageStoresModal onClose={() => setShowManage(false)} refreshStores={fetchSidebar} stores={stores} />}
     </div>
   );
