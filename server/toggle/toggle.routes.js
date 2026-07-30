@@ -403,7 +403,7 @@ router.post("/toggle/stores", async (req, res) => {
   if (!name || !brand || !location_id) {
     return res.status(400).json({ error: "name, brand, and location_id required" });
   }
-  const storeId = id || \`ST-\${Date.now()}\`;
+  const storeId = id || `ST-${Date.now()}`;
 
   try {
     await pool.query(`
