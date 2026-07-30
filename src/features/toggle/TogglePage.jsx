@@ -3,6 +3,7 @@ import { C, FONT, cardStyle, pillButton } from "../../theme";
 import { getAuthHeaders, handleApiError } from "../../api";
 import StoreCard from "./StoreCard";
 import ToggleSidebar from "./ToggleSidebar";
+import MultiSearchableSelect from "./MultiSearchableSelect";
 import BulkProgressIsland from "./BulkProgressIsland";
 import AuditModal from "./AuditModal";
 import ManageStoresModal from "./ManageStoresModal";
@@ -23,11 +24,17 @@ const selectStyle = { padding: "7px 12px", borderRadius: 10, border: `1.5px soli
 
 export default function TogglePage({ userRole }) {
   const [stores, setStores] = useState([]);
-  const [brand, setBrand] = useState("All");
-  const [zone, setZone] = useState("All");
-  const [city, setCity] = useState("All");
-  const [area, setArea] = useState("All");
+  
+  // Pending filters (multi-select)
+  const [brand, setBrand] = useState([]);
+  const [zone, setZone] = useState([]);
+  const [city, setCity] = useState([]);
+  const [area, setArea] = useState([]);
   const [search, setSearch] = useState("");
+  
+  // Active filters (applied when "Apply" is clicked)
+  const [activeFilters, setActiveFilters] = useState({ brand: [], zone: [], city: [], area: [], search: "" });
+  
   const [statusFilter, setStatusFilter] = useState("Total");
   const [sidebarData, setSidebarData] = useState(null);
   const [isBulking, setIsBulking] = useState(false);
@@ -35,11 +42,24 @@ export default function TogglePage({ userRole }) {
   const [showManage, setShowManage] = useState(false);
   const [storeStates, setStoreStates] = useState({});
 
-  const canManageStores = userRole === "admin" || userRole === "control_tower";
+  const canManageStores = ["admin", "control_tower", "clock_tower"].includes(String(userRole).toLowerCase().replace(/ /g, '_'));
 
-  const handleBrandChange = (b) => { setBrand(b); setZone("All"); setCity("All"); setArea("All"); };
-  const handleZoneChange = (z) => { setZone(z); setCity("All"); setArea("All"); };
-  const handleCityChange = (c) => { setCity(c); setArea("All"); };
+  const handleBrandChange = (b) => { setBrand(b); setZone([]); setCity([]); setArea([]); };
+  const handleZoneChange = (z) => { setZone(z); setCity([]); setArea([]); };
+  const handleCityChange = (c) => { setCity(c); setArea([]); };
+
+  const handleApply = () => {
+    setActiveFilters({ brand, zone, city, area, search });
+  };
+
+  const handleClear = () => {
+    setBrand([]);
+    setZone([]);
+    setCity([]);
+    setArea([]);
+    setSearch("");
+    setActiveFilters({ brand: [], zone: [], city: [], area: [], search: "" });
+  };
 
   const fetchSidebar = useCallback(() => {
     fetch(`${API_BASE}/api/toggle/stores`, { headers: getAuthHeaders() })
@@ -70,47 +90,47 @@ export default function TogglePage({ userRole }) {
     return () => clearInterval(timer);
   }, [fetchSidebar]);
 
-  const brandsList = useMemo(() => ["All", ...new Set(stores.map(s => s.brand).filter(Boolean))].sort(), [stores]);
+  const brandsList = useMemo(() => [...new Set(stores.map(s => s.brand).filter(Boolean))].sort(), [stores]);
   
   const zonesList = useMemo(() => {
-    const list = stores.filter(s => brand === "All" || s.brand === brand)
+    const list = stores.filter(s => brand.length === 0 || brand.includes(s.brand))
                        .map(s => s.zone)
                        .filter(Boolean);
-    return ["All", ...new Set(list)].sort();
+    return [...new Set(list)].sort();
   }, [stores, brand]);
 
   const citiesList = useMemo(() => {
     const list = stores.filter(s => 
-                          (brand === "All" || s.brand === brand) &&
-                          (zone === "All" || s.zone === zone)
+                          (brand.length === 0 || brand.includes(s.brand)) &&
+                          (zone.length === 0 || zone.includes(s.zone))
                        )
                        .map(s => s.city)
                        .filter(Boolean);
-    return ["All", ...new Set(list)].sort();
+    return [...new Set(list)].sort();
   }, [stores, brand, zone]);
 
   const areasList = useMemo(() => {
     const list = stores.filter(s => 
-                          (brand === "All" || s.brand === brand) &&
-                          (zone === "All" || s.zone === zone) &&
-                          (city === "All" || s.city === city)
+                          (brand.length === 0 || brand.includes(s.brand)) &&
+                          (zone.length === 0 || zone.includes(s.zone)) &&
+                          (city.length === 0 || city.includes(s.city))
                        )
                        .map(s => s.name)
                        .filter(Boolean);
-    return ["All", ...new Set(list)].sort();
+    return [...new Set(list)].sort();
   }, [stores, brand, zone, city]);
 
   const baseFiltered = useMemo(() => {
-    const q = search.toLowerCase();
+    const q = activeFilters.search.toLowerCase();
     return stores.filter((s) => {
-      if (brand !== "All" && s.brand !== brand) return false;
-      if (zone !== "All" && s.zone !== zone) return false;
-      if (city !== "All" && s.city !== city) return false;
-      if (area !== "All" && s.name !== area) return false;
+      if (activeFilters.brand.length > 0 && !activeFilters.brand.includes(s.brand)) return false;
+      if (activeFilters.zone.length > 0 && !activeFilters.zone.includes(s.zone)) return false;
+      if (activeFilters.city.length > 0 && !activeFilters.city.includes(s.city)) return false;
+      if (activeFilters.area.length > 0 && !activeFilters.area.includes(s.name)) return false;
       if (q && !s.name.toLowerCase().includes(q) && !s.location_id.toLowerCase().includes(q)) return false;
       return true;
     });
-  }, [stores, brand, zone, city, area, search]);
+  }, [stores, activeFilters]);
 
   const onlineCount = baseFiltered.filter((s) => s.status === "online").length;
   const offlineCount = baseFiltered.length - onlineCount;
@@ -183,29 +203,31 @@ export default function TogglePage({ userRole }) {
       {/* Filters + actions */}
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
         
-        <select value={brand} onChange={(e) => handleBrandChange(e.target.value)} style={selectStyle}>
-          {brandsList.map((b) => <option key={b} value={b}>{b === "All" ? "All Brands" : b}</option>)}
-        </select>
-        
-        <select value={zone} onChange={(e) => handleZoneChange(e.target.value)} style={selectStyle}>
-          {zonesList.map((z) => <option key={z} value={z}>{z === "All" ? "All Zones" : z}</option>)}
-        </select>
-
-        <select value={city} onChange={(e) => handleCityChange(e.target.value)} style={selectStyle}>
-          {citiesList.map((c) => <option key={c} value={c}>{c === "All" ? "All Cities" : c}</option>)}
-        </select>
-        
-        <select value={area} onChange={(e) => setArea(e.target.value)} style={selectStyle}>
-          {areasList.map((a) => <option key={a} value={a}>{a === "All" ? "All Areas" : a}</option>)}
-        </select>
+        <MultiSearchableSelect options={brandsList} selectedValues={brand} onChange={handleBrandChange} placeholder="Brand" />
+        <MultiSearchableSelect options={zonesList} selectedValues={zone} onChange={handleZoneChange} placeholder="Zone" />
+        <MultiSearchableSelect options={citiesList} selectedValues={city} onChange={handleCityChange} placeholder="City" />
+        <MultiSearchableSelect options={areasList} selectedValues={area} onChange={setArea} placeholder="Area" />
 
         {/* Search */}
         <input
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search stores…"
-          style={{ padding: "7px 12px", borderRadius: 10, border: `1.5px solid ${C.border}`, fontSize: 12, color: C.text, fontFamily: FONT, outline: "none", minWidth: 180 }}
+          placeholder="Search store ID or name…"
+          style={{ padding: "7px 12px", borderRadius: 10, border: `1.5px solid ${C.border}`, fontSize: 12, color: C.text, fontFamily: FONT, outline: "none", minWidth: 160 }}
         />
+
+        <button
+          onClick={handleApply}
+          style={{ ...pillButton(false), fontSize: 11, padding: "7px 16px", backgroundColor: C.primary, color: "#fff", borderColor: C.primary }}
+        >
+          Apply Filters
+        </button>
+        <button
+          onClick={handleClear}
+          style={{ ...pillButton(false), fontSize: 11, padding: "7px 16px", backgroundColor: "#fff", color: C.muted, borderColor: C.border }}
+        >
+          Clear
+        </button>
 
         <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
           {(() => {

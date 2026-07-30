@@ -1,26 +1,35 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { C, FONT, pillButton } from "../../theme";
+import SearchableSelect from "./SearchableSelect";
 import { getAuthHeaders } from "../../api";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || (import.meta.env.PROD ? "" : "http://localhost:3001");
 
-export default function ManageStoresModal({ onClose, refreshStores, stores }) {
+export default function ManageStoresModal({ onClose, refreshStores, stores = [] }) {
   const [loading, setLoading] = useState(false);
-  const [formData, setFormData] = useState({ name: "", brand: "", city: "", zone: "", location_id: "" });
+  const [addForm, setAddForm] = useState({ name: "", brand: "", city: "", zone: "", location_id: "" });
   const [search, setSearch] = useState("");
+
+  const brandsList = useMemo(() => [...new Set(stores.map(s => s.brand).filter(Boolean))].sort(), [stores]);
+  const zonesList = useMemo(() => [...new Set(stores.map(s => s.zone).filter(Boolean))].sort(), [stores]);
+  const citiesList = useMemo(() => [...new Set(stores.map(s => s.city).filter(Boolean))].sort(), [stores]);
 
   const handleAdd = async (e) => {
     e.preventDefault();
+    if (!addForm.name || !addForm.brand || !addForm.location_id || !addForm.city || !addForm.zone) {
+      alert("All fields are required. Please fill out Store Name, Brand, Location ID, City, and Zone.");
+      return;
+    }
     setLoading(true);
     try {
       const res = await fetch(`${API_BASE}/api/toggle/stores`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...getAuthHeaders() },
-        body: JSON.stringify(formData),
+        body: JSON.stringify(addForm),
       });
       const data = await res.json();
       if (data.success) {
-        setFormData({ name: "", brand: "", city: "", zone: "", location_id: "" });
+        setAddForm({ name: "", brand: "", city: "", zone: "", location_id: "" });
         refreshStores();
       } else {
         alert("Failed to save store: " + data.error);
@@ -80,14 +89,51 @@ export default function ManageStoresModal({ onClose, refreshStores, stores }) {
         <div style={{ display: "flex", gap: 24, flex: 1, overflow: "hidden" }}>
           
           {/* Add Store Form */}
-          <div style={{ flex: "0 0 280px", display: "flex", flexDirection: "column", gap: 16, borderRight: `1px solid ${C.border}`, paddingRight: 24 }}>
+          <div style={{ flex: "0 0 320px", display: "flex", flexDirection: "column", gap: 16, borderRight: `1px solid ${C.border}`, paddingRight: 24 }}>
             <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0, color: C.primary }}>Add New Store</h3>
             <form onSubmit={handleAdd} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              <input required placeholder="Store Name" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} style={inputStyle} />
-              <input required placeholder="Brand (e.g. Ovenfresh)" value={formData.brand} onChange={e => setFormData({...formData, brand: e.target.value})} style={inputStyle} />
-              <input required placeholder="Location ID" value={formData.location_id} onChange={e => setFormData({...formData, location_id: e.target.value})} style={inputStyle} />
-              <input placeholder="City" value={formData.city} onChange={e => setFormData({...formData, city: e.target.value})} style={inputStyle} />
-              <input placeholder="Zone" value={formData.zone} onChange={e => setFormData({...formData, zone: e.target.value})} style={inputStyle} />
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+                <div>
+                  <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: C.muted, marginBottom: 6 }}>Store Name</label>
+                  <input required value={addForm.name} onChange={e => setAddForm({...addForm, name: e.target.value})} style={inputStyle} placeholder="e.g. Indiranagar Kitchen" />
+                </div>
+                <div>
+                  <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: C.muted, marginBottom: 6 }}>Brand</label>
+                  <SearchableSelect 
+                    options={brandsList} 
+                    value={addForm.brand} 
+                    onChange={v => setAddForm({...addForm, brand: v})} 
+                    placeholder="Select or Type"
+                    allowCustom={true} 
+                  />
+                </div>
+              </div>
+              <div>
+                <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: C.muted, marginBottom: 6 }}>UrbanPiper Location ID</label>
+                <input required value={addForm.location_id} onChange={e => setAddForm({...addForm, location_id: e.target.value})} style={inputStyle} placeholder="e.g. 12345" />
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+                <div>
+                  <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: C.muted, marginBottom: 6 }}>City</label>
+                  <SearchableSelect 
+                    options={citiesList} 
+                    value={addForm.city} 
+                    onChange={v => setAddForm({...addForm, city: v})} 
+                    placeholder="Select or Type"
+                    allowCustom={true} 
+                  />
+                </div>
+                <div>
+                  <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: C.muted, marginBottom: 6 }}>Zone</label>
+                  <SearchableSelect 
+                    options={zonesList} 
+                    value={addForm.zone} 
+                    onChange={v => setAddForm({...addForm, zone: v})} 
+                    placeholder="Select or Type"
+                    allowCustom={true} 
+                  />
+                </div>
+              </div>
               <button disabled={loading} type="submit" style={{ ...pillButton(false), marginTop: 8, padding: "10px 16px", backgroundColor: C.primary, color: "#fff" }}>
                 {loading ? "Saving..." : "Add Store"}
               </button>
