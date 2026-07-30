@@ -10,6 +10,7 @@ import RatingsPage from "./features/ratings/RatingsPage";
 import OpsMatrixPage from "./features/ops_matrix/OpsMatrixPage";
 import { SettingsPage, ThemePage } from "./features/static/StaticPages";
 import LoginPage from "./features/auth/LoginPage";
+import ChatbotWidget from "./features/chat/ChatbotWidget";
 import { fetchFilters } from "./features/ratings/ratingsApi";
 
 const iso = (offsetDays) => {
@@ -182,6 +183,9 @@ export default function App() {
           {activeTab === "theme" && <ThemePage />}
         </div>
       </main>
+
+      {/* Global AI Chatbot Widget */}
+      <ChatbotWidget userRole={user.role} />
     </div>
   );
 }
