@@ -6,8 +6,6 @@ import ToggleSidebar from "./ToggleSidebar";
 import BulkProgressIsland from "./BulkProgressIsland";
 import AuditModal from "./AuditModal";
 import ManageStoresModal from "./ManageStoresModal";
-import BulkProgressIsland from "./BulkProgressIsland";
-import AuditModal from "./AuditModal";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || (import.meta.env.PROD ? "" : "http://localhost:3001");
 
