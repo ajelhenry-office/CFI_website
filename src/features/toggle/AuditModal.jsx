@@ -30,8 +30,8 @@ export default function AuditModal({ onClose, stores = [], selectedBrands = [] }
         if (!showSystemSyncs && log.is_automated) return false;
         if (selectedBrands && selectedBrands.length > 0) {
           if (log.is_bulk) {
-            // Match bulk logs by checking if store_name contains the selected brand(s)
-            const matchesBrand = selectedBrands.some(b => log.store_name.includes(b));
+            // Match bulk logs by checking if store_name contains the selected brand(s) case-insensitively
+            const matchesBrand = selectedBrands.some(b => log.store_name.toLowerCase().includes(b.toLowerCase()));
             if (!matchesBrand) return false;
           } else {
             // Match single action logs by specific store_id
