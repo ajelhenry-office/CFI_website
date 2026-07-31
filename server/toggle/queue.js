@@ -1,19 +1,17 @@
 import { pool } from '../ratings/db.js';
 
 export async function checkAndIncrementRateLimit(brand) {
-  const res = await pool.query(`SELECT * FROM api_health WHERE brand = $1`, [brand]);
+  const res = await pool.query(`SELECT requests_this_minute, EXTRACT(EPOCH FROM (NOW() - minute_start_time)) as elapsed_seconds FROM api_health WHERE brand = $1`, [brand]);
   let health = res.rows[0];
-  const now = new Date();
   
   if (!health) {
-    await pool.query(`INSERT INTO api_health (brand, requests_this_minute, minute_start_time) VALUES ($1, 1, $2)`, [brand, now]);
+    await pool.query(`INSERT INTO api_health (brand, requests_this_minute, minute_start_time) VALUES ($1, 1, NOW())`, [brand]);
     return 1;
   }
   
-  const elapsed = now - new Date(health.minute_start_time);
-  if (elapsed >= 60000) {
+  if (health.elapsed_seconds >= 60 || health.elapsed_seconds < 0) {
     // New minute
-    await pool.query(`UPDATE api_health SET requests_this_minute = 1, minute_start_time = $1 WHERE brand = $2`, [now, brand]);
+    await pool.query(`UPDATE api_health SET requests_this_minute = 1, minute_start_time = NOW() WHERE brand = $1`, [brand]);
     return 1;
   } else {
     // Same minute
