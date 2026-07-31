@@ -107,6 +107,7 @@ export async function runBulkJob(jobId, stores, action, filterContext, performTo
         throw new Error(toggleRes.error);
       }
       
+      await pool.query(`UPDATE managed_stores SET status = $1 WHERE location_id = $2`, [action === 'enable' ? 'online' : 'offline', store.location_id]);
       await pool.query('UPDATE bulk_toggle_jobs SET success_count = success_count + 1, pending_count = pending_count - 1, completed_store_ids = array_append(completed_store_ids, $1) WHERE id = $2', [store.location_id, jobId]);
       await pool.query(`UPDATE api_health SET last_sync_time = NOW() WHERE brand = $1`, [brand]);
     } catch (err) {

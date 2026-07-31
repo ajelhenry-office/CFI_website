@@ -141,6 +141,7 @@ router.post("/toggle", async (req, res) => {
     const apiRes = await performToggleAPI(location_id, action, brand);
     
     if (apiRes.success) {
+      await pool.query(`UPDATE managed_stores SET status = $1 WHERE location_id = $2`, [action === 'enable' ? 'online' : 'offline', location_id]);
       await pool.query(`INSERT INTO toggle_activity (store_name, store_id, email, action, result) VALUES ($1, $2, $3, $4, $5)`, 
         [store_name, location_id, 'ajel@curefoods.in', action.toUpperCase(), 'SUCCESS']);
       await pool.query(`UPDATE api_health SET last_sync_time = NOW() WHERE brand = $1`, [brand]);
@@ -364,6 +365,7 @@ router.post("/toggle/update-orders", async (req, res) => {
       const apiRes = await performToggleAPI(location_id, 'disable', brandClean);
       
       if (apiRes.success) {
+        await pool.query(`UPDATE managed_stores SET status = 'offline' WHERE location_id = $1`, [location_id]);
         await pool.query(`INSERT INTO toggle_activity (store_name, store_id, email, action, result, is_automated) VALUES ($1, $2, $3, $4, $5, $6)`, 
           [store_name || location_id, location_id, 'system@curefoods.in', 'DISABLE', 'SUCCESS', true]);
       } else {
