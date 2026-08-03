@@ -492,6 +492,20 @@ export default function TimingPage() {
         <button style={{ padding: "10px 20px", borderRadius: 8, border: "1px solid #d1d5db", backgroundColor: "#fff", color: "#4b5563", fontSize: 14, fontWeight: 500, cursor: "pointer" }}>
           View on {activePlatform === "zomato" ? "Zomato" : "Swiggy"}
         </button>
+        
+        <button 
+          onClick={() => { setSelectedBrands([]); setSelectedStores([]); }}
+          style={{ padding: "10px 20px", borderRadius: 8, border: "1px solid #ef4444", backgroundColor: "#fef2f2", color: "#ef4444", fontSize: 14, fontWeight: 500, cursor: "pointer" }}
+        >
+          Clear
+        </button>
+        
+        <button 
+          onClick={() => setShowBulkModal(true)}
+          style={{ padding: "10px 20px", borderRadius: 8, border: "none", backgroundColor: "#111827", color: "#fff", fontSize: 14, fontWeight: 500, cursor: "pointer", marginLeft: "auto" }}
+        >
+          Apply to Multiple Stores
+        </button>
       </div>
 
       {/* Accordion List */}
@@ -678,8 +692,7 @@ export default function TimingPage() {
                       </div>
 
                       {/* Save Button */}
-                      <div style={{ display: "flex", gap: 12 }}>
-                        <button 
+                      <button 
                           onClick={handleSave}
                           disabled={loading || selectedStores.length === 0}
                           style={{
@@ -688,30 +701,14 @@ export default function TimingPage() {
                             color: "#fff",
                             border: "none",
                             borderRadius: 6,
-                            fontSize: 14,
+                            fontSize: 15,
                             fontWeight: 500,
-                            cursor: loading || selectedStores.length === 0 ? "not-allowed" : "pointer"
+                            cursor: loading || selectedStores.length === 0 ? "not-allowed" : "pointer",
+                            transition: "background-color 0.2s"
                           }}
                         >
-                          {loading ? "Saving..." : "Save (Selected Store Only)"}
+                          {loading ? "Saving..." : "Save"}
                         </button>
-                        <button 
-                          onClick={() => setShowBulkModal(true)}
-                          disabled={loading || selectedStores.length === 0}
-                          style={{
-                            padding: "10px 24px",
-                            backgroundColor: loading || selectedStores.length === 0 ? "#d1d5db" : "#111827",
-                            color: "#fff",
-                            border: "none",
-                            borderRadius: 6,
-                            fontSize: 14,
-                            fontWeight: 500,
-                            cursor: loading || selectedStores.length === 0 ? "not-allowed" : "pointer"
-                          }}
-                        >
-                          Apply to Multiple Stores
-                        </button>
-                      </div>
                     </div>
 
                   </div>
