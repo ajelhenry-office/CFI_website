@@ -214,10 +214,11 @@ export default function TimingPage() {
       } else {
         setTimings(getDefaultTimings());
       }
-    } else if (selectedStores.length === 0) {
+    } else {
+      // If 0 or >1 stores, reset to default blank slate
       setTimings(getDefaultTimings());
     }
-  }, [selectedStores.length === 1 ? selectedStores[0] : null]);
+  }, [selectedStores.length === 1 ? selectedStores[0] : 'multiple']);
 
   const handleSave = async () => {
     if (selectedStores.length === 0) {
