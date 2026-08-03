@@ -1,11 +1,13 @@
 import { pool } from '../ratings/db.js';
 import { warmUpOpsCache } from '../ops_matrix/ops.routes.js';
+import { startTimingWorker } from '../timing/timingWorker.js';
 
 // Define the URL to hit our own bulk endpoint (assuming running on port 3000 locally, or deployed host)
 const API_URL = process.env.API_URL || "http://localhost:3000/api";
 
 export function startWorkers() {
   console.log("[WORKERS] Starting background workers...");
+  startTimingWorker();
 
   // Hourly Recheck Cron (Runs every 60 minutes)
   // Grabs all stores where desired_state = 'ONLINE' and pushes to the bulk queue.
