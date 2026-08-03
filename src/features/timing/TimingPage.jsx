@@ -480,7 +480,16 @@ export default function TimingPage() {
         />
 
         <MultiSelect 
-          options={filteredStores.map(s => ({ label: s.name, sublabel: s[currentIdField], value: s[currentIdField] }))}
+          options={filteredStores.map(s => {
+            const parts = s.name.split(" - ");
+            const locality = parts.length >= 2 ? parts[0] : s.name;
+            const bName = parts.length >= 2 ? parts[1] : s.brand;
+            return {
+              value: s[currentIdField], 
+              label: bName, 
+              sublabel: `${locality} | Res ID: ${s[currentIdField]}`
+            };
+          })}
           selected={selectedStores}
           onChange={setSelectedStores}
           placeholder="Select stores to edit timings..."
@@ -810,11 +819,16 @@ export default function TimingPage() {
               <div>
                 <h4 style={{ margin: "0 0 12px 0", fontSize: 14, color: "#374151" }}>2. Select the target stores</h4>
                 <MultiSelect 
-                  options={currentStores.map(s => ({
-                    value: s[currentIdField], 
-                    label: s.name, 
-                    sublabel: s.brand
-                  }))}
+                  options={currentStores.map(s => {
+            const parts = s.name.split(" - ");
+            const locality = parts.length >= 2 ? parts[0] : s.name;
+            const bName = parts.length >= 2 ? parts[1] : s.brand;
+            return {
+              value: s[currentIdField], 
+              label: bName, 
+              sublabel: `${locality} | Res ID: ${s[currentIdField]}`
+            };
+          })}
                   selected={bulkSelectedStores}
                   onChange={setBulkSelectedStores}
                   placeholder="Select stores to overwrite..."
