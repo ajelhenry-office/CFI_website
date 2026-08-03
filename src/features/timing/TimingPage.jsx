@@ -778,6 +778,70 @@ export default function TimingPage() {
           </div>
         </div>
       )}
+      {/* Bulk Apply Modal */}
+      {showBulkModal && (
+        <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: "rgba(0,0,0,0.5)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <div style={{ backgroundColor: "#fff", borderRadius: 12, width: 600, maxWidth: "90vw", maxHeight: "90vh", display: "flex", flexDirection: "column" }}>
+            <div style={{ padding: "20px 24px", borderBottom: "1px solid #e5e7eb", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <h2 style={{ margin: 0, fontSize: 18, fontWeight: 600 }}>Bulk Apply Timings</h2>
+              <button onClick={() => setShowBulkModal(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "#6b7280" }}>
+                <X size={20} />
+              </button>
+            </div>
+            
+            <div style={{ padding: 24, overflowY: "auto", display: "flex", flexDirection: "column", gap: 24 }}>
+              <div>
+                <h4 style={{ margin: "0 0 12px 0", fontSize: 14, color: "#374151" }}>1. Which days do you want to apply?</h4>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
+                  {DAYS.map(day => (
+                    <label key={day} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14, color: "#4b5563", cursor: "pointer" }}>
+                      <input 
+                        type="checkbox" 
+                        checked={bulkSelectedDays[day]}
+                        onChange={(e) => setBulkSelectedDays(prev => ({ ...prev, [day]: e.target.checked }))}
+                      />
+                      {day}
+                    </label>
+                  ))}
+                </div>
+              </div>
+              
+              <div>
+                <h4 style={{ margin: "0 0 12px 0", fontSize: 14, color: "#374151" }}>2. Select the target stores</h4>
+                <MultiSelect 
+                  options={currentStores.map(s => ({
+                    value: s[currentIdField], 
+                    label: s.name, 
+                    sublabel: s.brand
+                  }))}
+                  selected={bulkSelectedStores}
+                  onChange={setBulkSelectedStores}
+                  placeholder="Select stores to overwrite..."
+                  width="100%"
+                  hasSearch={true}
+                />
+              </div>
+            </div>
+            
+            <div style={{ padding: "16px 24px", borderTop: "1px solid #e5e7eb", display: "flex", justifyContent: "flex-end", gap: 12, backgroundColor: "#f9fafb", borderRadius: "0 0 12px 12px" }}>
+              <button 
+                onClick={() => setShowBulkModal(false)}
+                style={{ padding: "8px 16px", backgroundColor: "#fff", border: "1px solid #d1d5db", borderRadius: 6, cursor: "pointer", fontSize: 14, fontWeight: 500 }}
+              >
+                Cancel
+              </button>
+              <button 
+                onClick={handleBulkSave}
+                disabled={loading || bulkSelectedStores.length === 0}
+                style={{ padding: "8px 16px", backgroundColor: loading ? "#d1d5db" : "#111827", color: "#fff", border: "none", borderRadius: 6, cursor: loading ? "not-allowed" : "pointer", fontSize: 14, fontWeight: 500 }}
+              >
+                {loading ? "Saving..." : "Confirm & Save"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showAudit && <TimingAuditModal onClose={() => setShowAudit(false)} selectedBrands={selectedBrands} />}
     </div>
   );
