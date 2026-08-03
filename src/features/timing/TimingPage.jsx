@@ -361,6 +361,13 @@ export default function TimingPage() {
             );
           })}
         </div>
+        <button 
+          onClick={() => setShowAudit(true)}
+          style={{ padding: "8px 16px", backgroundColor: "#fff", border: `1px solid #d1d5db`, borderRadius: 6, fontSize: 13, fontWeight: 600, color: "#374151", cursor: "pointer", display: "flex", gap: 6, alignItems: "center", marginBottom: 12 }}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+          Audit Log
+        </button>
       </div>
 
       {/* Filters & Store Selection */}
