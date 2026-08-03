@@ -36,6 +36,8 @@ const LocationIcon = () => (
   </svg>
 );
 
+const X = ({ size }) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>;
+
 const PencilIcon = () => (
   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#6b7280" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <path d="M12 20h9"></path>
@@ -56,6 +58,11 @@ export default function TimingPage() {
   const [liveTasks, setLiveTasks] = useState([]);
   const [showAudit, setShowAudit] = useState(false);
   const [timingCache, setTimingCache] = useState({});
+  const [showBulkModal, setShowBulkModal] = useState(false);
+  const [bulkSelectedStores, setBulkSelectedStores] = useState([]);
+  const [bulkSelectedDays, setBulkSelectedDays] = useState({
+    Monday: true, Tuesday: true, Wednesday: true, Thursday: true, Friday: true, Saturday: true, Sunday: true
+  });
 
   const getDefaultTimings = () => {
     const init = {};
@@ -220,6 +227,54 @@ export default function TimingPage() {
     }
   }, [selectedStores.length === 1 ? selectedStores[0] : 'multiple']);
 
+  const handleBulkSave = async () => {
+    if (bulkSelectedStores.length === 0) {
+      setToastMsg("Please select at least one store for bulk update.");
+      setTimeout(() => setToastMsg(""), 3000);
+      return;
+    }
+    const partialTimings = {};
+    Object.keys(bulkSelectedDays).forEach(day => {
+      if (bulkSelectedDays[day]) {
+        partialTimings[day] = timings[day];
+      }
+    });
+    if (Object.keys(partialTimings).length === 0) {
+      setToastMsg("Please select at least one day to apply.");
+      setTimeout(() => setToastMsg(""), 3000);
+      return;
+    }
+    setLoading(true);
+    try {
+      const payload = {
+        platform: activePlatform,
+        stores: bulkSelectedStores,
+        timings: partialTimings
+      };
+      const res = await fetch(`${API_BASE}/api/timing/bulk-update`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify(payload)
+      });
+      if (handleApiError(res)) return;
+      const data = await res.json();
+      if (data.success) {
+        setToastMsg(`Successfully queued ${bulkSelectedStores.length} stores for bulk update.`);
+        setTimeout(() => setToastMsg(""), 3000);
+        setShowBulkModal(false);
+        setBulkSelectedStores([]);
+        fetchLiveTasks();
+      } else {
+        setToastMsg("Failed to queue bulk updates: " + data.error);
+        setTimeout(() => setToastMsg(""), 4000);
+      }
+    } catch (err) {
+      setToastMsg("Error: " + err.message);
+      setTimeout(() => setToastMsg(""), 4000);
+    }
+    setLoading(false);
+  };
+
   const handleSave = async () => {
     if (selectedStores.length === 0) {
       setToastMsg("Please select at least one store.");
@@ -245,7 +300,7 @@ export default function TimingPage() {
       const data = await res.json();
       
       if (data.success) {
-        setToastMsg(`Successfully queued ${selectedStores.length} stores for update.`);
+        setToastMsg(`Successfully queued store for update.`);
         setTimeout(() => setToastMsg(""), 3000);
         fetchLiveTasks();
       } else {
@@ -262,7 +317,7 @@ export default function TimingPage() {
   const ZOMATO_BLUE = "#2368ee";
 
   // --- MultiSelect Component ---
-  const MultiSelect = ({ options, selected, onChange, placeholder, width, hasSearch }) => {
+  const MultiSelect = ({ options, selected, onChange, placeholder, width, hasSearch, singleSelect }) => {
     const [isOpen, setIsOpen] = useState(false);
     const [search, setSearch] = useState("");
 
@@ -271,10 +326,15 @@ export default function TimingPage() {
       : options;
 
     const toggle = (val) => {
-      if (selected.includes(val)) {
-        onChange(selected.filter(v => v !== val));
+      if (singleSelect) {
+        onChange([val]);
+        setIsOpen(false);
       } else {
-        onChange([...selected, val]);
+        if (selected.includes(val)) {
+          onChange(selected.filter(v => v !== val));
+        } else {
+          onChange([...selected, val]);
+        }
       }
     };
 
@@ -325,10 +385,12 @@ export default function TimingPage() {
                 />
               </div>
             )}
-            <div style={{ padding: "8px 12px", borderBottom: "1px solid #e5e7eb", display: "flex", gap: 12, fontSize: 13, backgroundColor: "#f9fafb" }}>
-              <span onClick={selectAll} style={{ color: ZOMATO_BLUE, cursor: "pointer", fontWeight: 500 }}>Select All</span>
-              <span onClick={selectNone} style={{ color: "#6b7280", cursor: "pointer", fontWeight: 500 }}>Select None</span>
-            </div>
+            {!singleSelect && (
+              <div style={{ padding: "8px 12px", borderBottom: "1px solid #e5e7eb", display: "flex", gap: 12, fontSize: 13, backgroundColor: "#f9fafb" }}>
+                <span onClick={selectAll} style={{ color: ZOMATO_BLUE, cursor: "pointer", fontWeight: 500 }}>Select All</span>
+                <span onClick={selectNone} style={{ color: "#6b7280", cursor: "pointer", fontWeight: 500 }}>Select None</span>
+              </div>
+            )}
             <div style={{ overflowY: "auto", flex: 1, padding: "4px 0" }}>
               {filteredOptions.length === 0 ? (
                 <div style={{ padding: "8px 12px", color: "#6b7280", fontSize: 13 }}>No results found</div>
@@ -424,6 +486,7 @@ export default function TimingPage() {
           placeholder="Select stores to edit timings..."
           width={320}
           hasSearch={true}
+          singleSelect={true}
         />
 
         <button style={{ padding: "10px 20px", borderRadius: 8, border: "1px solid #d1d5db", backgroundColor: "#fff", color: "#4b5563", fontSize: 14, fontWeight: 500, cursor: "pointer" }}>
@@ -615,23 +678,40 @@ export default function TimingPage() {
                       </div>
 
                       {/* Save Button */}
-                      <button 
-                        onClick={handleSave}
-                        disabled={loading || selectedStores.length === 0}
-                        style={{
-                          padding: "10px 24px",
-                          backgroundColor: loading || selectedStores.length === 0 ? "#d1d5db" : platformColor,
-                          color: "#fff",
-                          border: "none",
-                          borderRadius: 6,
-                          fontSize: 15,
-                          fontWeight: 500,
-                          cursor: loading || selectedStores.length === 0 ? "not-allowed" : "pointer",
-                          transition: "background-color 0.2s"
-                        }}
-                      >
-                        {loading ? "Saving..." : "Save"}
-                      </button>
+                      <div style={{ display: "flex", gap: 12 }}>
+                        <button 
+                          onClick={handleSave}
+                          disabled={loading || selectedStores.length === 0}
+                          style={{
+                            padding: "10px 24px",
+                            backgroundColor: loading || selectedStores.length === 0 ? "#d1d5db" : platformColor,
+                            color: "#fff",
+                            border: "none",
+                            borderRadius: 6,
+                            fontSize: 14,
+                            fontWeight: 500,
+                            cursor: loading || selectedStores.length === 0 ? "not-allowed" : "pointer"
+                          }}
+                        >
+                          {loading ? "Saving..." : "Save (Selected Store Only)"}
+                        </button>
+                        <button 
+                          onClick={() => setShowBulkModal(true)}
+                          disabled={loading || selectedStores.length === 0}
+                          style={{
+                            padding: "10px 24px",
+                            backgroundColor: loading || selectedStores.length === 0 ? "#d1d5db" : "#111827",
+                            color: "#fff",
+                            border: "none",
+                            borderRadius: 6,
+                            fontSize: 14,
+                            fontWeight: 500,
+                            cursor: loading || selectedStores.length === 0 ? "not-allowed" : "pointer"
+                          }}
+                        >
+                          Apply to Multiple Stores
+                        </button>
+                      </div>
                     </div>
 
                   </div>
