@@ -67,7 +67,8 @@ export default function TimingPage() {
   });
 
   // Filter state
-  const [selectedBrand, setSelectedBrand] = useState("");
+  const [selectedBrands, setSelectedBrands] = useState([]);
+  const [selectedStores, setSelectedStores] = useState([]);
 
   const currentStores = activePlatform === "zomato" ? ZOMATO_STORES : SWIGGY_STORES;
   const currentIdField = activePlatform === "zomato" ? "zomato_id" : "swiggy_id";
@@ -75,13 +76,13 @@ export default function TimingPage() {
   const allBrands = [...new Set(currentStores.map(s => s.brand))].sort();
   
   const filteredStores = currentStores.filter(store => {
-    return selectedBrand ? store.brand === selectedBrand : true;
+    return selectedBrands.length > 0 ? selectedBrands.includes(store.brand) : true;
   });
 
   const handlePlatformChange = (p) => {
     setActivePlatform(p);
-    setSelectedBrand("");
-    setStoreName("");
+    setSelectedBrands([]);
+    setSelectedStores([]);
   };
 
   const updateSlot = (day, slotIndex, field, value) => {
