@@ -48,14 +48,16 @@ const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"
 export default function TimingPage() {
   const [activePlatform, setActivePlatform] = useState("zomato");
   const [loading, setLoading] = useState(false);
-  const [expandedDay, setExpandedDay] = useState(null);
+  const [expandedDay, setExpandedDay] = useState(() => {
+    return new Date().toLocaleDateString("en-US", { weekday: "long" });
+  });
   const [copyAll, setCopyAll] = useState(false);
   const [toastMsg, setToastMsg] = useState("");
   const [liveTasks, setLiveTasks] = useState([]);
   const [showAudit, setShowAudit] = useState(false);
+  const [timingCache, setTimingCache] = useState({});
 
-  // Initialize state for all days
-  const [timings, setTimings] = useState(() => {
+  const getDefaultTimings = () => {
     const init = {};
     DAYS.forEach(d => {
       init[d] = {
@@ -64,7 +66,10 @@ export default function TimingPage() {
       };
     });
     return init;
-  });
+  };
+
+  // Initialize state for all days
+  const [timings, setTimings] = useState(getDefaultTimings());
 
   // Filter state
   const [selectedBrands, setSelectedBrands] = useState([]);
@@ -185,8 +190,34 @@ export default function TimingPage() {
   useEffect(() => {
     fetchLiveTasks();
     const interval = setInterval(fetchLiveTasks, 5000);
+    
+    // Fetch cached timings on mount
+    fetch(`${API_BASE}/api/timing/all-store-timings`, { headers: getAuthHeaders() })
+      .then(r => r.json())
+      .then(d => {
+        if (d.success) setTimingCache(d.cache || {});
+      })
+      .catch(console.error);
+
     return () => clearInterval(interval);
   }, []);
+
+  // Sync selected store timings
+  useEffect(() => {
+    if (selectedStores.length === 1) {
+      const storeId = selectedStores[0];
+      const cached = timingCache[storeId];
+      if (cached) {
+        setTimings(cached);
+        setToastMsg("Loaded current timings from Zomato");
+        setTimeout(() => setToastMsg(""), 3000);
+      } else {
+        setTimings(getDefaultTimings());
+      }
+    } else if (selectedStores.length === 0) {
+      setTimings(getDefaultTimings());
+    }
+  }, [selectedStores.length === 1 ? selectedStores[0] : null]);
 
   const handleSave = async () => {
     if (selectedStores.length === 0) {

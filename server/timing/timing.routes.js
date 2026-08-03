@@ -132,34 +132,48 @@ router.get("/timing/queue-status", async (req, res) => {
   }
 });
 
-// ─── AUDIT LOG ─────────────────────────────────────────────────
+// ─── AUDIT LOG ──────────────────────────────────────────────────
 router.get("/timing/audit-log", async (req, res) => {
   try {
-    // Fetch last 100 batches grouped
-    const result = await pool.query(`
-      SELECT 
-        batch_id, 
-        MAX(user_email) as email,
-        MAX(created_at) as created_at,
-        COUNT(id) as total_stores,
-        SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) as success_count,
-        SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed_count,
-        json_agg(json_build_object(
-          'store_id', store_id, 
-          'brand', brand, 
-          'status', status, 
-          'error_message', error_message
-        )) as details
+    const q = `
+      SELECT batch_id, 
+             MAX(created_at) as created_at,
+             MAX(user_email) as email,
+             COUNT(*) as total_stores,
+             SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) as success_count,
+             SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed_count,
+             json_agg(json_build_object(
+               'store_id', store_id,
+               'brand', brand,
+               'status', status,
+               'error_message', error_message
+             )) as details
       FROM zomato_timing_queue
       WHERE batch_id IS NOT NULL
       GROUP BY batch_id
-      ORDER BY created_at DESC
-      LIMIT 100
-    `);
-    res.json({ success: true, logs: result.rows });
+      ORDER BY MAX(created_at) DESC
+      LIMIT 50
+    `;
+    const { rows } = await pool.query(q);
+    res.json({ success: true, logs: rows });
   } catch (err) {
-    console.error("[AUDIT LOG ERROR]", err);
-    res.status(500).json({ success: false, error: err.message });
+    console.error("Audit Log error:", err);
+    res.status(500).json({ error: "Failed to fetch audit log" });
+  }
+});
+
+// ─── CACHED TIMINGS ──────────────────────────────────────────
+router.get("/timing/all-store-timings", async (req, res) => {
+  try {
+    const { rows } = await pool.query(`SELECT store_id, timings FROM zomato_timing_cache`);
+    const cacheMap = {};
+    rows.forEach(r => {
+      cacheMap[r.store_id] = r.timings;
+    });
+    res.json({ success: true, cache: cacheMap });
+  } catch (err) {
+    console.error("All store timings error:", err);
+    res.status(500).json({ error: "Failed to fetch timing cache" });
   }
 });
 

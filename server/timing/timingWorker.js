@@ -71,6 +71,15 @@ export async function processTimingQueue() {
 
       // 3. Update DB
       await client.query(`UPDATE zomato_timing_queue SET status = $1, error_message = $2, updated_at = NOW() WHERE id = $3`, [status, errorMessage, task.id]);
+      
+      if (status === 'success') {
+        await client.query(`
+          INSERT INTO zomato_timing_cache (store_id, timings, updated_at) 
+          VALUES ($1, $2, NOW()) 
+          ON CONFLICT (store_id) DO UPDATE SET timings = EXCLUDED.timings, updated_at = NOW()
+        `, [task.store_id, JSON.stringify(task.payload)]);
+      }
+
       client.release();
 
       // 4. Send Email on Session Expiry
