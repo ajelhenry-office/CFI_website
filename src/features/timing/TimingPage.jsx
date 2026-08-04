@@ -283,7 +283,7 @@ export default function TimingPage() {
 
   const fetchLiveTasks = async () => {
     try {
-      const res = await fetch(`${API_BASE}/api/timing/queue-status`, {
+      const res = await fetch(`${API_BASE}/api/timing/queue-status?t=${Date.now()}`, {
         headers: getAuthHeaders()
       });
       const contentType = res.headers.get("content-type");
@@ -303,7 +303,7 @@ export default function TimingPage() {
     const interval = setInterval(fetchLiveTasks, 5000);
     
     // Fetch cached timings on mount
-    fetch(`${API_BASE}/api/timing/all-store-timings`, { headers: getAuthHeaders() })
+    fetch(`${API_BASE}/api/timing/all-store-timings?t=${Date.now()}`, { headers: getAuthHeaders() })
       .then(r => {
         const contentType = r.headers.get("content-type");
         if (r.ok && contentType && contentType.includes("application/json")) {
