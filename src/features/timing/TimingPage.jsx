@@ -47,6 +47,109 @@ const PencilIcon = () => (
 
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
+const ZOMATO_BLUE = "#2368ee";
+
+// --- MultiSelect Component ---
+const MultiSelect = ({ options, selected, onChange, placeholder, width, hasSearch, singleSelect }) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const [search, setSearch] = useState("");
+
+  const filteredOptions = hasSearch && search 
+    ? options.filter(o => o.label.toLowerCase().includes(search.toLowerCase()) || (o.sublabel && o.sublabel.toLowerCase().includes(search.toLowerCase())))
+    : options;
+
+  const toggle = (val) => {
+    if (singleSelect) {
+      onChange([val]);
+      setIsOpen(false);
+    } else {
+      if (selected.includes(val)) {
+        onChange(selected.filter(v => v !== val));
+      } else {
+        onChange([...selected, val]);
+      }
+    }
+  };
+
+  const selectAll = () => onChange(filteredOptions.map(o => o.value));
+  const selectNone = () => onChange([]);
+
+  return (
+    <div style={{ position: "relative", width }}>
+      <div 
+        onClick={() => setIsOpen(!isOpen)}
+        style={{
+          padding: "10px 36px 10px 16px",
+          borderRadius: 8,
+          border: "1px solid #d1d5db",
+          backgroundColor: "#fff",
+          color: "#374151",
+          fontSize: 14,
+          fontWeight: 500,
+          cursor: "pointer",
+          display: "flex",
+          alignItems: "center",
+          minHeight: 20
+        }}
+      >
+        <div style={{ flex: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+          {selected.length === 0 ? placeholder : selected.length === 1 ? options.find(o => o.value === selected[0])?.label : `${selected.length} selected`}
+        </div>
+        <div style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", color: "#6b7280" }}>
+          {isOpen ? <ChevronUp /> : <ChevronDown />}
+        </div>
+      </div>
+      
+      {isOpen && (
+        <div style={{
+          position: "absolute", top: "100%", left: 0, right: 0, marginTop: 4,
+          backgroundColor: "#fff", border: "1px solid #d1d5db", borderRadius: 8,
+          boxShadow: "0 4px 6px -1px rgba(0, 0, 0, 0.1)", zIndex: 10,
+          maxHeight: 300, display: "flex", flexDirection: "column"
+        }}>
+          {hasSearch && (
+            <div style={{ padding: 8, borderBottom: "1px solid #e5e7eb" }}>
+              <input 
+                type="text" 
+                placeholder="Search..." 
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                style={{ width: "100%", padding: "6px 12px", border: "1px solid #d1d5db", borderRadius: 4, boxSizing: "border-box", fontSize: 13 }}
+              />
+            </div>
+          )}
+          {!singleSelect && (
+            <div style={{ padding: "8px 12px", borderBottom: "1px solid #e5e7eb", display: "flex", gap: 12, fontSize: 13, backgroundColor: "#f9fafb" }}>
+              <span onClick={selectAll} style={{ color: ZOMATO_BLUE, cursor: "pointer", fontWeight: 500 }}>Select All</span>
+              <span onClick={selectNone} style={{ color: "#6b7280", cursor: "pointer", fontWeight: 500 }}>Select None</span>
+            </div>
+          )}
+          <div style={{ overflowY: "auto", flex: 1, padding: "4px 0" }}>
+            {filteredOptions.length === 0 ? (
+              <div style={{ padding: "8px 12px", color: "#6b7280", fontSize: 13 }}>No results found</div>
+            ) : (
+              filteredOptions.map((opt, i) => (
+                <label key={opt.value || i} style={{ display: "flex", alignItems: "center", padding: "8px 12px", cursor: "pointer", gap: 8, fontSize: 13, color: "#374151" }}>
+                  <input 
+                    type="checkbox" 
+                    checked={selected.includes(opt.value)}
+                    onChange={() => toggle(opt.value)}
+                    style={{ cursor: "pointer", accentColor: ZOMATO_BLUE }}
+                  />
+                  <div>
+                    <div>{opt.label}</div>
+                    {opt.sublabel && <div style={{ fontSize: 11, color: "#6b7280" }}>{opt.sublabel}</div>}
+                  </div>
+                </label>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 export default function TimingPage() {
   const [activePlatform, setActivePlatform] = useState("zomato");
   const [loading, setLoading] = useState(false);
@@ -312,109 +415,6 @@ export default function TimingPage() {
       setTimeout(() => setToastMsg(""), 4000);
     }
     setLoading(false);
-  };
-
-  const ZOMATO_BLUE = "#2368ee";
-
-  // --- MultiSelect Component ---
-  const MultiSelect = ({ options, selected, onChange, placeholder, width, hasSearch, singleSelect }) => {
-    const [isOpen, setIsOpen] = useState(false);
-    const [search, setSearch] = useState("");
-
-    const filteredOptions = hasSearch && search 
-      ? options.filter(o => o.label.toLowerCase().includes(search.toLowerCase()) || (o.sublabel && o.sublabel.toLowerCase().includes(search.toLowerCase())))
-      : options;
-
-    const toggle = (val) => {
-      if (singleSelect) {
-        onChange([val]);
-        setIsOpen(false);
-      } else {
-        if (selected.includes(val)) {
-          onChange(selected.filter(v => v !== val));
-        } else {
-          onChange([...selected, val]);
-        }
-      }
-    };
-
-    const selectAll = () => onChange(filteredOptions.map(o => o.value));
-    const selectNone = () => onChange([]);
-
-    return (
-      <div style={{ position: "relative", width }}>
-        <div 
-          onClick={() => setIsOpen(!isOpen)}
-          style={{
-            padding: "10px 36px 10px 16px",
-            borderRadius: 8,
-            border: "1px solid #d1d5db",
-            backgroundColor: "#fff",
-            color: "#374151",
-            fontSize: 14,
-            fontWeight: 500,
-            cursor: "pointer",
-            display: "flex",
-            alignItems: "center",
-            minHeight: 20
-          }}
-        >
-          <div style={{ flex: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-            {selected.length === 0 ? placeholder : selected.length === 1 ? options.find(o => o.value === selected[0])?.label : `${selected.length} selected`}
-          </div>
-          <div style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", color: "#6b7280" }}>
-            {isOpen ? <ChevronUp /> : <ChevronDown />}
-          </div>
-        </div>
-        
-        {isOpen && (
-          <div style={{
-            position: "absolute", top: "100%", left: 0, right: 0, marginTop: 4,
-            backgroundColor: "#fff", border: "1px solid #d1d5db", borderRadius: 8,
-            boxShadow: "0 4px 6px -1px rgba(0, 0, 0, 0.1)", zIndex: 10,
-            maxHeight: 300, display: "flex", flexDirection: "column"
-          }}>
-            {hasSearch && (
-              <div style={{ padding: 8, borderBottom: "1px solid #e5e7eb" }}>
-                <input 
-                  type="text" 
-                  placeholder="Search..." 
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  style={{ width: "100%", padding: "6px 12px", border: "1px solid #d1d5db", borderRadius: 4, boxSizing: "border-box", fontSize: 13 }}
-                />
-              </div>
-            )}
-            {!singleSelect && (
-              <div style={{ padding: "8px 12px", borderBottom: "1px solid #e5e7eb", display: "flex", gap: 12, fontSize: 13, backgroundColor: "#f9fafb" }}>
-                <span onClick={selectAll} style={{ color: ZOMATO_BLUE, cursor: "pointer", fontWeight: 500 }}>Select All</span>
-                <span onClick={selectNone} style={{ color: "#6b7280", cursor: "pointer", fontWeight: 500 }}>Select None</span>
-              </div>
-            )}
-            <div style={{ overflowY: "auto", flex: 1, padding: "4px 0" }}>
-              {filteredOptions.length === 0 ? (
-                <div style={{ padding: "8px 12px", color: "#6b7280", fontSize: 13 }}>No results found</div>
-              ) : (
-                filteredOptions.map((opt, i) => (
-                  <label key={opt.value || i} style={{ display: "flex", alignItems: "center", padding: "8px 12px", cursor: "pointer", gap: 8, fontSize: 13, color: "#374151" }}>
-                    <input 
-                      type="checkbox" 
-                      checked={selected.includes(opt.value)}
-                      onChange={() => toggle(opt.value)}
-                      style={{ cursor: "pointer", accentColor: ZOMATO_BLUE }}
-                    />
-                    <div>
-                      <div>{opt.label}</div>
-                      {opt.sublabel && <div style={{ fontSize: 11, color: "#6b7280" }}>{opt.sublabel}</div>}
-                    </div>
-                  </label>
-                ))
-              )}
-            </div>
-          </div>
-        )}
-      </div>
-    );
   };
 
   return (
