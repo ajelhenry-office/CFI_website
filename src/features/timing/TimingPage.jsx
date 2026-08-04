@@ -363,6 +363,17 @@ export default function TimingPage() {
       const data = await res.json();
       if (data.success) {
         setToastMsg(`Successfully queued ${bulkSelectedStores.length} stores for bulk update.`);
+        setTimingCache(prev => {
+          const next = { ...prev };
+          bulkSelectedStores.forEach(sid => {
+            const base = next[sid] ? JSON.parse(JSON.stringify(next[sid])) : getDefaultTimings();
+            Object.keys(partialTimings).forEach(day => {
+              base[day] = JSON.parse(JSON.stringify(partialTimings[day]));
+            });
+            next[sid] = base;
+          });
+          return next;
+        });
         setTimeout(() => setToastMsg(""), 3000);
         setShowBulkModal(false);
         setBulkSelectedStores([]);
@@ -404,6 +415,13 @@ export default function TimingPage() {
       
       if (data.success) {
         setToastMsg(`Successfully queued store for update.`);
+        setTimingCache(prev => {
+          const next = { ...prev };
+          selectedStores.forEach(sid => {
+            next[sid] = JSON.parse(JSON.stringify(timings));
+          });
+          return next;
+        });
         setTimeout(() => setToastMsg(""), 3000);
         fetchLiveTasks();
       } else {
