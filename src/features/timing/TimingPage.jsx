@@ -286,7 +286,8 @@ export default function TimingPage() {
       const res = await fetch(`${API_BASE}/api/timing/queue-status`, {
         headers: getAuthHeaders()
       });
-      if (res.ok) {
+      const contentType = res.headers.get("content-type");
+      if (res.ok && contentType && contentType.includes("application/json")) {
         const data = await res.json();
         if (data.success) {
           setLiveTasks(data.tasks || []);
@@ -303,7 +304,13 @@ export default function TimingPage() {
     
     // Fetch cached timings on mount
     fetch(`${API_BASE}/api/timing/all-store-timings`, { headers: getAuthHeaders() })
-      .then(r => r.json())
+      .then(r => {
+        const contentType = r.headers.get("content-type");
+        if (r.ok && contentType && contentType.includes("application/json")) {
+          return r.json();
+        }
+        throw new Error("Invalid response");
+      })
       .then(d => {
         if (d.success) setTimingCache(d.cache || {});
       })
