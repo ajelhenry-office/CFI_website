@@ -486,7 +486,7 @@ export default function TimingPage() {
             const bName = parts.length >= 2 ? parts[1] : s.brand;
             return {
               value: s[currentIdField], 
-              label: `${locality} | Res ID: ${s[currentIdField]}`, 
+              label: `${locality} | ${s[currentIdField]}`, 
               sublabel: bName
             };
           })}
@@ -825,7 +825,7 @@ export default function TimingPage() {
             const bName = parts.length >= 2 ? parts[1] : s.brand;
             return {
               value: s[currentIdField], 
-              label: `${locality} | Res ID: ${s[currentIdField]}`, 
+              label: `${locality} | ${s[currentIdField]}`, 
               sublabel: bName
             };
           })}
