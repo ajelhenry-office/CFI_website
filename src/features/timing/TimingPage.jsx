@@ -486,8 +486,8 @@ export default function TimingPage() {
             const bName = parts.length >= 2 ? parts[1] : s.brand;
             return {
               value: s[currentIdField], 
-              label: bName, 
-              sublabel: `${locality} | Res ID: ${s[currentIdField]}`
+              label: `${locality} | Res ID: ${s[currentIdField]}`, 
+              sublabel: bName
             };
           })}
           selected={selectedStores}
@@ -825,8 +825,8 @@ export default function TimingPage() {
             const bName = parts.length >= 2 ? parts[1] : s.brand;
             return {
               value: s[currentIdField], 
-              label: bName, 
-              sublabel: `${locality} | Res ID: ${s[currentIdField]}`
+              label: `${locality} | Res ID: ${s[currentIdField]}`, 
+              sublabel: bName
             };
           })}
                   selected={bulkSelectedStores}

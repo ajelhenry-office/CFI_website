@@ -1,9 +1,9 @@
 """
-One-time local login → export cookies for Railway.
+One-time local login → export cookies for AWS.
 
   python login_export.py
 
-After Google login, prints ZOMATO_COOKIES_JSON to paste into Railway env vars.
+After Google login, prints ZOMATO_COOKIES_JSON to paste into AWS env vars.
 Also saves cookies.json for local runs.
 """
 
@@ -20,7 +20,7 @@ COOKIES_FILE = __import__("config").COOKIES_FILE
 def main():
     print("Opening browser for Zomato Google login…")
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=False)
+        browser = p.firefox.launch(headless=False)
         ctx = browser.new_context()
         page = ctx.new_page()
         page.goto(f"{ZOMATO_BASE}/partners/login")
@@ -42,7 +42,7 @@ def main():
     one_line = json.dumps(cookies, separators=(",", ":"))
 
     print(f"\nSaved → {COOKIES_FILE}\n")
-    print("Add this to Railway as variable ZOMATO_COOKIES_JSON:\n")
+    print("Add this to AWS as variable ZOMATO_COOKIES_JSON:\n")
     print(one_line[:120] + "…" if len(one_line) > 120 else one_line)
     print(f"\n(Full JSON length: {len(one_line)} chars — copy from {COOKIES_FILE} if needed)")
 

@@ -68,7 +68,7 @@ def update_store(session: requests.Session, csrf: str, store: dict) -> bool:
     resp = session.post(UPDATE_URL, json=payload, headers=api_headers(csrf), timeout=20)
 
     if resp.status_code == 401 or "login" in resp.url:
-        raise PermissionError("Session expired — refresh ZOMATO_COOKIES_JSON on Railway")
+        raise PermissionError("Session expired — refresh ZOMATO_COOKIES_JSON on AWS")
 
     try:
         body = resp.json()

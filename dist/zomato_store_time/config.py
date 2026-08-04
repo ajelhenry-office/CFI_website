@@ -11,7 +11,7 @@ SHEET_ID = os.getenv("SHEET_ID", "")
 VISIBLE_TAB = os.getenv("VISIBLE_TAB", "Visible_Sheet")
 HIDDEN_TAB = os.getenv("HIDDEN_TAB", "Hidden_Sheet")
 
-# local file path OR use GOOGLE_SERVICE_ACCOUNT_JSON on Railway
+# local file path OR use GOOGLE_SERVICE_ACCOUNT_JSON on AWS
 SERVICE_ACCOUNT_FILE = os.getenv("SERVICE_ACCOUNT_FILE", "")
 SERVICE_ACCOUNT_JSON = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON", "")
 

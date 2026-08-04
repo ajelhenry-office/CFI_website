@@ -16,9 +16,9 @@ Fully automatic updates of **Zomato Partner** outlet opening/closing times based
 2. Automation reads those rows (skip rows with empty opening or closing).
 3. Uses the **last 4 digits** of the Zomato ID to search/verify the correct outlet on the partner site.
 4. Updates timings on Zomato for **all days** with those hours.
-5. Runs **automatically on a schedule** (hourly) via **Railway**, using **Playwright** for the partner website flow.
+5. Runs **automatically on a schedule** (hourly) via **AWS**, using **Playwright** for the partner website flow.
 
-The user explicitly asked for Playwright + Railway (not only local cron). API-based updates were also built and proven working locally.
+The user explicitly asked for Playwright + AWS (not only local cron). API-based updates were also built and proven working locally.
 
 ---
 
@@ -61,19 +61,19 @@ The user explicitly asked for Playwright + Railway (not only local cron). API-ba
 - **2/2 stores updated successfully** via Zomato merchant API (May 19, 10:19 and 16:10).
 - Second run used saved cookies with **no re-login**.
 
-### Refactor for Railway + Playwright
+### Refactor for AWS + Playwright
 
 - Split into modules: `config.py`, `sheet.py`, `zomato_api.py`, `zomato_playwright.py`, `main.py`.
-- Added `login_export.py` (one-time login → export cookies for Railway).
-- Added `export_railway_vars.py` (prints `GOOGLE_SERVICE_ACCOUNT_JSON` and `ZOMATO_COOKIES_JSON` from local files).
-- Railway files: `Dockerfile`, `railway.toml` (hourly cron `0 * * * *`), `README.md`, `.env.example`.
+- Added `login_export.py` (one-time login → export cookies for AWS).
+- Added `export_aws_vars.py` (prints `GOOGLE_SERVICE_ACCOUNT_JSON` and `ZOMATO_COOKIES_JSON` from local files).
+- AWS files: `Dockerfile`, `aws.toml` (hourly cron `0 * * * *`), `README.md`, `.env.example`.
 - **Default update method set to `playwright`** per user request (`config.py`, `.env`, `Dockerfile`).
 
 ### Not confirmed done in chat
 
-- **Railway project actually deployed** with all env vars set (config files exist; user may still need to connect GitHub and paste secrets).
-- **Playwright UI path** run end-to-end on Railway (heavier, UI selectors may need tuning).
-- **HTTP backend endpoint** (user asked “yes connect it with railways” — cron deploy was done, not a separate FastAPI/health server).
+- **AWS project actually deployed** with all env vars set (config files exist; user may still need to connect GitHub and paste secrets).
+- **Playwright UI path** run end-to-end on AWS (heavier, UI selectors may need tuning).
+- **HTTP backend endpoint** (user asked “yes connect it with awss” — cron deploy was done, not a separate FastAPI/health server).
 
 ---
 
@@ -100,7 +100,7 @@ Google Sheet (RID_master)
 
 ### `UPDATE_METHOD=playwright` (default now)
 
-- Headless Chromium (Playwright Docker image on Railway).
+- Headless Chromium (Playwright Docker image on AWS).
 - Loads cookies from `ZOMATO_COOKIES_JSON` or `cookies.json`.
 - For each store:
   1. Go to partner dashboard.
@@ -121,14 +121,14 @@ Google Sheet (RID_master)
 | `sheet.py` | Google Sheets read + time parsing |
 | `zomato_api.py` | API updater |
 | `zomato_playwright.py` | Playwright UI updater (last4 search) |
-| `login_export.py` | One-time local login → `cookies.json` + hint for Railway |
-| `export_railway_vars.py` | Print Railway-ready env JSON from local files |
+| `login_export.py` | One-time local login → `cookies.json` + hint for AWS |
+| `export_aws_vars.py` | Print AWS-ready env JSON from local files |
 | `script.py` | **Legacy** monolithic API script (still works) |
 | `update_zomato_timings.py` | **Legacy** Playwright UI script (superseded by `zomato_playwright.py`) |
 | `cookies.json` | Zomato session (gitignored) — **exists, login done** |
 | `.env` | Local secrets (gitignored) |
 | `Dockerfile` | Playwright Python image, `UPDATE_METHOD=playwright` |
-| `railway.toml` | Dockerfile build, cron hourly, `python main.py` |
+| `aws.toml` | Dockerfile build, cron hourly, `python main.py` |
 | `requirements.txt` | gspread, google-auth, python-dotenv, requests, playwright |
 | `timings_update.log` | Run logs |
 | `README.md` | Deploy instructions |
@@ -147,7 +147,7 @@ UPDATE_METHOD=playwright
 HEADLESS=true
 ```
 
-### Railway (required)
+### AWS (required)
 
 | Variable | Description |
 |----------|-------------|
@@ -158,18 +158,18 @@ HEADLESS=true
 | `UPDATE_METHOD` | `playwright` (user choice) or `api` (more reliable on server) |
 | `HEADLESS` | `true` |
 
-Generate Railway values locally:
+Generate AWS values locally:
 
 ```bash
 cd /Users/ajelhenry/zomato_store_time
-python3 export_railway_vars.py
+python3 export_aws_vars.py
 ```
 
 Refresh cookies when session expires:
 
 ```bash
 python3 login_export.py
-# then update ZOMATO_COOKIES_JSON on Railway
+# then update ZOMATO_COOKIES_JSON on AWS
 ```
 
 ### Service account file (local only)
@@ -181,10 +181,10 @@ Scope: `https://www.googleapis.com/auth/spreadsheets.readonly`
 
 ## 7. Login / auth constraints (important)
 
-- **Google SSO cannot be automated** on Railway (no password/2FA access for the agent).
+- **Google SSO cannot be automated** on AWS (no password/2FA access for the agent).
 - **One-time manual login** on the user’s Mac saves `cookies.json`.
-- That JSON is copied to Railway as `ZOMATO_COOKIES_JSON`.
-- When cookies expire (401 / redirect to login), user must run `login_export.py` again and update Railway.
+- That JSON is copied to AWS as `ZOMATO_COOKIES_JSON`.
+- When cookies expire (401 / redirect to login), user must run `login_export.py` again and update AWS.
 - Agent **cannot** complete initial login without the user at the machine.
 
 ---
@@ -202,8 +202,8 @@ UPDATE_METHOD=api python3 main.py
 # One-time login export
 python3 login_export.py
 
-# Print Railway env blobs
-python3 export_railway_vars.py
+# Print AWS env blobs
+python3 export_aws_vars.py
 
 # Legacy (still works)
 python3 script.py
@@ -217,14 +217,14 @@ python3 script.py
 
 ---
 
-## 9. Railway deployment checklist (likely next steps)
+## 9. AWS deployment checklist (likely next steps)
 
 1. Push repo to GitHub (ensure `cookies.json` and `.env` are **not** committed — see `.gitignore`).
-2. Railway → New Project → Deploy from GitHub repo root `zomato_store_time`.
+2. AWS → New Project → Deploy from GitHub repo root `zomato_store_time`.
 3. Set all variables from section 6.
-4. Confirm cron service runs `python main.py` every hour (`railway.toml`).
+4. Confirm cron service runs `python main.py` every hour (`aws.toml`).
 5. Check deploy logs for `SUCCESS [ui]` or `SUCCESS [api]` lines.
-6. If Playwright fails on Railway (selectors, timeout), try `UPDATE_METHOD=api` — same sheet logic, proven API path.
+6. If Playwright fails on AWS (selectors, timeout), try `UPDATE_METHOD=api` — same sheet logic, proven API path.
 
 ### Dockerfile note
 
@@ -241,8 +241,8 @@ python3 script.py
 | Playwright UI fragility | Zomato DOM may change; `select_outlet_by_last4` and save button selectors are heuristic |
 | `Opening time ` column | Header has trailing space — must match exactly in code |
 | Cookie expiry | Sessions die periodically; refresh `ZOMATO_COOKIES_JSON` |
-| Railway Playwright | Heavier than API; may need more memory/time |
-| `export_railway_vars.py` | Was planned; file exists at project root |
+| AWS Playwright | Heavier than API; may need more memory/time |
+| `export_aws_vars.py` | Was planned; file exists at project root |
 | Prior chat limit | User hit Cursor limit mid-task; work resumed in follow-up chats |
 
 ---
@@ -252,10 +252,10 @@ python3 script.py
 1. User asked to continue after hitting chat limit — project had `script.py` + sheet integration.
 2. Playwright Chromium install was needed; user logged in manually; **2/2 API updates succeeded**.
 3. User asked if agent could login alone — **no**, only user for first SSO; then cookies automate runs.
-4. User wanted **fully automatic** with Playwright + Railway + last4 search on partner site.
-5. Backend modules + Railway config were added.
+4. User wanted **fully automatic** with Playwright + AWS + last4 search on partner site.
+5. Backend modules + AWS config were added.
 6. User asked to **connect backend to Playwright** — default `UPDATE_METHOD=playwright`.
-7. User asked to **connect to Railway** — `railway.toml`, `Dockerfile`, docs updated for Playwright default.
+7. User asked to **connect to AWS** — `aws.toml`, `Dockerfile`, docs updated for Playwright default.
 8. User requested **`chat_handover.md`** (this file).
 
 ---
@@ -264,13 +264,13 @@ python3 script.py
 
 Copy one of these:
 
-> Read `chat_handover.md` and deploy this project to Railway. Walk me through setting env vars using `export_railway_vars.py`.
+> Read `chat_handover.md` and deploy this project to AWS. Walk me through setting env vars using `export_aws_vars.py`.
 
 > Read `chat_handover.md`. Run `main.py` with Playwright locally and fix any UI selector failures on the timings page.
 
-> Read `chat_handover.md`. Switch Railway to `UPDATE_METHOD=api` if Playwright fails, and verify hourly cron logs.
+> Read `chat_handover.md`. Switch AWS to `UPDATE_METHOD=api` if Playwright fails, and verify hourly cron logs.
 
-> Read `chat_handover.md`. Add a small HTTP server (health + manual trigger) for Railway in addition to cron.
+> Read `chat_handover.md`. Add a small HTTP server (health + manual trigger) for AWS in addition to cron.
 
 ---
 
