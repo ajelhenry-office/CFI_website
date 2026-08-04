@@ -30,6 +30,27 @@ export default function TimingAuditModal({ onClose, selectedBrands = [] }) {
     setExpandedRows(prev => ({ ...prev, [batchId]: !prev[batchId] }));
   };
 
+  const formatTimings = (payloadStr) => {
+    if (!payloadStr) return "-";
+    try {
+      const timings = JSON.parse(payloadStr);
+      const days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+      const shortDays = ["mon", "tues", "wed", "thurs", "fri", "sat", "sun"];
+      let result = [];
+      days.forEach((day, idx) => {
+        const d = timings[day];
+        if (d && d.open && d.slots && d.slots.length > 0) {
+          result.push(`${shortDays[idx]}: ${d.slots.map(s => `${s.start}-${s.end}`).join(', ')}`);
+        } else if (d && !d.open) {
+          result.push(`${shortDays[idx]}: Closed`);
+        }
+      });
+      return result.join(" | ");
+    } catch (e) {
+      return "-";
+    }
+  };
+
   const handleRetry = async (batchId, details) => {
     const failedStores = details.filter(d => d.status === 'failed').map(d => d.store_id);
     if (failedStores.length === 0) return;
@@ -69,7 +90,7 @@ export default function TimingAuditModal({ onClose, selectedBrands = [] }) {
               <thead style={{ position: "sticky", top: 0, zIndex: 10 }}>
                 <tr style={{ backgroundColor: C.primary, color: "#fff" }}>
                   <th style={{ padding: "9px 14px", width: 40 }}></th>
-                  {["Action", "Affected Stores", "By", "Result", "Time"].map((h) => (
+                  {["Action", "Affected Stores", "Result", "Time"].map((h) => (
                     <th key={h} style={{ padding: "9px 14px", textAlign: "left", fontWeight: 700, whiteSpace: "nowrap" }}>{h}</th>
                   ))}
                   <th style={{ padding: "9px 14px", width: 80 }}></th>
@@ -90,9 +111,8 @@ export default function TimingAuditModal({ onClose, selectedBrands = [] }) {
                         <td style={{ padding: "7px 14px", cursor: "pointer" }} onClick={() => toggleExpand(l.batch_id)}>
                           <span style={{ fontSize: 16, color: C.muted, userSelect: "none" }}>{isExpanded ? "▾" : "▸"}</span>
                         </td>
-                        <td style={{ padding: "7px 14px", color: C.text, fontWeight: 700 }}>{isBulk ? "Bulk Update" : "Single Update"}</td>
+                        <td style={{ padding: "7px 14px", color: C.text, fontWeight: 700 }}>{isBulk ? "Bulk" : "Single Kitchen"}</td>
                         <td style={{ padding: "7px 14px", color: C.text }}>{storeSummary}</td>
-                        <td style={{ padding: "7px 14px", color: C.muted }}>{l.email}</td>
                         <td style={{ padding: "7px 14px" }}>
                            {l.failed_count > 0 ? (
                              <span style={{ color: "#b91c1c", fontWeight: 700 }}>{l.success_count} Success, {l.failed_count} Failed</span>
@@ -105,12 +125,17 @@ export default function TimingAuditModal({ onClose, selectedBrands = [] }) {
                         </td>
                         <td style={{ padding: "7px 14px" }}>
                           {l.failed_count > 0 && (
-                            <button 
-                              onClick={() => handleRetry(l.batch_id, details)}
-                              style={{ padding: "4px 8px", fontSize: 11, backgroundColor: "#fef2f2", color: "#b91c1c", border: "1px solid #fca5a5", borderRadius: 4, cursor: "pointer" }}
-                            >
-                              Retry Failed
-                            </button>
+                            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                              <button 
+                                onClick={() => handleRetry(l.batch_id, details)}
+                                style={{ padding: "4px 8px", fontSize: 11, backgroundColor: "#fef2f2", color: "#b91c1c", border: "1px solid #fca5a5", borderRadius: 4, cursor: "pointer" }}
+                              >
+                                Retry Failed
+                              </button>
+                              <div style={{ fontSize: 9, color: C.muted, maxWidth: 150, whiteSpace: "normal", lineHeight: 1.2 }}>
+                                {formatTimings(details[0]?.payload)}
+                              </div>
+                            </div>
                           )}
                         </td>
                       </tr>
@@ -122,8 +147,8 @@ export default function TimingAuditModal({ onClose, selectedBrands = [] }) {
                                   <thead>
                                     <tr style={{ color: C.muted, borderBottom: "1px solid #d1d5db" }}>
                                       <th style={{ padding: "4px 8px", textAlign: "left" }}>Store ID</th>
-                                      <th style={{ padding: "4px 8px", textAlign: "left" }}>Brand</th>
                                       <th style={{ padding: "4px 8px", textAlign: "left" }}>Status</th>
+                                      <th style={{ padding: "4px 8px", textAlign: "left" }}>Timings Applied</th>
                                       <th style={{ padding: "4px 8px", textAlign: "left" }}>Error Message</th>
                                     </tr>
                                   </thead>
@@ -131,10 +156,10 @@ export default function TimingAuditModal({ onClose, selectedBrands = [] }) {
                                     {details.map((d, j) => (
                                       <tr key={j}>
                                         <td style={{ padding: "6px 8px" }}>{d.store_id}</td>
-                                        <td style={{ padding: "6px 8px", color: C.muted }}>{d.brand}</td>
                                         <td style={{ padding: "6px 8px", fontWeight: 600, color: d.status === "success" ? "#15803d" : d.status === "failed" ? "#b91c1c" : "#92400e" }}>
                                           {d.status.toUpperCase()}
                                         </td>
+                                        <td style={{ padding: "6px 8px", color: C.muted }}>{formatTimings(d.payload)}</td>
                                         <td style={{ padding: "6px 8px", color: C.muted }}>{d.error_message || "-"}</td>
                                       </tr>
                                     ))}

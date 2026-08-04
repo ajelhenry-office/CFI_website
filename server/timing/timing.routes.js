@@ -146,7 +146,8 @@ router.get("/timing/audit-log", async (req, res) => {
                'store_id', store_id,
                'brand', brand,
                'status', status,
-               'error_message', error_message
+               'error_message', error_message,
+               'payload', payload
              )) as details
       FROM zomato_timing_queue
       WHERE batch_id IS NOT NULL
