@@ -1,13 +1,57 @@
 import sys
 import json
-import logging
-from playwright.sync_api import sync_playwright
+import requests
 
-from config import HEADLESS, ZOMATO_BASE, load_cookies_data, save_cookies_data
-from zomato_playwright import _pw_cookies_to_playwright, automated_google_login
+from config import ZOMATO_BASE, COOKIES_FILE, load_cookies_data
 
-# Setup basic logging to stdout
-logging.basicConfig(level=logging.INFO, format='%(message)s')
+DAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+
+def build_api_payload(store_id: str, timings: dict) -> dict:
+    # Build Zomato API format timings array
+    zomato_timings = []
+    
+    for day in DAYS:
+        # timings dict uses capitalized days (e.g. "Monday")
+        cap_day = day.capitalize()
+        config = timings.get(cap_day)
+        
+        if not config:
+            # If a day is missing from the payload, default to keeping it active
+            zomato_timings.append({
+                "day": day,
+                "active": True,
+                "isEdited": False,
+                "slots": []
+            })
+            continue
+            
+        is_open = config.get('open', True)
+        slots = config.get('slots', [])
+        
+        # Format slots for Zomato API
+        zomato_slots = []
+        for slot in slots:
+            # Zomato API expects {"start": "10:00", "end": "23:45"} format (24hr)
+            zomato_slots.append({
+                "start": slot["start"],
+                "end": slot["end"]
+            })
+            
+        zomato_timings.append({
+            "day": day,
+            "active": is_open,
+            "isEdited": True, # Required by Zomato to register the change
+            "slots": zomato_slots
+        })
+        
+    return {
+        "res_id": store_id,
+        "data": [{
+            "action": "update",
+            "service_type": "delivery",
+            "timings": zomato_timings
+        }]
+    }
 
 def process_timings(store_id, timings):
     cookies = load_cookies_data()
@@ -15,84 +59,67 @@ def process_timings(store_id, timings):
         print("SESSION_EXPIRED: No cookies found.")
         sys.exit(1)
         
-    with sync_playwright() as p:
-        browser = p.firefox.launch(headless=HEADLESS)
-        context = browser.new_context()
-        context.add_cookies(_pw_cookies_to_playwright(cookies))
-        page = context.new_page()
+    session = requests.Session()
+    session.headers.update({"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36"})
+    
+    for c in cookies:
+        session.cookies.set(c["name"], str(c["value"]), domain=c["domain"], path=c.get("path", "/"))
         
-        try:
-            page.goto(f"{ZOMATO_BASE}/partners/onlineordering")
-            page.wait_for_load_state("networkidle", timeout=15000)
-            
-            # Simple check if logged out
-            if "login" in page.url.lower():
-                print("Attempting automated login...")
-                automated_google_login(page)
-                # Re-check login
-                page.goto(f"{ZOMATO_BASE}/partners/onlineordering")
-                page.wait_for_load_state("networkidle", timeout=15000)
-                if "login" in page.url.lower():
-                    print("SESSION_EXPIRED: Automated login failed.")
-                    sys.exit(1)
-                
-            # Log success for the backend worker
-            print(f"Successfully verified session. Executing advanced timing update for store {store_id}...")
-            
-            # Navigate directly to the Store Timings page using the resId URL parameter
-            direct_timings_url = f"{ZOMATO_BASE}/partners/onlineordering/outletInfo/outletTimings?resId={store_id}"
-            print(f"Navigating directly to {direct_timings_url}")
-            page.goto(direct_timings_url)
-            page.wait_for_load_state("networkidle", timeout=15000)
-            page.wait_for_timeout(2000)
-
-            # Advanced DOM manipulation for `timings` JSON
-            for day, config in timings.items():
-                print(f"Setting {day} to open={config['open']}")
-                try:
-                    # Find the row for the specific day
-                    day_row = page.get_by_text(day, exact=True).locator("..")
-                    if day_row.count() > 0:
-                        # Edit timings if it's supposed to be open
-                        if config['open'] and len(config['slots']) > 0:
-                            # Parse first slot
-                            slot = config['slots'][0]
-                            start = slot['start'] # HH:MM
-                            end = slot['end']
-                            
-                            # Extremely robust click-and-fill fallback for Zomato's time pickers
-                            # Since we can't perfectly predict their select/input DOM, we try standard inputs
-                            inputs = day_row.locator("input[type='time']").all()
-                            if len(inputs) >= 2:
-                                inputs[0].fill(start)
-                                inputs[1].fill(end)
-                            else:
-                                selects = day_row.locator("select").all()
-                                if len(selects) >= 6:
-                                    sh, sm = start.split(":")
-                                    eh, em = end.split(":")
-                                    # Convert 24hr to 12hr AM/PM for selects
-                                    # (Basic implementation assuming standard format)
-                                    pass # (Handled by previous scripts if needed)
-                except Exception as ex:
-                    print(f"Warning: Could not set {day} precisely: {ex}")
-                    
-            # Click Save
-            try:
-                save_btn = page.get_by_role("button", name="Save").first
-                if save_btn.is_visible():
-                    save_btn.click()
-                    page.wait_for_timeout(2000)
-            except Exception:
-                pass
-                
-            print(f"Update applied for {store_id}.")
-            
-        except Exception as e:
-            print(f"Error: {e}")
+    print(f"Successfully verified session. Executing advanced timing update for store {store_id}...")
+    
+    # 1. Fetch fresh CSRF Token
+    csrf_url = f"{ZOMATO_BASE}/webroutes/auth/csrf"
+    try:
+        resp = session.get(csrf_url, headers={"Accept": "application/json"}, timeout=15)
+        resp.raise_for_status()
+        csrf_token = resp.json().get("csrf", "")
+        if not csrf_token:
+            print("FAILED: Empty CSRF token response.")
             sys.exit(1)
-        finally:
-            browser.close()
+    except Exception as e:
+        print(f"FAILED: Could not fetch CSRF token. The session might be expired. Error: {e}")
+        sys.exit(1)
+        
+    # 2. Build API Payload
+    payload = build_api_payload(store_id, timings)
+    update_url = f"{ZOMATO_BASE}/merchant-api/restaurant/update-timings"
+    
+    headers = {
+        "Content-Type": "application/json",
+        "x-zomato-csrft": csrf_token,
+        "x-client-id": "zomato_web_merchant",
+        "x-zomato-app-version": "2",
+        "Accept": "application/json",
+        "Referer": f"{ZOMATO_BASE}/partners/onlineordering/outletInfo/outletTimings?resId={store_id}",
+    }
+    
+    # 3. Post to API
+    try:
+        resp = session.post(update_url, json=payload, headers=headers, timeout=20)
+        
+        if resp.status_code == 401 or "login" in resp.url:
+            print("SESSION_EXPIRED: 401 Unauthorized or redirected to login.")
+            sys.exit(1)
+            
+        try:
+            body = resp.json()
+        except Exception:
+            print(f"FAILED: Non-JSON response from server: {resp.text[:300]}")
+            sys.exit(1)
+            
+        # Zomato returns empty data list when successful
+        success = (body.get("data") == [] or body.get("data") is None) and body.get("message", "") == ""
+        
+        if success:
+            print(f"Update applied for {store_id}.")
+        else:
+            print(f"FAILED: Zomato API rejected the update: {json.dumps(body)}")
+            sys.exit(1)
+            
+    except Exception as e:
+        print(f"FAILED: Exception during API call: {e}")
+        sys.exit(1)
+
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
@@ -100,11 +127,10 @@ if __name__ == "__main__":
         sys.exit(1)
         
     try:
-        payload = json.loads(sys.argv[1])
-        store_id = payload.get("store_id")
-        timings = payload.get("timings")
-        
-        process_timings(store_id, timings)
+        payload_data = json.loads(sys.argv[1])
+        s_id = payload_data.get("store_id")
+        t_data = payload_data.get("timings")
+        process_timings(s_id, t_data)
     except json.JSONDecodeError:
         print("Invalid JSON payload")
         sys.exit(1)
