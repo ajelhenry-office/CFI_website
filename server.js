@@ -1,6 +1,6 @@
 // ============================================================
 // KitchenPulse Backend — Node.js + Express
-// Deploy this on Railway.app (free tier)
+// Deploy this on AWS.app (free tier)
 // ============================================================
 
 import "dotenv/config";
