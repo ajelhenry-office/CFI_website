@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import { parseExcel } from './parseExcel.js';
-import { insertRows } from './supabaseClient.js';
+import { insertRows } from './postgresUploader.js';
 import { checkForNewReports } from './gmailWatcher.js';
 import fs from 'fs';
 

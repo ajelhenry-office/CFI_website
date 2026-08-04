@@ -2,7 +2,7 @@ import 'dotenv/config';
 import fs from 'fs';
 import path from 'path';
 import { parseExcel } from './parseExcel.js';
-import { insertRows } from './supabaseClient.js';
+import { insertRows } from './postgresUploader.js';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);

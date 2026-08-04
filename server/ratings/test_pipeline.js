@@ -2,7 +2,7 @@ require('dotenv').config();
 const path = require('path');
 const fs = require('fs');
 const { parseExcel } = require('./parseExcel');
-const { insertRows } = require('./supabaseClient');
+const { insertRows } = require('./postgresUploader');
 
 // START_DATE logic temporarily disabled for the initial historical data load.
 // In the future, you can uncomment this to limit how far back the script looks.

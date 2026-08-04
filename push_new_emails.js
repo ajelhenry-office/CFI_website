@@ -4,7 +4,7 @@ import path from 'path';
 import { google } from 'googleapis';
 import { fileURLToPath } from 'url';
 import { parseExcel } from './parseExcel.js';
-import { insertRows } from './supabaseClient.js';
+import { insertRows } from './postgresUploader.js';
 import { pool } from './server/ratings/db.js';
 
 const __filename = fileURLToPath(import.meta.url);

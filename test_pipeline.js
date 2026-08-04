@@ -2,7 +2,7 @@ import 'dotenv/config';
 import path from 'path';
 import fs from 'fs';
 import { parseExcel } from './parseExcel.js';
-import { insertRows } from './supabaseClient.js';
+import { insertRows } from './postgresUploader.js';
 
 // START_DATE logic temporarily disabled for the initial historical data load.
 // In the future, you can uncomment this to limit how far back the script looks.
