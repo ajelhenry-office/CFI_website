@@ -16,7 +16,7 @@ def process_timings(store_id, timings):
         sys.exit(1)
         
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=HEADLESS)
+        browser = p.firefox.launch(headless=HEADLESS)
         context = browser.new_context()
         context.add_cookies(_pw_cookies_to_playwright(cookies))
         page = context.new_page()
