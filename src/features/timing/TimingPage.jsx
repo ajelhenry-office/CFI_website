@@ -395,8 +395,8 @@ export default function TimingPage() {
               {filteredOptions.length === 0 ? (
                 <div style={{ padding: "8px 12px", color: "#6b7280", fontSize: 13 }}>No results found</div>
               ) : (
-                filteredOptions.map(opt => (
-                  <label key={opt.value} style={{ display: "flex", alignItems: "center", padding: "8px 12px", cursor: "pointer", gap: 8, fontSize: 13, color: "#374151" }}>
+                filteredOptions.map((opt, i) => (
+                  <label key={opt.value || i} style={{ display: "flex", alignItems: "center", padding: "8px 12px", cursor: "pointer", gap: 8, fontSize: 13, color: "#374151" }}>
                     <input 
                       type="checkbox" 
                       checked={selected.includes(opt.value)}
