@@ -36,6 +36,17 @@ export function SettingsPage() {
 
   const handleAddUser = async (e) => {
     e.preventDefault();
+    
+    if (!email.toLowerCase().endsWith('@curefoods.in')) {
+      alert("Only @curefoods.in email addresses are allowed.");
+      return;
+    }
+    
+    if (users.some(u => u.email.toLowerCase() === email.toLowerCase())) {
+      alert("A user with this email already exists in the system.");
+      return;
+    }
+
     setLoading(true);
     setError("");
     try {
