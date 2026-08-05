@@ -13,7 +13,6 @@ import { API_BASE, getAuthHeaders } from "../../api";
 export function SettingsPage() {
   const [users, setUsers] = useState([]);
   const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
   const [roles, setRoles] = useState(["dark_kitchen"]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -43,12 +42,12 @@ export function SettingsPage() {
       const res = await fetch(`${API_BASE}/api/auth/users`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...getAuthHeaders() },
-        body: JSON.stringify({ email, password, role: roles.join(",") })
+        body: JSON.stringify({ email, role: roles.join(",") })
       });
       const data = await res.json();
       if (data.success) {
         setEmail("");
-        setPassword("");
+        alert("Employee added successfully! A password has been auto-generated and emailed to them.");
         fetchUsers();
       } else {
         setError(data.error);
@@ -182,14 +181,6 @@ export function SettingsPage() {
               placeholder="Employee Email" 
               value={email}
               onChange={e => setEmail(e.target.value)}
-              required
-              style={{ flex: 1, padding: "10px 14px", borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 13, outline: "none", fontFamily: FONT }}
-            />
-            <input 
-              type="password" 
-              placeholder="Temporary password" 
-              value={password}
-              onChange={e => setPassword(e.target.value)}
               required
               style={{ flex: 1, padding: "10px 14px", borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 13, outline: "none", fontFamily: FONT }}
             />

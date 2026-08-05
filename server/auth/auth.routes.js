@@ -133,17 +133,19 @@ router.get('/users', authMiddleware, adminMiddleware, async (req, res) => {
 
 // 3. Add new user (Admin only)
 router.post('/users', authMiddleware, adminMiddleware, async (req, res) => {
-  const { email, password, role = 'user' } = req.body;
-  if (!email || !password) {
-    return res.status(400).json({ success: false, error: 'Email and password required' });
+  const { email, role = 'user' } = req.body;
+  if (!email) {
+    return res.status(400).json({ success: false, error: 'Email is required' });
   }
   
   if (!email.toLowerCase().endsWith('@curefoods.in')) {
     return res.status(400).json({ success: false, error: 'Only @curefoods.in email addresses are allowed' });
   }
 
+  const generatedPassword = Math.random().toString(36).slice(-8);
+
   try {
-    const hashedPassword = await bcrypt.hash(password, 10);
+    const hashedPassword = await bcrypt.hash(generatedPassword, 10);
     const { rows } = await pool.query(
       'INSERT INTO authorized_users (email, password_hash, role) VALUES ($1, $2, $3) RETURNING id, email, role, created_at',
       [email, hashedPassword, role]
@@ -151,7 +153,7 @@ router.post('/users', authMiddleware, adminMiddleware, async (req, res) => {
     
     // Email the new user their credentials
     const subject = "Welcome to Curefoods Operations Dashboard";
-    const body = `Hello,\n\nAn admin has created a new account for you on the Curefoods Operations Dashboard.\n\nUsername: ${email}\nPassword: ${password}\n\nPlease keep these credentials safe.`;
+    const body = `Hello,\n\nAn admin has created a new account for you on the Curefoods Operations Dashboard.\n\nUsername: ${email}\nPassword: ${generatedPassword}\n\nIf you wish to change your password, you can use the "Forgot Password" option on the login screen at any time.\n\nPlease keep these credentials safe.`;
     await sendEmail(email, subject, body);
 
     res.json({ success: true, user: rows[0] });
