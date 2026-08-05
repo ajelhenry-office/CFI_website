@@ -47,6 +47,7 @@ export default function App() {
     
     const path = window.location.pathname.replace("/", "");
     if (path === "CFI-operations-dashboard") return "ops_matrix";
+    if (path === "h") return "toggle"; // map /h to the toggle tab
     if (path && NAV_ITEMS.some(n => n.key === path)) return path;
     
     return initialTab;
@@ -101,7 +102,7 @@ export default function App() {
           } else {
             setActiveTab(tab);
             localStorage.setItem("activeTab", tab);
-            window.history.pushState({}, "", `/${tab === "ops_matrix" ? "CFI-operations-dashboard" : tab}`);
+            window.history.pushState({}, "", `/${tab === "ops_matrix" ? "CFI-operations-dashboard" : tab === "toggle" ? "h" : tab}`);
           }
         }}
         collapsed={collapsed}
