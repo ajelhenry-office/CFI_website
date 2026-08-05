@@ -47,8 +47,21 @@ export const ROLE_PERMISSIONS = {
   control_tower: ["toggle"],
 };
 
+export function getAllowedTabs(rolesStr) {
+  if (!rolesStr) return ["ratings"];
+  const roles = rolesStr.split(",");
+  const allowed = new Set();
+  for (const role of roles) {
+    const perms = ROLE_PERMISSIONS[role.trim()];
+    if (perms) {
+      perms.forEach(p => allowed.add(p));
+    }
+  }
+  return Array.from(allowed).length > 0 ? Array.from(allowed) : ["ratings"];
+}
+
 export default function Sidebar({ active, onNavigate, collapsed, onToggleCollapse, role }) {
-  const allowedTabs = ROLE_PERMISSIONS[role] || ["ratings"]; // default fallback
+  const allowedTabs = getAllowedTabs(role);
   const visibleNavItems = NAV_ITEMS.filter(item => allowedTabs.includes(item.key));
   return (
     <aside

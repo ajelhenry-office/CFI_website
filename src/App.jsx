@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import Sidebar, { NAV_ITEMS, ROLE_PERMISSIONS } from "./Sidebar";
+import Sidebar, { NAV_ITEMS, getAllowedTabs } from "./Sidebar";
 import GlobalFilters from "./GlobalFilters";
 import { C, FONT } from "./theme";
 import TogglePage from "./features/toggle/TogglePage";
@@ -41,7 +41,7 @@ export default function App() {
     let initialTab = "toggle";
     if (savedUser) {
       const parsed = JSON.parse(savedUser);
-      const allowed = ROLE_PERMISSIONS[parsed.role] || ["ratings"];
+      const allowed = getAllowedTabs(parsed.role);
       initialTab = allowed[0];
     }
     
@@ -60,7 +60,7 @@ export default function App() {
     if (!user) return;
     
     // Ensure activeTab is valid for the logged-in user's role
-    const allowed = ROLE_PERMISSIONS[user.role] || ["ratings"];
+    const allowed = getAllowedTabs(user.role);
     if (!allowed.includes(activeTab)) {
       setActiveTab(allowed[0]);
     }

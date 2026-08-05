@@ -14,13 +14,13 @@ export function SettingsPage() {
   const [users, setUsers] = useState([]);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [role, setRole] = useState("dark_kitchen");
+  const [roles, setRoles] = useState(["dark_kitchen"]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [activeTab, setActiveTab] = useState("general");
   
   const currentUser = JSON.parse(localStorage.getItem("user") || "{}");
-  const isAdmin = currentUser.email === "ajel.henry@curefoods.in" || currentUser.role === "admin";
+  const isAdmin = currentUser.email === "ajel.henry@curefoods.in" || (currentUser.role || "").split(',').includes("admin");
 
   const fetchUsers = async () => {
     if (!isAdmin) return;
@@ -43,7 +43,7 @@ export function SettingsPage() {
       const res = await fetch(`${API_BASE}/api/auth/users`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...getAuthHeaders() },
-        body: JSON.stringify({ email, password, role })
+        body: JSON.stringify({ email, password, role: roles.join(",") })
       });
       const data = await res.json();
       if (data.success) {
@@ -157,7 +157,7 @@ export function SettingsPage() {
             <div style={{ fontSize: 14, fontWeight: 800, color: C.primary, marginBottom: 8 }}>User Profile</div>
             {row("Name", currentUser.email ? formatName(currentUser.email) : "Curefoods Admin")}
             {row("Email", currentUser.email || "Unknown")}
-            {row("Role", currentUser.role === "admin" ? "Administrator" : "Operations Manager")}
+            {row("Roles", (currentUser.role || "").split(',').map(r => r === "admin" ? "Admin" : r.replace('_', ' ')).join(', '))}
           </div>
           
           <div style={cardStyle}>
@@ -193,16 +193,23 @@ export function SettingsPage() {
               required
               style={{ flex: 1, padding: "10px 14px", borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 13, outline: "none", fontFamily: FONT }}
             />
-            <select 
-              value={role}
-              onChange={e => setRole(e.target.value)}
-              style={{ padding: "10px 14px", borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 13, outline: "none", fontFamily: FONT, backgroundColor: "#fff" }}
-            >
-              <option value="dark_kitchen">Dark Kitchen</option>
-              <option value="supervisor">Supervisor</option>
-              <option value="control_tower">Control Tower</option>
-              <option value="admin">Admin</option>
-            </select>
+            <div style={{ flex: 1, position: "relative" }}>
+              <select 
+                multiple
+                value={roles}
+                onChange={e => {
+                  const options = Array.from(e.target.options);
+                  setRoles(options.filter(o => o.selected).map(o => o.value));
+                }}
+                style={{ width: "100%", padding: "10px 14px", borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 13, outline: "none", fontFamily: FONT, backgroundColor: "#fff", height: 75 }}
+              >
+                <option value="dark_kitchen">Dark Kitchen</option>
+                <option value="supervisor">Supervisor</option>
+                <option value="control_tower">Control Tower</option>
+                <option value="admin">Admin</option>
+              </select>
+              <div style={{ fontSize: 10, color: C.muted, marginTop: 4 }}>Hold Cmd/Ctrl to select multiple</div>
+            </div>
             <button 
               type="submit" 
               disabled={loading}
@@ -233,14 +240,23 @@ export function SettingsPage() {
                   <td style={{ padding: "16px 8px", fontSize: 13, color: C.muted }}>{u.email}</td>
                   <td style={{ padding: "16px 8px" }}>
                     {u.email === currentUser.email ? (
-                      <span style={{ fontSize: 11, fontWeight: 700, color: "#0284c7", backgroundColor: "#e0f2fe", padding: "4px 8px", borderRadius: 4, textTransform: "capitalize" }}>
-                        {u.role === 'admin' ? 'Business Admin' : u.role.replace('_', ' ')}
-                      </span>
+                      <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                        {(u.role || "").split(',').map(r => (
+                          <span key={r} style={{ fontSize: 11, fontWeight: 700, color: "#0284c7", backgroundColor: "#e0f2fe", padding: "4px 8px", borderRadius: 4, textTransform: "capitalize" }}>
+                            {r === 'admin' ? 'Business Admin' : r.replace('_', ' ')}
+                          </span>
+                        ))}
+                      </div>
                     ) : (
                       <select 
-                        value={u.role}
-                        onChange={(e) => handleUpdateRole(u.id, e.target.value)}
-                        style={{ fontSize: 11, fontWeight: 700, color: "#0284c7", backgroundColor: "#e0f2fe", padding: "4px 8px", borderRadius: 4, outline: "none", border: "none", fontFamily: FONT, cursor: "pointer", textTransform: "capitalize" }}
+                        multiple
+                        value={u.role ? u.role.split(',') : []}
+                        onChange={(e) => {
+                          const options = Array.from(e.target.options);
+                          const newRoles = options.filter(o => o.selected).map(o => o.value).join(',');
+                          handleUpdateRole(u.id, newRoles);
+                        }}
+                        style={{ fontSize: 11, fontWeight: 700, color: "#0284c7", backgroundColor: "#e0f2fe", padding: "4px 8px", borderRadius: 4, outline: "none", border: "none", fontFamily: FONT, cursor: "pointer", textTransform: "capitalize", height: 75 }}
                       >
                         <option value="dark_kitchen">Dark Kitchen</option>
                         <option value="supervisor">Supervisor</option>

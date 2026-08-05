@@ -37,7 +37,7 @@ export const authMiddleware = async (req, res, next) => {
 
 // Middleware for admin routes
 export const adminMiddleware = (req, res, next) => {
-  if (req.user?.role !== 'admin') {
+  if (!req.user?.role || !req.user.role.split(',').includes('admin')) {
     return res.status(403).json({ success: false, error: 'Forbidden: Admin access required' });
   }
   next();
