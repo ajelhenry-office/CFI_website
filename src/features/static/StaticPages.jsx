@@ -10,7 +10,7 @@ const row = (label, value) => (
 import { useState, useEffect } from "react";
 import { API_BASE, getAuthHeaders } from "../../api";
 
-import { Search, Grid, List, Edit2, Key, MoreVertical, X, Mail, User } from "lucide-react";
+import { Search, Grid, List, Edit2, Key, MoreVertical, X, Mail, User, Trash2, Lock, Unlock, UserCog } from "lucide-react";
 
 const ROLE_STYLES = {
   admin: { label: "Business Admin", color: "#2563eb", bg: "#dbeafe", border: "#bfdbfe" },
@@ -229,15 +229,6 @@ export function SettingsPage() {
                 <option value="All Roles">All Roles</option>
                 {Object.keys(ROLE_STYLES).map(k => <option key={k} value={k}>{ROLE_STYLES[k].label}</option>)}
               </select>
-              <select 
-                value={statusFilter} 
-                onChange={e => setStatusFilter(e.target.value)}
-                style={{ padding: "10px 14px", borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 13, outline: "none", fontFamily: FONT, backgroundColor: "#fff", color: C.text }}
-              >
-                <option value="All Status">All Status</option>
-                <option value="Active">Active</option>
-                <option value="Locked">Locked</option>
-              </select>
             </div>
             
             <div style={{ display: "flex", gap: 8 }}>
@@ -294,13 +285,24 @@ export function SettingsPage() {
                   </div>
 
                   {/* Status */}
-                  <div style={{ width: 100, display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 600, color: u.is_locked ? "#ef4444" : "#16a34a" }}>
-                    <div style={{ width: 6, height: 6, borderRadius: "50%", backgroundColor: u.is_locked ? "#ef4444" : "#16a34a" }} />
-                    {u.is_locked ? "Locked" : "Active"}
+                  <div style={{ width: 100, display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 600, color: "#ef4444" }}>
+                    {u.is_locked && "Locked"}
                   </div>
 
                   {/* Actions */}
                   <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                    {u.email !== currentUser.email && (
+                      <button 
+                        onClick={() => {
+                          const newRoles = prompt("Enter new roles (e.g. dark_kitchen, supervisor, control_tower, admin, ratings_team, operations):", u.role);
+                          if (newRoles !== null) handleUpdateRole(u.id, newRoles);
+                        }}
+                        title="Update Role"
+                        style={{ background: "#fff", border: `1px solid ${C.border}`, padding: 8, borderRadius: 8, cursor: "pointer", color: C.muted }}
+                      >
+                        <UserCog size={14} />
+                      </button>
+                    )}
                     <button 
                       onClick={() => handleResetPassword(u.id, u.email)}
                       title="Reset Password"
@@ -314,26 +316,22 @@ export function SettingsPage() {
                         title={u.is_locked ? "Unlock User" : "Lock User"}
                         style={{ background: "#fff", border: `1px solid ${C.border}`, padding: 8, borderRadius: 8, cursor: "pointer", color: u.is_locked ? "#ef4444" : C.muted }}
                       >
-                        <Edit2 size={14} />
+                        {u.is_locked ? <Unlock size={14} /> : <Lock size={14} />}
                       </button>
                     )}
                     {u.email !== currentUser.email && (
                       <button 
                         onClick={() => handleDeleteUser(u.id, u.email)}
                         title="Delete Employee"
-                        style={{ background: "#fff", border: `1px solid ${C.border}`, padding: 8, borderRadius: 8, cursor: "pointer", color: C.muted }}
+                        style={{ background: "#fff", border: `1px solid ${C.border}`, padding: 8, borderRadius: 8, cursor: "pointer", color: "#ef4444" }}
                       >
-                        <MoreVertical size={14} />
+                        <Trash2 size={14} />
                       </button>
                     )}
                   </div>
                 </div>
               );
             })}
-          </div>
-
-          <div style={{ fontSize: 12, color: C.muted, marginTop: 16 }}>
-            Showing 1 to {filteredUsers.length} of {filteredUsers.length} employees
           </div>
         </div>
       )}
