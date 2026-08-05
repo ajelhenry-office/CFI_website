@@ -137,6 +137,10 @@ router.post('/users', authMiddleware, adminMiddleware, async (req, res) => {
   if (!email || !password) {
     return res.status(400).json({ success: false, error: 'Email and password required' });
   }
+  
+  if (!email.toLowerCase().endsWith('@curefoods.in')) {
+    return res.status(400).json({ success: false, error: 'Only @curefoods.in email addresses are allowed' });
+  }
 
   try {
     const hashedPassword = await bcrypt.hash(password, 10);
@@ -226,6 +230,29 @@ router.patch('/users/:id/lock', authMiddleware, adminMiddleware, async (req, res
     res.json({ success: true, message: is_locked ? 'User locked successfully' : 'User unlocked successfully' });
   } catch (err) {
     console.error('Lock user error:', err);
+    res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+});
+
+// 6. Update Role (Admin only)
+router.patch('/users/:id/role', authMiddleware, adminMiddleware, async (req, res) => {
+  const { id } = req.params;
+  const { role } = req.body;
+  
+  if (!role) return res.status(400).json({ success: false, error: 'Role is required' });
+
+  if (parseInt(id) === req.user.id) {
+    return res.status(400).json({ success: false, error: 'Cannot change your own role' });
+  }
+
+  try {
+    const { rowCount } = await pool.query('UPDATE authorized_users SET role = $1 WHERE id = $2', [role, id]);
+    if (rowCount === 0) {
+      return res.status(404).json({ success: false, error: 'User not found' });
+    }
+    res.json({ success: true, message: 'User role updated successfully' });
+  } catch (err) {
+    console.error('Update role error:', err);
     res.status(500).json({ success: false, error: 'Internal server error' });
   }
 });

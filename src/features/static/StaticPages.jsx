@@ -93,6 +93,37 @@ export function SettingsPage() {
     }
   };
 
+  const handleUpdateRole = async (id, newRole) => {
+    if (!confirm(`Are you sure you want to change this user's role?`)) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/auth/users/${id}/role`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({ role: newRole })
+      });
+      const data = await res.json();
+      if (data.success) fetchUsers();
+      else alert(data.error);
+    } catch (err) {
+      alert("Failed to update role");
+    }
+  };
+
+  const handleDeleteUser = async (id, email) => {
+    if (!confirm(`Are you absolutely sure you want to delete ${email}? This cannot be undone.`)) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/auth/users/${id}`, {
+        method: "DELETE",
+        headers: getAuthHeaders()
+      });
+      const data = await res.json();
+      if (data.success) fetchUsers();
+      else alert(data.error);
+    } catch (err) {
+      alert("Failed to delete user");
+    }
+  };
+
   const formatName = (email) => {
     const parts = email.split('@')[0].split('.');
     return parts.map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(' ');
@@ -201,9 +232,22 @@ export function SettingsPage() {
                   <td style={{ padding: "16px 8px", fontSize: 13, color: C.text, fontWeight: 700 }}>{formatName(u.email)}</td>
                   <td style={{ padding: "16px 8px", fontSize: 13, color: C.muted }}>{u.email}</td>
                   <td style={{ padding: "16px 8px" }}>
-                    <span style={{ fontSize: 11, fontWeight: 700, color: "#0284c7", backgroundColor: "#e0f2fe", padding: "4px 8px", borderRadius: 4, textTransform: "capitalize" }}>
-                      {u.role === 'admin' ? 'Business Admin' : u.role.replace('_', ' ')}
-                    </span>
+                    {u.email === currentUser.email ? (
+                      <span style={{ fontSize: 11, fontWeight: 700, color: "#0284c7", backgroundColor: "#e0f2fe", padding: "4px 8px", borderRadius: 4, textTransform: "capitalize" }}>
+                        {u.role === 'admin' ? 'Business Admin' : u.role.replace('_', ' ')}
+                      </span>
+                    ) : (
+                      <select 
+                        value={u.role}
+                        onChange={(e) => handleUpdateRole(u.id, e.target.value)}
+                        style={{ fontSize: 11, fontWeight: 700, color: "#0284c7", backgroundColor: "#e0f2fe", padding: "4px 8px", borderRadius: 4, outline: "none", border: "none", fontFamily: FONT, cursor: "pointer", textTransform: "capitalize" }}
+                      >
+                        <option value="dark_kitchen">Dark Kitchen</option>
+                        <option value="supervisor">Supervisor</option>
+                        <option value="control_tower">Control Tower</option>
+                        <option value="admin">Admin</option>
+                      </select>
+                    )}
                   </td>
                   <td style={{ padding: "16px 8px" }}>
                     <button 
@@ -215,28 +259,40 @@ export function SettingsPage() {
                     </button>
                   </td>
                   <td style={{ padding: "16px 8px", textAlign: "right" }}>
-                    <div 
-                      onClick={() => u.email !== currentUser.email && handleToggleLock(u.id, u.is_locked)}
-                      style={{ 
-                        display: "inline-block", 
-                        width: 36, height: 20, 
-                        borderRadius: 20, 
-                        backgroundColor: u.is_locked ? "#ef4444" : "#e5e7eb",
-                        position: "relative",
-                        cursor: u.email === currentUser.email ? "not-allowed" : "pointer",
-                        transition: "background-color 0.3s",
-                        opacity: u.email === currentUser.email ? 0.5 : 1
-                      }}
-                    >
-                      <div style={{
-                        width: 16, height: 16, 
-                        borderRadius: "50%", 
-                        backgroundColor: "#fff",
-                        position: "absolute", top: 2, 
-                        left: u.is_locked ? 18 : 2,
-                        transition: "left 0.3s",
-                        boxShadow: "0 1px 3px rgba(0,0,0,0.2)"
-                      }} />
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 12 }}>
+                      <div 
+                        onClick={() => u.email !== currentUser.email && handleToggleLock(u.id, u.is_locked)}
+                        style={{ 
+                          display: "inline-block", 
+                          width: 36, height: 20, 
+                          borderRadius: 20, 
+                          backgroundColor: u.is_locked ? "#ef4444" : "#e5e7eb",
+                          position: "relative",
+                          cursor: u.email === currentUser.email ? "not-allowed" : "pointer",
+                          transition: "background-color 0.3s",
+                          opacity: u.email === currentUser.email ? 0.5 : 1
+                        }}
+                      >
+                        <div style={{
+                          width: 16, height: 16, 
+                          borderRadius: "50%", 
+                          backgroundColor: "#fff",
+                          position: "absolute", top: 2, 
+                          left: u.is_locked ? 18 : 2,
+                          transition: "left 0.3s",
+                          boxShadow: "0 1px 3px rgba(0,0,0,0.2)"
+                        }} />
+                      </div>
+                      
+                      {u.email !== currentUser.email && (
+                        <button 
+                          onClick={() => handleDeleteUser(u.id, u.email)}
+                          style={{ background: "none", border: "none", cursor: "pointer", color: "#ef4444", padding: 4, display: "flex" }}
+                          title="Delete Employee"
+                        >
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>
