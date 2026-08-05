@@ -46,6 +46,11 @@ export function SettingsPage() {
   const [fullName, setFullName] = useState("");
   const [roles, setRoles] = useState([]);
 
+  // Edit Role Modal State
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editingUser, setEditingUser] = useState(null);
+  const [editingRoles, setEditingRoles] = useState([]);
+
   // Filter State
   const [search, setSearch] = useState("");
   const [roleFilter, setRoleFilter] = useState("All Roles");
@@ -103,19 +108,23 @@ export function SettingsPage() {
     }
   };
 
-  const handleToggleLock = async (id, currentLockedStatus) => {
-    if (!confirm(`Are you sure you want to ${currentLockedStatus ? "unlock" : "lock"} this user?`)) return;
+  const handleUpdateRole = async (e) => {
+    e.preventDefault();
     try {
-      const res = await fetch(`${API_BASE}/api/auth/users/${id}/lock`, { 
+      const res = await fetch(`${API_BASE}/api/auth/users/${editingUser.id}/role`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json", ...getAuthHeaders() },
-        body: JSON.stringify({ is_locked: !currentLockedStatus })
+        body: JSON.stringify({ role: editingRoles.join(",") })
       });
       const data = await res.json();
-      if (data.success) fetchUsers();
-      else alert(data.error);
+      if (data.success) {
+        setShowEditModal(false);
+        setEditingUser(null);
+        setEditingRoles([]);
+        fetchUsers();
+      } else alert(data.error);
     } catch (err) {
-      alert("Failed to toggle lock status");
+      alert("Failed to update role");
     }
   };
 
@@ -250,8 +259,6 @@ export function SettingsPage() {
               const initials = getInitials(name);
               const avatar = getAvatarColor(initials);
               const userRoles = (u.role || "").split(',').filter(r => r);
-              const displayRoles = userRoles.slice(0, 2);
-              const hiddenCount = userRoles.length - 2;
 
               return (
                 <div key={u.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 8px", borderBottom: `1px solid ${C.borderSoft}` }}>
@@ -269,7 +276,7 @@ export function SettingsPage() {
 
                   {/* Roles */}
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap", flex: 1 }}>
-                    {displayRoles.map(r => {
+                    {userRoles.map(r => {
                       const style = ROLE_STYLES[r] || { label: r, color: "#475569", bg: "#f1f5f9", border: "#e2e8f0" };
                       return (
                         <div key={r} style={{ padding: "4px 10px", borderRadius: 6, backgroundColor: style.bg, color: style.color, border: `1px solid ${style.border}`, fontSize: 11, fontWeight: 700 }}>
@@ -277,11 +284,6 @@ export function SettingsPage() {
                         </div>
                       );
                     })}
-                    {hiddenCount > 0 && (
-                      <div style={{ padding: "4px 10px", borderRadius: 6, backgroundColor: "#f1f5f9", color: "#64748b", border: `1px solid #e2e8f0`, fontSize: 11, fontWeight: 700 }}>
-                        +{hiddenCount}
-                      </div>
-                    )}
                   </div>
 
                   {/* Status */}
@@ -294,8 +296,9 @@ export function SettingsPage() {
                     {u.email !== currentUser.email && (
                       <button 
                         onClick={() => {
-                          const newRoles = prompt("Enter new roles (e.g. dark_kitchen, supervisor, control_tower, admin, ratings_team, operations):", u.role);
-                          if (newRoles !== null) handleUpdateRole(u.id, newRoles);
+                          setEditingUser(u);
+                          setEditingRoles((u.role || "").split(",").filter(r => r));
+                          setShowEditModal(true);
                         }}
                         title="Update Role"
                         style={{ background: "#fff", border: `1px solid ${C.border}`, padding: 8, borderRadius: 8, cursor: "pointer", color: C.muted }}
@@ -426,6 +429,73 @@ export function SettingsPage() {
                   style={{ padding: "10px 24px", borderRadius: 8, backgroundColor: "#2563eb", color: "#fff", border: "none", fontWeight: 700, fontSize: 13, cursor: (loading || roles.length === 0) ? "not-allowed" : "pointer", fontFamily: FONT, opacity: (loading || roles.length === 0) ? 0.6 : 1 }}
                 >
                   {loading ? "Adding..." : "Add Employee"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Role Modal */}
+      {showEditModal && editingUser && (
+        <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }}>
+          <div style={{ backgroundColor: "#fff", borderRadius: 16, width: 600, padding: 32, boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
+              <div style={{ fontSize: 20, fontWeight: 800, color: C.text }}>Update Roles for {formatName(editingUser.email)}</div>
+              <button onClick={() => setShowEditModal(false)} style={{ background: "none", border: "none", cursor: "pointer", color: C.muted }}><X size={20} /></button>
+            </div>
+
+            <form onSubmit={handleUpdateRole}>
+              <label style={{ display: "block", fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 12 }}>Assign Roles</label>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 32 }}>
+                {Object.keys(ROLE_STYLES).map(roleKey => {
+                  const style = ROLE_STYLES[roleKey];
+                  const isSelected = editingRoles.includes(roleKey);
+                  return (
+                    <div 
+                      key={roleKey}
+                      onClick={() => {
+                        if (isSelected) setEditingRoles(editingRoles.filter(r => r !== roleKey));
+                        else setEditingRoles([...editingRoles, roleKey]);
+                      }}
+                      style={{ 
+                        padding: "12px 16px", 
+                        borderRadius: 8, 
+                        border: `1.5px solid ${isSelected ? style.color : C.borderSoft}`, 
+                        backgroundColor: isSelected ? style.bg : "#fff",
+                        display: "flex", alignItems: "center", gap: 12, 
+                        cursor: "pointer", transition: "all 0.2s" 
+                      }}
+                    >
+                      <div style={{ 
+                        width: 16, height: 16, 
+                        borderRadius: 4, 
+                        backgroundColor: isSelected ? style.color : "#fff",
+                        border: `1px solid ${isSelected ? style.color : C.border}`,
+                        display: "flex", alignItems: "center", justifyContent: "center"
+                      }}>
+                        {isSelected && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>}
+                      </div>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: isSelected ? style.color : C.text }}>{style.label}</span>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 12 }}>
+                <button 
+                  type="button" 
+                  onClick={() => setShowEditModal(false)}
+                  style={{ padding: "10px 24px", borderRadius: 8, backgroundColor: "#fff", color: C.text, border: `1px solid ${C.border}`, fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: FONT }}
+                >
+                  Cancel
+                </button>
+                <button 
+                  type="submit" 
+                  disabled={editingRoles.length === 0}
+                  style={{ padding: "10px 24px", borderRadius: 8, backgroundColor: "#2563eb", color: "#fff", border: "none", fontWeight: 700, fontSize: 13, cursor: editingRoles.length === 0 ? "not-allowed" : "pointer", fontFamily: FONT, opacity: editingRoles.length === 0 ? 0.6 : 1 }}
+                >
+                  Save Roles
                 </button>
               </div>
             </form>
