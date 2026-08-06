@@ -153,7 +153,7 @@ router.post('/users', authMiddleware, adminMiddleware, async (req, res) => {
     
     // Email the new user their credentials
     const subject = "Welcome to Curefoods Operations Dashboard";
-    const body = `Hello,\n\nAn admin has created a new account for you on the Curefoods Operations Dashboard.\n\nUsername: ${email}\nPassword: ${generatedPassword}\n\nYou can log in to the dashboard using this link:\nhttps://ratings-dashboard.eatfit.in/h\n\nIf you wish to change your password, you can use the "Forgot Password" option on the login screen at any time.\n\nPlease keep these credentials safe.`;
+    const body = `Hello,\n\nAn admin has created a new account for you on the Curefoods Operations Dashboard.\n\nUsername: ${email}\nPassword: ${generatedPassword}\n\nYou can log in to the dashboard using this link:\nhttps://cfi-website-five.vercel.app\n\nIf you wish to change your password, you can use the "Forgot Password" option on the login screen at any time.\n\nPlease keep these credentials safe.`;
     await sendEmail(email, subject, body);
 
     res.json({ success: true, user: rows[0] });
