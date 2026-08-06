@@ -17,13 +17,13 @@ export const authMiddleware = async (req, res, next) => {
   const token = authHeader.split(' ')[1];
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
-    
+
     // Real-time block: Ensure user is not locked in the DB
     const { rows } = await pool.query('SELECT is_locked FROM authorized_users WHERE id = $1', [decoded.id]);
     if (rows.length === 0 || rows[0].is_locked) {
       return res.status(403).json({ success: false, error: 'Account has been locked by admin' });
     }
-    
+
     req.user = decoded; // { id, email, role }
     next();
   } catch (err) {
@@ -37,7 +37,7 @@ export const authMiddleware = async (req, res, next) => {
 
 // Middleware for admin routes
 export const adminMiddleware = (req, res, next) => {
-  if (!req.user?.role || !req.user.role.split(',').includes('admin')) {
+  if (req.user?.role !== 'admin') {
     return res.status(403).json({ success: false, error: 'Forbidden: Admin access required' });
   }
   next();
@@ -110,7 +110,7 @@ router.post('/forgot-password', async (req, res) => {
     // Send email
     const subject = "Curefoods Dashboard - Password Reset";
     const body = `Hello,\n\nYour password has been reset.\n\nYour Username: ${user.email}\nYour New Password: ${newPassword}\n\nPlease login and change your password if needed.`;
-    
+
     await sendEmail(user.email, subject, body);
 
     res.json({ success: true, message: 'If the email exists, a password reset has been sent.' });
@@ -133,27 +133,21 @@ router.get('/users', authMiddleware, adminMiddleware, async (req, res) => {
 
 // 3. Add new user (Admin only)
 router.post('/users', authMiddleware, adminMiddleware, async (req, res) => {
-  const { email, role = 'user' } = req.body;
-  if (!email) {
-    return res.status(400).json({ success: false, error: 'Email is required' });
+  const { email, password, role = 'user' } = req.body;
+  if (!email || !password) {
+    return res.status(400).json({ success: false, error: 'Email and password required' });
   }
-  
-  if (!email.toLowerCase().endsWith('@curefoods.in')) {
-    return res.status(400).json({ success: false, error: 'Only @curefoods.in email addresses are allowed' });
-  }
-
-  const generatedPassword = Math.random().toString(36).slice(-8);
 
   try {
-    const hashedPassword = await bcrypt.hash(generatedPassword, 10);
+    const hashedPassword = await bcrypt.hash(password, 10);
     const { rows } = await pool.query(
       'INSERT INTO authorized_users (email, password_hash, role) VALUES ($1, $2, $3) RETURNING id, email, role, created_at',
       [email, hashedPassword, role]
     );
-    
+
     // Email the new user their credentials
     const subject = "Welcome to Curefoods Operations Dashboard";
-    const body = `Hello,\n\nAn admin has created a new account for you on the Curefoods Operations Dashboard.\n\nUsername: ${email}\nPassword: ${generatedPassword}\n\nYou can log in to the dashboard using this link:\nhttps://cfi-website-five.vercel.app\n\nIf you wish to change your password, you can use the "Forgot Password" option on the login screen at any time.\n\nPlease keep these credentials safe.`;
+    const body = `Hello,\n\nAn admin has created a new account for you on the Curefoods Operations Dashboard.\n\nUsername: ${email}\nPassword: ${password}\n\nPlease keep these credentials safe.`;
     await sendEmail(email, subject, body);
 
     res.json({ success: true, user: rows[0] });
@@ -169,11 +163,11 @@ router.post('/users', authMiddleware, adminMiddleware, async (req, res) => {
 // 3.5 Reset User Password (Admin only)
 router.post('/users/:id/reset-password', authMiddleware, adminMiddleware, async (req, res) => {
   const { id } = req.params;
-  
+
   try {
     const { rows } = await pool.query('SELECT * FROM authorized_users WHERE id = $1', [id]);
     const user = rows[0];
-    
+
     if (!user) {
       return res.status(404).json({ success: false, error: 'User not found' });
     }
@@ -197,7 +191,7 @@ router.post('/users/:id/reset-password', authMiddleware, adminMiddleware, async 
 // 4. Delete user (Admin only)
 router.delete('/users/:id', authMiddleware, adminMiddleware, async (req, res) => {
   const { id } = req.params;
-  
+
   // Prevent deleting oneself
   if (parseInt(id) === req.user.id) {
     return res.status(400).json({ success: false, error: 'Cannot delete your own admin account' });
@@ -219,7 +213,7 @@ router.delete('/users/:id', authMiddleware, adminMiddleware, async (req, res) =>
 router.patch('/users/:id/lock', authMiddleware, adminMiddleware, async (req, res) => {
   const { id } = req.params;
   const { is_locked } = req.body;
-  
+
   if (parseInt(id) === req.user.id) {
     return res.status(400).json({ success: false, error: 'Cannot lock your own admin account' });
   }
@@ -232,29 +226,6 @@ router.patch('/users/:id/lock', authMiddleware, adminMiddleware, async (req, res
     res.json({ success: true, message: is_locked ? 'User locked successfully' : 'User unlocked successfully' });
   } catch (err) {
     console.error('Lock user error:', err);
-    res.status(500).json({ success: false, error: 'Internal server error' });
-  }
-});
-
-// 6. Update Role (Admin only)
-router.patch('/users/:id/role', authMiddleware, adminMiddleware, async (req, res) => {
-  const { id } = req.params;
-  const { role } = req.body;
-  
-  if (!role) return res.status(400).json({ success: false, error: 'Role is required' });
-
-  if (parseInt(id) === req.user.id) {
-    return res.status(400).json({ success: false, error: 'Cannot change your own role' });
-  }
-
-  try {
-    const { rowCount } = await pool.query('UPDATE authorized_users SET role = $1 WHERE id = $2', [role, id]);
-    if (rowCount === 0) {
-      return res.status(404).json({ success: false, error: 'User not found' });
-    }
-    res.json({ success: true, message: 'User role updated successfully' });
-  } catch (err) {
-    console.error('Update role error:', err);
     res.status(500).json({ success: false, error: 'Internal server error' });
   }
 });
