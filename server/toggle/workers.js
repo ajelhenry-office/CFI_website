@@ -47,17 +47,17 @@ export function startWorkers() {
   }, 60 * 60 * 1000); // 60 minutes
 
 
-  // Watchdog Cron (Runs every 5 minutes)
-  // Grabs stores where desired_state = 'ONLINE' but they are physically OFFLINE due to threshold cooling
+  // Watchdog Cron (Runs every 10 minutes)
+  // Grabs eatfit stores where desired_state = 'ONLINE' but they are physically OFFLINE due to threshold cooling
   setInterval(async () => {
     try {
       console.log("[WORKERS] Running Watchdog Cron...");
       
-      // Look for stores that want to be online, but currently have <= 8 active_orders
+      // Look for eatfit stores that want to be online, but currently have < 15 active_orders
       const storesRes = await pool.query(`
         SELECT location_id, brand 
         FROM store_state 
-        WHERE desired_state = 'ONLINE' AND active_orders <= 8
+        WHERE desired_state = 'ONLINE' AND active_orders < 15 AND brand ILIKE 'eatfit'
       `);
       
       const stores = storesRes.rows;
@@ -92,7 +92,7 @@ export function startWorkers() {
     } catch (err) {
       console.error("[WORKERS] Watchdog failed:", err);
     }
-  }, 5 * 60 * 1000); // 5 minutes
+  }, 10 * 60 * 1000); // 10 minutes
 
   // Warmup Ops Cache (Runs every 1 hour)
   setInterval(() => {

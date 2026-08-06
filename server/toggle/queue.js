@@ -83,10 +83,10 @@ export async function runBulkJob(jobId, stores, action, filterContext, performTo
             return; // Skip this store
           }
 
-          // Apply 8-order threshold
+          // Apply 15-order threshold (ONLY for eatfit)
           if (desired_state === 'ONLINE') {
-            if (active_orders > 8) {
-               console.log(`[THROTTLE] ${store.location_id} active_orders = ${active_orders} > 8. Auto-throttling to OFFLINE.`);
+            if (brand.toLowerCase() === 'eatfit' && active_orders > 15) {
+               console.log(`[THROTTLE] ${store.location_id} active_orders = ${active_orders} > 15 (eatfit). Auto-throttling to OFFLINE.`);
                currentAction = 'disable';
             } else {
                currentAction = 'enable';
