@@ -85,7 +85,7 @@ export async function runBulkJob(jobId, stores, action, filterContext, performTo
 
           // Apply 15-order threshold (ONLY for eatfit)
           if (desired_state === 'ONLINE') {
-            if (brand.toLowerCase() === 'eatfit' && active_orders > 15) {
+            if (brand.toLowerCase().includes('eatfit') && active_orders > 15) {
                console.log(`[THROTTLE] ${store.location_id} active_orders = ${active_orders} > 15 (eatfit). Auto-throttling to OFFLINE.`);
                currentAction = 'disable';
             } else {

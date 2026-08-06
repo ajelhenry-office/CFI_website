@@ -57,7 +57,7 @@ export function startWorkers() {
       const storesRes = await pool.query(`
         SELECT location_id, brand 
         FROM store_state 
-        WHERE desired_state = 'ONLINE' AND active_orders < 15 AND brand ILIKE 'eatfit'
+        WHERE desired_state = 'ONLINE' AND active_orders < 15 AND brand ILIKE '%eatfit%'
       `);
       
       const stores = storesRes.rows;
