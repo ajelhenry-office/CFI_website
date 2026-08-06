@@ -33,6 +33,10 @@ const UP_BRANDS = {
     username : process.env.UP_USERNAME_CAKEZONE || "biz_adm_zzXEiLApvfel",
     apikey   : process.env.UP_APIKEY_CAKEZONE   || "e4d7ccbe7e7342169523c37a516488fe3146a46c",
   },
+  olio: {
+    username : process.env.UP_USERNAME_OLIO || "biz_adm_iIqzrwJgxyOK",
+    apikey   : process.env.UP_APIKEY_OLIO   || "c8e89a781c58a8ed636ff2a9c693d1bd503a454e",
+  },
 };
 
 // ─── HELPER: PERFORM API CALL ────────────────────────────────
