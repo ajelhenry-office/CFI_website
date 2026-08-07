@@ -77,12 +77,9 @@ export default function StoreCard({ store, onToggle, isBulking, dbState }) {
         {/* Store name */}
         <div style={{ flex: 1 }}>
           <div style={{ fontSize: 13, fontWeight: 800, color: C.primary, lineHeight: 1.3 }}>{store.name}</div>
-          {store.brand !== 'olio' && store.brand !== 'eatfit' && (
-            <div style={{ fontSize: 11, color: C.muted, marginTop: 3 }}>
-              {[store.city, store.zone].filter(Boolean).join(" · ")}
-            </div>
-          )}
-          <div style={{ fontSize: 10, color: C.muted, marginTop: 2, fontFamily: "monospace" }}>{store.location_id}</div>
+          <div style={{ fontSize: 11, color: C.muted, marginTop: 3 }}>
+            {[store.city, store.zone].filter(Boolean).join(" · ")}
+          </div>
         </div>
 
         {/* Toggle button */}
