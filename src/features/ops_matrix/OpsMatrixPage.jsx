@@ -218,7 +218,7 @@ function DateFilterDropdown({ start, end, onStart, onEnd, error }) {
   }, []);
 
   return (
-    <div ref={ref} style={{ position: "relative", minWidth: 180, flex: 1 }}>
+    <div ref={ref} style={{ position: "relative", minWidth: 160, flex: 1 }}>
       <button onClick={() => setOpen(!open)} style={{...inputStyle, width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer"}}>
         <span style={{ fontWeight: 400, color: C.text }}>
           {start} to {end}
@@ -628,7 +628,7 @@ export default function OpsMatrixPage() {
             Apply Filters
           </button>
           <button 
-            style={{ padding: "8px 24px", background: "none", color: "#ef4444", border: `1px solid #ef4444`, borderRadius: 6, fontWeight: 600, cursor: "pointer", fontSize: 13 }} 
+            style={{ padding: "8px 24px", background: C.primary, color: "#fff", border: "none", borderRadius: 6, fontWeight: 600, cursor: "pointer", fontSize: 13 }} 
             onClick={() => {
               setDraftStartDate(iso(8));
               setDraftEndDate(iso(1));
