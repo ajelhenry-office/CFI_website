@@ -177,12 +177,7 @@ export default function TogglePage({ userRole }) {
       <div style={{ display: "flex", flexDirection: "column", gap: 24, marginBottom: 24 }}>
         
         {/* Top Header / Stats */}
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 16 }}>
-          
-          <div style={{ background: "#0a1945", color: "#fff", padding: "12px 24px", borderRadius: 8, fontSize: 20, fontWeight: 700 }}>
-            Minimal Icon Bar
-          </div>
-
+        <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "flex-end", flexWrap: "wrap", gap: 16 }}>
           <div style={{ display: "flex", gap: 16 }}>
             <StatBox label="TOTAL" value={baseFiltered.length} color="#1e3a8a" bg="#f0fdfa" isActive={statusFilter === "Total"} onClick={() => setStatusFilter("Total")} />
             <StatBox label="ONLINE" value={onlineCount} color="#16a34a" bg="#f0fdf4" isActive={statusFilter === "Online"} onClick={() => setStatusFilter("Online")} />
@@ -205,16 +200,16 @@ export default function TogglePage({ userRole }) {
           
           <div style={{ display: "flex", flex: 1, minWidth: 400 }}>
             <MultiSearchableSelect options={brandsList} selectedValues={brand} onChange={handleBrandChange} placeholder="Brand" 
-              customTrigger={(label) => <FilterItem icon={<IconBrand />} label="Brand" value={label} />} width="100%" />
+              customTrigger={(label) => <FilterItem icon={<IconBrand />} label="Brand" value={label === "Brand" ? "All" : label} />} width="100%" />
             <Divider />
             <MultiSearchableSelect options={zonesList} selectedValues={zone} onChange={handleZoneChange} placeholder="Zone" 
-              customTrigger={(label) => <FilterItem icon={<IconZone />} label="Zone" value={label} />} width="100%" />
+              customTrigger={(label) => <FilterItem icon={<IconZone />} label="Zone" value={label === "Zone" ? "All" : label} />} width="100%" />
             <Divider />
             <MultiSearchableSelect options={citiesList} selectedValues={city} onChange={handleCityChange} placeholder="City" 
-              customTrigger={(label) => <FilterItem icon={<IconCity />} label="City" value={label} />} width="100%" />
+              customTrigger={(label) => <FilterItem icon={<IconCity />} label="City" value={label === "City" ? "All" : label} />} width="100%" />
             <Divider />
             <MultiSearchableSelect options={areasList} selectedValues={area} onChange={setArea} placeholder="Area" 
-              customTrigger={(label) => <FilterItem icon={<IconArea />} label="Area" value={label} />} width="100%" />
+              customTrigger={(label) => <FilterItem icon={<IconArea />} label="Area" value={label === "Area" ? "All" : label} />} width="100%" />
           </div>
 
           <Divider />
@@ -242,10 +237,10 @@ export default function TogglePage({ userRole }) {
               />
             </div>
             
-            <button onClick={handleApply} style={{ padding: "10px 24px", background: "#0a1945", color: "#fff", border: "none", borderRadius: 6, fontWeight: 600, fontSize: 14, cursor: "pointer" }}>
+            <button onClick={handleApply} style={{ padding: "10px 24px", background: "#0a1945", color: "#fff", border: "none", borderRadius: 6, fontWeight: 600, fontSize: 14, cursor: "pointer", boxShadow: "0 2px 4px rgba(0,0,0,0.1)" }}>
               Apply
             </button>
-            <button onClick={handleClear} style={{ padding: "10px 12px", background: "none", color: "#2563eb", border: "none", fontWeight: 600, fontSize: 14, cursor: "pointer" }}>
+            <button onClick={handleClear} style={{ padding: "10px 24px", background: "#0a1945", color: "#fff", border: "none", borderRadius: 6, fontWeight: 600, fontSize: 14, cursor: "pointer", boxShadow: "0 2px 4px rgba(0,0,0,0.1)" }}>
               Clear
             </button>
           </div>
@@ -259,7 +254,7 @@ export default function TogglePage({ userRole }) {
               <>
                 <ActionButton 
                   icon={<IconEye />} 
-                  label="Enable Visible" 
+                  label="Bulk Enable" 
                   color="#16a34a" 
                   bg="#f0fdf4" 
                   borderColor="#bbf7d0"
@@ -269,7 +264,7 @@ export default function TogglePage({ userRole }) {
                 />
                 <ActionButton 
                   icon={<IconEyeOff />} 
-                  label="Disable Visible" 
+                  label="Bulk Disable" 
                   color="#ef4444" 
                   bg="#fef2f2" 
                   borderColor="#fecaca"
@@ -333,19 +328,28 @@ export default function TogglePage({ userRole }) {
 // --- Helper Components for Minimal Icon Bar ---
 
 function StatBox({ label, value, color, bg, isActive, onClick }) {
+  const [isHovered, setIsHovered] = useState(false);
   return (
-    <button onClick={onClick} style={{ 
-      background: isActive ? (bg || "#fff") : "#fff", 
-      border: `2px solid ${isActive ? color : "#e2e8f0"}`, 
-      borderRadius: 8, 
-      padding: "12px 24px", 
-      minWidth: 100,
-      display: "flex",
-      flexDirection: "column",
-      alignItems: "center",
-      cursor: "pointer",
-      outline: "none"
-    }}>
+    <button 
+      onClick={onClick} 
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+      style={{ 
+        background: isActive ? (bg || "#fff") : "#fff", 
+        border: `2px solid ${isActive ? color : (isHovered ? "#cbd5e1" : "#e2e8f0")}`, 
+        borderRadius: 8, 
+        padding: "12px 24px", 
+        minWidth: 120,
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        cursor: "pointer",
+        outline: "none",
+        transition: "all 0.2s ease",
+        boxShadow: isActive ? `0 4px 12px ${color}33` : (isHovered ? "0 4px 8px rgba(0,0,0,0.05)" : "0 2px 4px rgba(0,0,0,0.02)"),
+        transform: isHovered && !isActive ? "translateY(-1px)" : "none"
+      }}
+    >
       <div style={{ fontSize: 11, fontWeight: 700, color: color, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>
         {label}
       </div>
@@ -405,29 +409,29 @@ function ActionButton({ icon, label, color, bg, borderColor, onClick, disabled, 
 // --- Icons ---
 
 function IconBrand() {
-  return <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"></path><line x1="7" y1="7" x2="7.01" y2="7"></line></svg>;
+  return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"></path><line x1="7" y1="7" x2="7.01" y2="7"></line></svg>;
 }
 function IconZone() {
-  return <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>;
+  return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>;
 }
 function IconCity() {
-  return <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg>;
+  return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg>;
 }
 function IconArea() {
-  return <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><circle cx="12" cy="12" r="3"></circle></svg>;
+  return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><circle cx="12" cy="12" r="3"></circle></svg>;
 }
 function IconSearch() {
   return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>;
 }
 function IconEye() {
-  return <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>;
+  return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>;
 }
 function IconEyeOff() {
-  return <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>;
+  return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>;
 }
 function IconStore() {
-  return <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>;
+  return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>;
 }
 function IconFile() {
-  return <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>;
+  return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>;
 }
