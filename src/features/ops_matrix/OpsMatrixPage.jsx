@@ -217,11 +217,17 @@ function DateFilterDropdown({ start, end, onStart, onEnd, error }) {
     return () => document.removeEventListener("mousedown", handleClick);
   }, []);
 
+  const formatDate = (isoStr) => {
+    if (!isoStr) return "";
+    const d = new Date(isoStr);
+    return d.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+  };
+
   return (
     <div ref={ref} style={{ position: "relative", minWidth: 160, flex: 1 }}>
       <button onClick={() => setOpen(!open)} style={{...inputStyle, width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer"}}>
-        <span style={{ fontWeight: 400, color: C.text }}>
-          {start} to {end}
+        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 700, color: C.primary }}>
+          {formatDate(start)} - {formatDate(end)}
         </span>
         <span style={{ fontSize: 10, color: C.muted }}>▼</span>
       </button>
