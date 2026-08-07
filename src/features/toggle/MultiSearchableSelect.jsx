@@ -6,7 +6,8 @@ export default function MultiSearchableSelect({
   selectedValues, 
   onChange, 
   placeholder, 
-  width = 180 
+  width = 180,
+  customTrigger = null
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -53,32 +54,33 @@ export default function MultiSearchableSelect({
 
   return (
     <div ref={containerRef} style={{ position: "relative", width, fontFamily: FONT }}>
-      <button
-        onClick={() => setIsOpen(!isOpen)}
-        style={{
-          width: "100%",
-          padding: "7px 12px",
-          borderRadius: 10,
-          border: `1.5px solid ${C.primary}`,
-          backgroundColor: "#fff",
-          color: C.primary,
-          fontSize: 12,
-          fontWeight: 700,
-          textAlign: "left",
-          cursor: "pointer",
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          outline: "none"
-        }}
-      >
-        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          {label}
-        </span>
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
-          <path d={isOpen ? "M18 15l-6-6-6 6" : "M6 9l6 6 6-6"} />
-        </svg>
-      </button>
+      {customTrigger ? (
+        <div onClick={() => setIsOpen(!isOpen)} style={{ width: "100%", height: "100%", cursor: "pointer" }}>
+          {customTrigger(label, isOpen)}
+        </div>
+      ) : (
+        <button
+          onClick={() => setIsOpen(!isOpen)}
+          style={{
+            width: "100%",
+            padding: "7px 12px",
+            borderRadius: 10,
+            border: `1.5px solid ${isOpen ? C.primary : C.border}`,
+            backgroundColor: "#fff",
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            cursor: "pointer",
+            outline: "none",
+            textAlign: "left"
+          }}
+        >
+          <span style={{ fontSize: 12, fontWeight: 700, color: selectedValues.length > 0 ? C.primary : C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {label}
+          </span>
+          <span style={{ fontSize: 10, color: C.muted }}>▼</span>
+        </button>
+      )}
 
       {isOpen && (
         <div style={{
