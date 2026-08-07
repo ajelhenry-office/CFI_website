@@ -3,7 +3,6 @@ import Sidebar, { NAV_ITEMS, ROLE_PERMISSIONS } from "./Sidebar";
 import GlobalFilters from "./GlobalFilters";
 import { C, FONT } from "./theme";
 import TogglePage from "./features/toggle/TogglePage";
-import ToggleUIIdeas from "./features/toggle/ToggleUIIdeas";
 import TimingPage from "./features/timing/TimingPage";
 import ReviewsPage from "./features/reviews/ReviewsPage";
 import RouteBackfillingPage from "./features/backfilling/RouteBackfillingPage";
@@ -166,7 +165,6 @@ export default function App() {
 
         <div style={{ flex: 1, overflowY: "auto", padding: "22px 28px 60px" }}>
           {activeTab === "toggle" && <TogglePage userRole={user.role} />}
-          {activeTab === "toggle_ideas" && <ToggleUIIdeas />}
           {activeTab === "timing" && <TimingPage globalFilters={globalFilters} />}
           {activeTab === "reviews" && <ReviewsPage globalFilters={globalFilters} />}
           {activeTab === "backfilling" && <RouteBackfillingPage globalFilters={globalFilters} />}
