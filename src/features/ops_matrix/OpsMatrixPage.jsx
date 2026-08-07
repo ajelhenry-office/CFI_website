@@ -204,52 +204,6 @@ function CustomDatePicker({ value, min, max, onChange, hasError }) {
   );
 }
 
-
-function DateFilterDropdown({ start, end, onStart, onEnd, error }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef();
-  
-  useEffect(() => {
-    const handleClick = (e) => {
-      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
-    };
-    document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
-  }, []);
-
-  const formatDate = (isoStr) => {
-    if (!isoStr) return "";
-    const d = new Date(isoStr);
-    return d.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
-  };
-
-  return (
-    <div ref={ref} style={{ position: "relative", minWidth: 160, flex: 1 }}>
-      <button onClick={() => setOpen(!open)} style={{...inputStyle, width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer"}}>
-        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 700, color: C.primary }}>
-          {formatDate(start)} - {formatDate(end)}
-        </span>
-        <span style={{ fontSize: 10, color: C.muted }}>▼</span>
-      </button>
-      {open && (
-        <div style={{ position: "absolute", top: "100%", left: 0, marginTop: 4, padding: "16px", background: "#fff", border: `1px solid ${C.border}`, borderRadius: 8, zIndex: 50, display: "flex", flexDirection: "column", gap: 12, boxShadow: "0 8px 24px rgba(0,0,0,0.12)", whiteSpace: "nowrap" }}>
-          <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-              <span style={{ fontSize: 11, fontWeight: 600, color: C.muted }}>From</span>
-              <CustomDatePicker value={start} onChange={onStart} max={end} hasError={!!error} />
-            </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-              <span style={{ fontSize: 11, fontWeight: 600, color: C.muted }}>To</span>
-              <CustomDatePicker value={end} onChange={onEnd} min={start} max={iso(0)} hasError={!!error} />
-            </div>
-          </div>
-          {error && <span style={{ color: "#ef4444", fontSize: 12, fontWeight: 600 }}>{error}</span>}
-        </div>
-      )}
-    </div>
-  );
-}
-
 // --- Main Page ---
 const queryCache = new Map();
 
@@ -258,28 +212,19 @@ export default function OpsMatrixPage() {
   const [rawData, setRawData] = useState([]);
   const [weekDefs, setWeekDefs] = useState([]);
   
-  // Applied Filters
+  // Date Filters
   const [startDate, setStartDate] = useState(iso(8));
   const [endDate, setEndDate] = useState(iso(1));
+
+  const diffDays = (new Date(endDate) - new Date(startDate)) / (1000 * 60 * 60 * 24);
+  const dateError = diffDays < 0 ? "Start date must be before end date." :
+                    diffDays > 30 ? "Please choose a range of at most 1 month." : null;
+  
+  // Location/Brand Filters
   const [brands, setBrands] = useState([]);
   const [zones, setZones] = useState([]);
   const [cities, setCities] = useState([]);
   const [areas, setAreas] = useState([]);
-
-  // Draft Filters (UI State)
-  const [draftStartDate, setDraftStartDate] = useState(iso(8));
-  const [draftEndDate, setDraftEndDate] = useState(iso(1));
-  const [draftBrands, setDraftBrands] = useState([]);
-  const [draftZones, setDraftZones] = useState([]);
-  const [draftCities, setDraftCities] = useState([]);
-  const [draftAreas, setDraftAreas] = useState([]);
-
-  const diffDays = (new Date(draftEndDate) - new Date(draftStartDate)) / (1000 * 60 * 60 * 24);
-  const draftDateError = diffDays < 0 ? "Start date must be before end date." :
-                    diffDays > 30 ? "Please choose a range of at most 1 month." : null;
-  const appliedDiffDays = (new Date(endDate) - new Date(startDate)) / (1000 * 60 * 60 * 24);
-  const dateError = appliedDiffDays < 0 || appliedDiffDays > 30 ? "Invalid applied date." : null;
-
 
   // Available Options
   const [availBrands, setAvailBrands] = useState([]);
@@ -420,9 +365,9 @@ export default function OpsMatrixPage() {
 
   useEffect(() => {
     if (rawData.length > 0) {
-      updateCascadingOptions(rawData, draftBrands, draftZones, draftCities, draftAreas);
+      updateCascadingOptions(rawData, brands, zones, cities, areas);
     }
-  }, [draftBrands, draftZones, draftCities, draftAreas, rawData]);
+  }, [brands, zones, cities, areas]);
 
   const updateCascadingOptions = (allRows, bFilter, zFilter, cFilter, aFilter) => {
     const bSet = new Set();
@@ -600,49 +545,36 @@ export default function OpsMatrixPage() {
     }).sort((a, b) => a.name.localeCompare(b.name));
   }, [filteredRows, weekDefs, isDefault, brands, areas, cities, zones]);
 
+  const handleStartDate = (e) => {
+    const newStartStr = e.target.value;
+    if (newStartStr) setStartDate(newStartStr);
+  };
 
+  const handleEndDate = (e) => {
+    const newEndStr = e.target.value;
+    if (newEndStr) setEndDate(newEndStr);
+  };
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 24, paddingBottom: 64 }}>
-      {/* Top Filters */}
-      <div style={{ display: "flex", flexDirection: "column", gap: 16, background: C.surface, padding: "16px 24px", borderRadius: 12, border: `1px solid ${C.border}` }}>
-        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
-          <DateFilterDropdown start={draftStartDate} end={draftEndDate} onStart={e => setDraftStartDate(e.target.value)} onEnd={e => setDraftEndDate(e.target.value)} error={draftDateError} />
-          
-          <div style={{ width: 1, height: 24, background: C.border, margin: "0 8px" }} />
+      {/* Top Filters (Instant Apply) */}
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center", background: C.surface, padding: "16px 24px", borderRadius: 12, border: `1px solid ${C.border}` }}>
+        <CustomDatePicker value={startDate} onChange={handleStartDate} max={endDate} hasError={!!dateError} />
+        <span style={{ color: C.muted, fontWeight: 600 }}>to</span>
+        <CustomDatePicker value={endDate} onChange={handleEndDate} min={startDate} max={iso(0)} hasError={!!dateError} />
+        
+        {dateError && <span style={{ color: "#ef4444", fontSize: 13, fontWeight: 600 }}>{dateError}</span>}
+        
+        <div style={{ width: 1, height: 24, background: C.border, margin: "0 8px" }} />
 
-          <MultiSelectDropdown label="Brands" options={availBrands} selected={draftBrands} onChange={setDraftBrands} />
-          <MultiSelectDropdown label="Zones" options={availZones} selected={draftZones} onChange={setDraftZones} />
-          <MultiSelectDropdown label="Cities" options={availCities} selected={draftCities} onChange={setDraftCities} />
-          <MultiSelectDropdown label="Areas" options={availAreas} selected={draftAreas} onChange={setDraftAreas} />
-        </div>
+        <MultiSelectDropdown label="Brands" options={availBrands} selected={brands} onChange={setBrands} />
+        <MultiSelectDropdown label="Zones" options={availZones} selected={zones} onChange={setZones} />
+        <MultiSelectDropdown label="Cities" options={availCities} selected={cities} onChange={setCities} />
+        <MultiSelectDropdown label="Areas" options={availAreas} selected={areas} onChange={setAreas} />
 
-        {/* Apply and Clear centered */}
-        <div style={{ display: "flex", justifyContent: "center", gap: 16, borderTop: `1px solid ${C.borderSoft}`, paddingTop: 16 }}>
-          <button 
-            style={{ padding: "8px 24px", background: C.primary, color: "#fff", border: "none", borderRadius: 6, fontWeight: 600, cursor: "pointer", fontSize: 13 }}
+        <div style={{ marginLeft: "auto" }}>
+          <button style={{ padding: "8px 12px", background: "none", color: "#ef4444", border: "none", fontWeight: 600, cursor: "pointer", fontSize: 13 }} 
             onClick={() => {
-              if (draftDateError) return;
-              setStartDate(draftStartDate);
-              setEndDate(draftEndDate);
-              setBrands(draftBrands);
-              setZones(draftZones);
-              setCities(draftCities);
-              setAreas(draftAreas);
-            }}
-          >
-            Apply Filters
-          </button>
-          <button 
-            style={{ padding: "8px 24px", background: C.primary, color: "#fff", border: "none", borderRadius: 6, fontWeight: 600, cursor: "pointer", fontSize: 13 }} 
-            onClick={() => {
-              setDraftStartDate(iso(8));
-              setDraftEndDate(iso(1));
-              setDraftBrands([]);
-              setDraftZones([]);
-              setDraftCities([]);
-              setDraftAreas([]);
-              
               setStartDate(iso(8));
               setEndDate(iso(1));
               setBrands([]);
