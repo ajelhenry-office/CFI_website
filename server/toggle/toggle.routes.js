@@ -41,65 +41,76 @@ async function performToggleAPI(location_id, action, brand) {
   const creds = UP_BRANDS[brandKey];
   if (!creds) return { success: false, error: `Unknown brand: ${brand}` };
 
+  const ids = String(location_id).split(',').map(s => s.trim()).filter(Boolean);
+  let overallSuccess = true;
+  let overallError = "";
 
+  for (const id of ids) {
+    let currentPlatforms = [...UP_PLATFORMS];
+    let finalStatus = 500;
+    let finalResponseText = "";
 
-  let currentPlatforms = [...UP_PLATFORMS];
-  let finalStatus = 500;
-  let finalResponseText = "";
+    while (currentPlatforms.length > 0) {
+      const payload = {
+        location_ref_id: String(id),
+        action: action,
+        platforms: currentPlatforms,
+      };
 
-  while (currentPlatforms.length > 0) {
-    const payload = {
-      location_ref_id: String(location_id),
-      action: action,
-      platforms: currentPlatforms,
-    };
+      const response = await fetch(UP_LOCATION_URL, {
+        method: "POST",
+        headers: {
+          "Authorization": `apikey ${creds.username}:${creds.apikey}`,
+          "Content-Type": "application/json",
+          ...(creds.biz_id ? { "x-upr-biz-id": creds.biz_id } : {})
+        },
+        body: JSON.stringify(payload),
+      });
 
-    const response = await fetch(UP_LOCATION_URL, {
-      method: "POST",
-      headers: {
-        "Authorization": `apikey ${creds.username}:${creds.apikey}`,
-        "Content-Type": "application/json",
-        ...(creds.biz_id ? { "x-upr-biz-id": creds.biz_id } : {})
-      },
-      body: JSON.stringify(payload),
-    });
+      finalStatus = response.status;
+      finalResponseText = await response.text();
+      console.log("[UP] Raw Response for", id, ":", finalStatus, finalResponseText);
 
-    finalStatus = response.status;
-    finalResponseText = await response.text();
-    console.log("[UP] Raw Response:", finalStatus, finalResponseText);
+      if (response.status >= 200 && response.status < 300) {
+        break; // Success for this ID, move to next ID
+      }
 
-    if (response.status >= 200 && response.status < 300) {
-      return { success: true, message: `Store ${action}d across platforms`, status: finalStatus };
-    }
-
-    if (response.status === 400) {
+      if (response.status === 400) {
+        try {
+          const errBody = JSON.parse(finalResponseText);
+          if (errBody.message && errBody.message.includes("not valid for platform")) {
+            const badPlatformMatch = errBody.message.match(/platform['"\s]*([\w]+)/i);
+            if (badPlatformMatch && badPlatformMatch[1]) {
+              const badPlatform = badPlatformMatch[1].toLowerCase();
+              currentPlatforms = currentPlatforms.filter(p => p !== badPlatform);
+              continue;
+            }
+          } else if (errBody.message && (errBody.message.includes("Invalid platform") || errBody.message.includes("not associated"))) {
+            if (currentPlatforms.length > 2) {
+              currentPlatforms = ["swiggy", "zomato"];
+              continue;
+            }
+          }
+        } catch (e) {}
+      }
+      
+      // If we reach here, it failed and can't be retried
+      overallSuccess = false;
+      let upErrorMsg = `UrbanPiper returned ${finalStatus} for ${id}`;
       try {
-        const errBody = JSON.parse(finalResponseText);
-        if (errBody.message && errBody.message.includes("not valid for platform")) {
-          const badPlatformMatch = errBody.message.match(/platform['"\s]*([\w]+)/i);
-          if (badPlatformMatch && badPlatformMatch[1]) {
-            const badPlatform = badPlatformMatch[1].toLowerCase();
-            currentPlatforms = currentPlatforms.filter(p => p !== badPlatform);
-            continue;
-          }
-        } else if (errBody.message && (errBody.message.includes("Invalid platform") || errBody.message.includes("not associated"))) {
-          if (currentPlatforms.length > 2) {
-            currentPlatforms = ["swiggy", "zomato"];
-            continue;
-          }
-        }
+        const errObj = JSON.parse(finalResponseText);
+        if (errObj.message) upErrorMsg += ` - ${errObj.message}`;
       } catch (e) {}
+      overallError = upErrorMsg;
+      break;
     }
-    break;
   }
 
-  let upErrorMsg = `UrbanPiper returned ${finalStatus}`;
-  try {
-    const errObj = JSON.parse(finalResponseText);
-    if (errObj.message) upErrorMsg += ` - ${errObj.message}`;
-  } catch (e) {}
-
-  return { success: false, error: upErrorMsg, status: finalStatus };
+  if (overallSuccess) {
+    return { success: true, message: `Store ${action}d across platforms`, status: 200 };
+  } else {
+    return { success: false, error: overallError, status: 500 };
+  }
 }
 
 // ─── SINGLE TOGGLE ENDPOINT ──────────────────────────────────
@@ -113,7 +124,7 @@ router.post("/toggle", async (req, res) => {
     return res.status(403).json({ success: false, error: `Action blocked: ${brand} API is disabled completely.` });
   }
 
-  // Update desired state in DB
+  // Update desired state in DB for the exact UI location_id string
   const desiredState = action === 'enable' ? 'ONLINE' : 'OFFLINE';
   try {
     await pool.query(`
@@ -176,7 +187,7 @@ router.post("/toggle/bulk", async (req, res) => {
   try {
     const desiredState = action === 'enable' ? 'ONLINE' : 'OFFLINE';
     
-    // Update all desired states immediately
+    // Update all desired states immediately using the original location_id (even if it's comma-separated)
     for (const store of validStores) {
       await pool.query(`
         INSERT INTO store_state (location_id, brand, desired_state) 
@@ -186,6 +197,9 @@ router.post("/toggle/bulk", async (req, res) => {
       `, [store.location_id, store.brand || "ovenfresh", desiredState]);
     }
 
+    // Flatten stores for the background worker so it works on each ID independently
+    // Actually, since performToggleAPI already splits by comma, we can just pass the original stores!
+    // The background worker will call performToggleAPI with the comma-separated string, which will handle the split.
     const jobRes = await pool.query(
       `INSERT INTO bulk_toggle_jobs (action, total_stores, pending_count) VALUES ($1, $2, $3) RETURNING id`,
       [action, validStores.length, validStores.length]
