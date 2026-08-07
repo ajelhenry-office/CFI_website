@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { C, FONT, cardStyle, pillButton } from "../../theme";
 import { getAuthHeaders, handleApiError } from "../../api";
 import StoreCard from "./StoreCard";
@@ -171,19 +172,21 @@ export default function TogglePage({ userRole }) {
     setIsBulking(false);
   };
 
+  const headerActionsNode = document.getElementById("header-actions");
+  
+  const statsContent = (
+    <div style={{ display: "flex", gap: 12 }}>
+      <StatBox label="TOTAL" value={baseFiltered.length} color="#1e3a8a" bg="#f0fdfa" isActive={statusFilter === "Total"} onClick={() => setStatusFilter("Total")} />
+      <StatBox label="ONLINE" value={onlineCount} color="#16a34a" bg="#f0fdf4" isActive={statusFilter === "Online"} onClick={() => setStatusFilter("Online")} />
+      <StatBox label="OFFLINE" value={offlineCount} color="#dc2626" bg="#fef2f2" isActive={statusFilter === "Offline"} onClick={() => setStatusFilter("Offline")} />
+    </div>
+  );
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 18, fontFamily: FONT }}>
+      {headerActionsNode && createPortal(statsContent, headerActionsNode)}
 
       <div style={{ display: "flex", flexDirection: "column", gap: 24, marginBottom: 24 }}>
-        
-        {/* Top Header / Stats */}
-        <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "flex-end", flexWrap: "wrap", gap: 16 }}>
-          <div style={{ display: "flex", gap: 16 }}>
-            <StatBox label="TOTAL" value={baseFiltered.length} color="#1e3a8a" bg="#f0fdfa" isActive={statusFilter === "Total"} onClick={() => setStatusFilter("Total")} />
-            <StatBox label="ONLINE" value={onlineCount} color="#16a34a" bg="#f0fdf4" isActive={statusFilter === "Online"} onClick={() => setStatusFilter("Online")} />
-            <StatBox label="OFFLINE" value={offlineCount} color="#dc2626" bg="#fef2f2" isActive={statusFilter === "Offline"} onClick={() => setStatusFilter("Offline")} />
-          </div>
-        </div>
 
         {/* Filter Bar */}
         <div style={{ 
@@ -336,24 +339,24 @@ function StatBox({ label, value, color, bg, isActive, onClick }) {
       onMouseLeave={() => setIsHovered(false)}
       style={{ 
         background: isActive ? (bg || "#fff") : "#fff", 
-        border: `2px solid ${isActive ? color : (isHovered ? "#cbd5e1" : "#e2e8f0")}`, 
+        border: `1.5px solid ${isActive ? color : (isHovered ? "#cbd5e1" : "#e2e8f0")}`, 
         borderRadius: 8, 
-        padding: "12px 24px", 
-        minWidth: 120,
+        padding: "8px 16px", 
+        minWidth: 100,
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
         cursor: "pointer",
         outline: "none",
         transition: "all 0.2s ease",
-        boxShadow: isActive ? `0 4px 12px ${color}33` : (isHovered ? "0 4px 8px rgba(0,0,0,0.05)" : "0 2px 4px rgba(0,0,0,0.02)"),
+        boxShadow: isActive ? `0 2px 8px ${color}33` : (isHovered ? "0 2px 4px rgba(0,0,0,0.05)" : "none"),
         transform: isHovered && !isActive ? "translateY(-1px)" : "none"
       }}
     >
-      <div style={{ fontSize: 11, fontWeight: 700, color: color, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>
+      <div style={{ fontSize: 10, fontWeight: 700, color: color, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 2 }}>
         {label}
       </div>
-      <div style={{ fontSize: 24, fontWeight: 800, color: color }}>
+      <div style={{ fontSize: 20, fontWeight: 800, color: color }}>
         {value}
       </div>
     </button>

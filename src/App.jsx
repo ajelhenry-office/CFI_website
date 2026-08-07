@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import Sidebar, { NAV_ITEMS, getAllowedTabs } from "./Sidebar";
+import Sidebar, { NAV_ITEMS, ROLE_PERMISSIONS } from "./Sidebar";
 import GlobalFilters from "./GlobalFilters";
 import { C, FONT } from "./theme";
 import TogglePage from "./features/toggle/TogglePage";
+import ToggleUIIdeas from "./features/toggle/ToggleUIIdeas";
 import TimingPage from "./features/timing/TimingPage";
 import ReviewsPage from "./features/reviews/ReviewsPage";
 import RouteBackfillingPage from "./features/backfilling/RouteBackfillingPage";
@@ -41,15 +42,14 @@ export default function App() {
     let initialTab = "toggle";
     if (savedUser) {
       const parsed = JSON.parse(savedUser);
-      const allowed = getAllowedTabs(parsed.role);
+      const allowed = ROLE_PERMISSIONS[parsed.role] || ["ratings"];
       initialTab = allowed[0];
     }
-    
+
     const path = window.location.pathname.replace("/", "");
     if (path === "CFI-operations-dashboard") return "ops_matrix";
-    if (path === "h") return "toggle"; // map /h to the toggle tab
     if (path && NAV_ITEMS.some(n => n.key === path)) return path;
-    
+
     return initialTab;
   });
   const [collapsed, setCollapsed] = useState(false);
@@ -58,9 +58,9 @@ export default function App() {
 
   useEffect(() => {
     if (!user) return;
-    
+
     // Ensure activeTab is valid for the logged-in user's role
-    const allowed = getAllowedTabs(user.role);
+    const allowed = ROLE_PERMISSIONS[user.role] || ["ratings"];
     if (!allowed.includes(activeTab)) {
       setActiveTab(allowed[0]);
     }
@@ -70,7 +70,7 @@ export default function App() {
       .then((res) => {
         if (alive) setMasterData(res.masterData || []);
       })
-      .catch(() => {});
+      .catch(() => { });
     return () => {
       alive = false;
     };
@@ -102,7 +102,7 @@ export default function App() {
           } else {
             setActiveTab(tab);
             localStorage.setItem("activeTab", tab);
-            window.history.pushState({}, "", `/${tab === "ops_matrix" ? "CFI-operations-dashboard" : tab === "toggle" ? "h" : tab}`);
+            window.history.pushState({}, "", `/${tab === "ops_matrix" ? "CFI-operations-dashboard" : tab}`);
           }
         }}
         collapsed={collapsed}
@@ -147,9 +147,12 @@ export default function App() {
             gap: 14,
           }}
         >
-          <div>
-            <h1 style={{ fontSize: 24, fontWeight: 800, color: C.primary, margin: 0, letterSpacing: -0.3 }}>{title}</h1>
-            <div style={{ fontSize: 13, color: C.muted, marginTop: 3 }}>{subtitle}</div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div>
+              <h1 style={{ fontSize: 24, fontWeight: 800, color: C.primary, margin: 0, letterSpacing: -0.3 }}>{title}</h1>
+              <div style={{ fontSize: 13, color: C.muted, marginTop: 3 }}>{subtitle}</div>
+            </div>
+            <div id="header-actions"></div>
           </div>
           {activeTab !== "toggle" && activeTab !== "timing" && activeTab !== "settings" && activeTab !== "ops_matrix" && (
             <GlobalFilters
@@ -163,6 +166,7 @@ export default function App() {
 
         <div style={{ flex: 1, overflowY: "auto", padding: "22px 28px 60px" }}>
           {activeTab === "toggle" && <TogglePage userRole={user.role} />}
+          {activeTab === "toggle_ideas" && <ToggleUIIdeas />}
           {activeTab === "timing" && <TimingPage globalFilters={globalFilters} />}
           {activeTab === "reviews" && <ReviewsPage globalFilters={globalFilters} />}
           {activeTab === "backfilling" && <RouteBackfillingPage globalFilters={globalFilters} />}
@@ -174,7 +178,7 @@ export default function App() {
               onUpdateFilters={updateFilters}
             />
           )}
-          
+
           {/* Keep Ops Matrix mounted always so data loads in background instantly */}
           <div style={{ display: activeTab === "ops_matrix" ? "block" : "none" }}>
             <OpsMatrixPage />
