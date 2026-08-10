@@ -47,23 +47,12 @@ const getWeekInfo = (dateStr) => {
   tmp.setUTCDate(tmp.getUTCDate() + 4 - dayNum);
   const yearStart = new Date(Date.UTC(tmp.getUTCFullYear(), 0, 1));
   const weekNum = Math.ceil((((tmp - yearStart) / 86400000) + 1) / 7);
-  const wKey = `W${weekNum}`;
+  return `W${weekNum}`;
+};
 
-  // Get Monday
-  const monday = new Date(d);
-  monday.setDate(d.getDate() - (d.getDay() === 0 ? 6 : d.getDay() - 1));
-  
-  // Get Sunday
-  const sunday = new Date(monday);
-  sunday.setDate(monday.getDate() + 6);
-
-  const sStr = monday.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-  const eStr = sunday.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-  
-  return {
-    val: wKey,
-    label: `${wKey} (${sStr}-${eStr})`
-  };
+const formatDateFriendly = (dateStr) => {
+  const d = new Date(dateStr);
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 };
 
 // --- Custom MultiSelect ---
@@ -204,6 +193,50 @@ function CustomDatePicker({ value, min, max, onChange, hasError }) {
   );
 }
 
+function WeekSelector({ onSelect }) {
+  const weeks = useMemo(() => {
+    const year = new Date().getFullYear();
+    const result = [];
+    const firstDay = new Date(year, 0, 1);
+    let startDay = new Date(firstDay);
+    // Find the first Monday of the year
+    const offset = (startDay.getDay() === 0 ? 6 : startDay.getDay() - 1);
+    startDay.setDate(startDay.getDate() - offset);
+    
+    for (let i = 1; i <= 52; i++) {
+      const monday = new Date(startDay);
+      const sunday = new Date(monday);
+      sunday.setDate(sunday.getDate() + 6);
+      
+      const sStr = monday.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      const eStr = sunday.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      const min = monday.toISOString().slice(0, 10);
+      const max = sunday.toISOString().slice(0, 10);
+      
+      result.push({ val: `W${i}`, label: `W${i} (${sStr} - ${eStr})`, min, max });
+      
+      // Move to next week
+      startDay.setDate(startDay.getDate() + 7);
+    }
+    return result;
+  }, []);
+
+  return (
+    <select 
+      onChange={(e) => {
+        const selected = weeks.find(w => w.val === e.target.value);
+        if (selected) onSelect(selected.min, selected.max);
+        e.target.value = "";
+      }}
+      defaultValue=""
+      style={{...inputStyle, padding: "8px 30px 8px 12px", background: "#f8fafc", cursor: "pointer", appearance: "none"}}
+    >
+      <option value="" disabled>Select Week...</option>
+      {weeks.map(w => <option key={w.val} value={w.val}>{w.label}</option>)}
+    </select>
+  );
+}
+
 // --- Main Page ---
 const queryCache = new Map();
 
@@ -234,101 +267,92 @@ export default function OpsMatrixPage() {
 
   const fetchData = async () => {
     setLoading(true);
+  const fetchData = async () => {
+    setLoading(true);
     try {
-      // Pass single selections directly if length is 1, as the backend proxy supports single value passing for these params right now.
       const bPayload = brands.length === 1 ? brands[0] : "";
       const zPayload = zones.length === 1 ? zones[0] : "";
       const cPayload = cities.length === 1 ? cities[0] : "";
       const aPayload = areas.length === 1 ? areas[0] : "";
 
       const cacheKey = JSON.stringify({ startDate, endDate, brand: bPayload, zone: zPayload, city: cPayload, area: aPayload });
+      
+      let rowsToProcess = [];
+
       if (queryCache.has(cacheKey)) {
-        const cachedData = queryCache.get(cacheKey);
-        
-        // Use cached data
-        let weekMapping = {};
-        const mappedRows = cachedData.map(r => {
-          const row = [...r];
-          if (r[4]) {
-            const wInfo = getWeekLabel(r[4]);
-            row[4] = wInfo.val;
-            weekMapping[wInfo.val] = wInfo.label;
+        rowsToProcess = queryCache.get(cacheKey);
+      } else {
+        let json = null;
+        let fetchSuccess = false;
+
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          try {
+            const response = await fetch(`${API_BASE}/api/ops-matrix/prep-time/kitchen`, {
+              method: "POST",
+              headers: { 
+                "Content-Type": "application/json",
+                ...getAuthHeaders()
+              },
+              body: JSON.stringify({
+                startDate,
+                endDate,
+                brand: bPayload,
+                zone: zPayload,
+                city: cPayload,
+                area: aPayload
+              })
+            });
+
+            if (response.ok) {
+              json = await response.json();
+              fetchSuccess = true;
+              break;
+            } else if (response.status === 504 && attempt < 3) {
+              console.warn(`[OpsMatrix] Vercel 504 Timeout on attempt ${attempt}. Waiting 4s for Metabase cache...`);
+              await new Promise(r => setTimeout(r, 4000));
+            } else {
+              break; // Break on 4xx or 500 errors
+            }
+          } catch (err) {
+            if (attempt < 3) {
+              console.warn(`[OpsMatrix] Fetch error on attempt ${attempt}:`, err);
+              await new Promise(r => setTimeout(r, 3000));
+            } else {
+              console.error("Failed to fetch after 3 attempts", err);
+            }
           }
-          return row;
+        }
+
+        if (fetchSuccess && json && json.success && json.data && json.data.rows) {
+          rowsToProcess = json.data.rows;
+        }
+      }
+
+      if (rowsToProcess.length > 0) {
+        // Step 1: Find actual min and max dates present for each week
+        const weekExtremes = {};
+        rowsToProcess.forEach(r => {
+          if (r[4]) {
+            const wVal = getWeekInfo(r[4]);
+            if (!weekExtremes[wVal]) weekExtremes[wVal] = { min: r[4], max: r[4] };
+            if (r[4] < weekExtremes[wVal].min) weekExtremes[wVal].min = r[4];
+            if (r[4] > weekExtremes[wVal].max) weekExtremes[wVal].max = r[4];
+          }
         });
 
-        const wDefs = Object.keys(weekMapping).sort((a,b) => a.localeCompare(b)).map(k => ({ val: k, label: weekMapping[k] }));
-        setRawData(mappedRows);
-        setWeekDefs(wDefs);
-        
-        if (brands.length === 0 && zones.length === 0 && cities.length === 0 && areas.length === 0) {
-          extractOptions(mappedRows, [], [], [], []);
-        }
-        setLoading(false);
-        return;
-      }
-
-      let json = null;
-      let fetchSuccess = false;
-
-      for (let attempt = 1; attempt <= 3; attempt++) {
-        try {
-          const response = await fetch(`${API_BASE}/api/ops-matrix/prep-time/kitchen`, {
-            method: "POST",
-            headers: { 
-              "Content-Type": "application/json",
-              ...getAuthHeaders()
-            },
-            body: JSON.stringify({
-              startDate,
-              endDate,
-              brand: bPayload,
-              zone: zPayload,
-              city: cPayload,
-              area: aPayload
-            })
-          });
-
-          if (response.ok) {
-            json = await response.json();
-            fetchSuccess = true;
-            break;
-          } else if (response.status === 504 && attempt < 3) {
-            console.warn(`[OpsMatrix] Vercel 504 Timeout on attempt ${attempt}. Waiting 4s for Metabase cache...`);
-            await new Promise(r => setTimeout(r, 4000));
-          } else {
-            break; // Break on 4xx or 500 errors
-          }
-        } catch (err) {
-          if (attempt < 3) {
-            console.warn(`[OpsMatrix] Fetch error on attempt ${attempt}:`, err);
-            await new Promise(r => setTimeout(r, 3000));
-          } else {
-            console.error("Failed to fetch after 3 attempts", err);
-          }
-        }
-      }
-
-      if (!fetchSuccess || !json) {
-        setRawData([]);
-        setWeekDefs([]);
-        setLoading(false);
-        return;
-      }
-      
-      if (json.success && json.data && json.data.rows) {
-        // Map raw row[4] (date) to week format
-        const rows = json.data.rows;
-        
-        // Extract unique weeks for sorting/display
+        // Step 2: Generate exact labels based on extremes
         const weekMap = {};
-        
-        const mappedRows = rows.map(r => {
+        Object.keys(weekExtremes).forEach(wVal => {
+          const minStr = formatDateFriendly(weekExtremes[wVal].min);
+          const maxStr = formatDateFriendly(weekExtremes[wVal].max);
+          weekMap[wVal] = minStr === maxStr ? `${wVal} (${minStr})` : `${wVal} (${minStr} - ${maxStr})`;
+        });
+
+        // Step 3: Map the data
+        const mappedRows = rowsToProcess.map(r => {
           const newRow = [...r];
           if (r[4]) {
-            const weekInfo = getWeekInfo(r[4]);
-            newRow[4] = weekInfo.val; // Replace order_date with Week Key
-            weekMap[weekInfo.val] = weekInfo.label;
+            newRow[4] = getWeekInfo(r[4]);
           }
           return newRow;
         });
@@ -339,8 +363,7 @@ export default function OpsMatrixPage() {
 
         setRawData(mappedRows);
         setWeekDefs(weeks);
-        
-        // Initialize cascading options based on fetched data
+
         if (brands.length === 0 && zones.length === 0 && cities.length === 0 && areas.length === 0) {
           updateCascadingOptions(mappedRows, [], [], [], []);
         }
@@ -562,6 +585,14 @@ export default function OpsMatrixPage() {
         <CustomDatePicker value={startDate} onChange={handleStartDate} max={endDate} hasError={!!dateError} />
         <span style={{ color: C.muted, fontWeight: 600 }}>to</span>
         <CustomDatePicker value={endDate} onChange={handleEndDate} min={startDate} max={iso(0)} hasError={!!dateError} />
+        
+        <div style={{ position: "relative" }}>
+          <WeekSelector onSelect={(start, end) => {
+            setStartDate(start);
+            setEndDate(end);
+          }} />
+          <svg style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", pointerEvents: "none", color: C.muted }} width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
+        </div>
         
         {dateError && <span style={{ color: "#ef4444", fontSize: 13, fontWeight: 600 }}>{dateError}</span>}
         
