@@ -267,8 +267,6 @@ export default function OpsMatrixPage() {
 
   const fetchData = async () => {
     setLoading(true);
-  const fetchData = async () => {
-    setLoading(true);
     try {
       const bPayload = brands.length === 1 ? brands[0] : "";
       const zPayload = zones.length === 1 ? zones[0] : "";
