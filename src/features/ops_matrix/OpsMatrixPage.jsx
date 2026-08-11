@@ -581,12 +581,12 @@ export default function OpsMatrixPage() {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 24, paddingBottom: 64 }}>
       {/* Top Filters (Instant Apply) */}
-      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center", background: C.surface, padding: "16px 24px", borderRadius: 12, border: `1px solid ${C.border}` }}>
+      <div style={{ display: "flex", gap: 12, alignItems: "center", background: C.surface, padding: "16px 24px", borderRadius: 12, border: `1px solid ${C.border}`, overflowX: "auto", whiteSpace: "nowrap" }}>
         <CustomDatePicker value={startDate} onChange={handleStartDate} max={endDate} hasError={!!dateError} />
         <span style={{ color: C.muted, fontWeight: 600 }}>to</span>
         <CustomDatePicker value={endDate} onChange={handleEndDate} min={startDate} max={iso(0)} hasError={!!dateError} />
         
-        <div style={{ position: "relative" }}>
+        <div style={{ position: "relative", flexShrink: 0 }}>
           <WeekSelector onSelect={(start, end) => {
             setStartDate(start);
             setEndDate(end);
@@ -596,15 +596,15 @@ export default function OpsMatrixPage() {
         
         {dateError && <span style={{ color: "#ef4444", fontSize: 13, fontWeight: 600 }}>{dateError}</span>}
         
-        <div style={{ width: 1, height: 24, background: C.border, margin: "0 8px" }} />
+        <div style={{ width: 1, height: 24, background: C.border, margin: "0 4px", flexShrink: 0 }} />
 
-        <MultiSelectDropdown label="Brands" options={availBrands} selected={brands} onChange={setBrands} />
-        <MultiSelectDropdown label="Zones" options={availZones} selected={zones} onChange={setZones} />
-        <MultiSelectDropdown label="Cities" options={availCities} selected={cities} onChange={setCities} />
-        <MultiSelectDropdown label="Areas" options={availAreas} selected={areas} onChange={setAreas} />
+        <div style={{ flexShrink: 0 }}><MultiSelectDropdown label="Brands" options={availBrands} selected={brands} onChange={setBrands} /></div>
+        <div style={{ flexShrink: 0 }}><MultiSelectDropdown label="Zones" options={availZones} selected={zones} onChange={setZones} /></div>
+        <div style={{ flexShrink: 0 }}><MultiSelectDropdown label="Cities" options={availCities} selected={cities} onChange={setCities} /></div>
+        <div style={{ flexShrink: 0 }}><MultiSelectDropdown label="Areas" options={availAreas} selected={areas} onChange={setAreas} /></div>
 
-        <div style={{ marginLeft: "auto" }}>
-          <button style={{ padding: "8px 12px", background: "none", color: "#ef4444", border: "none", fontWeight: 600, cursor: "pointer", fontSize: 13 }} 
+        <div style={{ marginLeft: "auto", flexShrink: 0 }}>
+          <button style={{ padding: "8px 24px", background: "#0f172a", color: "#ffffff", border: "none", borderRadius: 8, fontWeight: 600, cursor: "pointer", fontSize: 14, boxShadow: "0 2px 4px rgba(0,0,0,0.1)", letterSpacing: 0.3 }} 
             onClick={() => {
               setStartDate(iso(8));
               setEndDate(iso(1));
@@ -614,7 +614,7 @@ export default function OpsMatrixPage() {
               setAreas([]);
             }}
           >
-            Clear Filters
+            Clear
           </button>
         </div>
       </div>
