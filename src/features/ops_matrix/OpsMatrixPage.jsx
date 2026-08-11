@@ -653,9 +653,10 @@ export default function OpsMatrixPage() {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 24, paddingBottom: 64 }}>
       {/* Top Filters (Draft state, applied via Apply button) */}
-      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-        <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap", background: C.surface, padding: "16px 24px", borderRadius: 12, border: `1px solid ${C.border}` }}>
-          
+      <div style={{ display: "flex", flexDirection: "column", gap: 12, background: C.surface, padding: "16px 24px", borderRadius: 12, border: `1px solid ${C.border}` }}>
+        
+        {/* Row 1 */}
+        <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
           <DateRangeButton startDate={startDate} endDate={endDate} onStartChange={setStartDate} onEndChange={setEndDate} hasError={!!dateError} />
           
           <div style={{ position: "relative", flexShrink: 0 }}>
@@ -668,29 +669,31 @@ export default function OpsMatrixPage() {
           
           {dateError && <span style={{ color: "#ef4444", fontSize: 13, fontWeight: 600 }}>{dateError}</span>}
           
-          <div style={{ width: 1, height: 24, background: C.border, margin: "0 4px", flexShrink: 0 }} />
-
-          <div style={{ flexShrink: 0 }}><MultiSelectDropdown label="Brands" options={availBrands} selected={brands} onChange={setBrands} /></div>
-          <div style={{ flexShrink: 0 }}><MultiSelectDropdown label="Sub-Brands" options={availSubBrands} selected={subBrands} onChange={setSubBrands} /></div>
-          <div style={{ flexShrink: 0 }}><MultiSelectDropdown label="Zones" options={availZones} selected={zones} onChange={setZones} /></div>
-          <div style={{ flexShrink: 0 }}><MultiSelectDropdown label="Cities" options={availCities} selected={cities} onChange={setCities} /></div>
-          <div style={{ flexShrink: 0 }}><MultiSelectDropdown label="Areas" options={availAreas} selected={areas} onChange={setAreas} /></div>
+          <div style={{ flexShrink: 0 }}><MultiSelectDropdown label="All Brands" options={availBrands} selected={brands} onChange={setBrands} /></div>
         </div>
-        
-        {/* Centered Apply/Clear Buttons */}
-        <div style={{ display: "flex", justifyContent: "center", gap: 12 }}>
-          <button 
-            onClick={handleClear}
-            style={{ padding: "8px 24px", background: "#f1f5f9", color: "#334155", border: `1px solid ${C.border}`, borderRadius: 8, fontWeight: 600, cursor: "pointer", fontSize: 14 }} 
-          >
-            Clear
-          </button>
-          <button 
-            onClick={handleApply}
-            style={{ padding: "8px 32px", background: "#1e3a8a", color: "#ffffff", border: "none", borderRadius: 8, fontWeight: 600, cursor: "pointer", fontSize: 14, boxShadow: "0 2px 4px rgba(0,0,0,0.1)", letterSpacing: 0.3 }} 
-          >
-            Apply
-          </button>
+
+        {/* Row 2 */}
+        <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+          <div style={{ flexShrink: 0 }}><MultiSelectDropdown label="All Sub-Brands" options={availSubBrands} selected={subBrands} onChange={setSubBrands} /></div>
+          <div style={{ flexShrink: 0 }}><MultiSelectDropdown label="All Zones" options={availZones} selected={zones} onChange={setZones} /></div>
+          <div style={{ flexShrink: 0 }}><MultiSelectDropdown label="All Cities" options={availCities} selected={cities} onChange={setCities} /></div>
+          <div style={{ flexShrink: 0 }}><MultiSelectDropdown label="All Areas" options={availAreas} selected={areas} onChange={setAreas} /></div>
+          
+          {/* Action Buttons pushed to the right */}
+          <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 16 }}>
+            <button 
+              onClick={handleClear}
+              style={{ background: "transparent", color: "#0f766e", border: "none", fontWeight: 600, cursor: "pointer", fontSize: 14 }} 
+            >
+              Clear
+            </button>
+            <button 
+              onClick={handleApply}
+              style={{ padding: "8px 24px", background: "#1e3a8a", color: "#ffffff", border: "none", borderRadius: 8, fontWeight: 600, cursor: "pointer", fontSize: 14, letterSpacing: 0.3 }} 
+            >
+              Apply
+            </button>
+          </div>
         </div>
       </div>
 
