@@ -654,7 +654,7 @@ export default function OpsMatrixPage() {
     <div style={{ display: "flex", flexDirection: "column", gap: 24, paddingBottom: 64 }}>
       {/* Top Filters (Draft state, applied via Apply button) */}
       <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-        <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "nowrap", overflowX: "visible", background: C.surface, padding: "16px 24px", borderRadius: 12, border: `1px solid ${C.border}` }}>
+        <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "nowrap", overflowX: "visible" }}>
           
           <DateRangeButton startDate={startDate} endDate={endDate} onStartChange={setStartDate} onEndChange={setEndDate} hasError={!!dateError} />
           
