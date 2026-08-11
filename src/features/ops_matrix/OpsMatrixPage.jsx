@@ -453,23 +453,23 @@ export default function OpsMatrixPage() {
     const aSet = new Set();
 
     allRows.forEach(r => {
-      const bName = r[0] || "Unknown";
-      const sbName = r[1] || "None";
-      const cName = r[2] || "Unknown City";
-      const kName = r[3] || "Unknown Kitchen";
-      const zName = CITY_TO_ZONE[cName] || "OTHER";
+      const bName = r[0];
+      const sbName = r[1];
+      const cName = r[2];
+      const kName = r[3];
+      const zName = cName ? CITY_TO_ZONE[cName] : undefined;
 
-      const brandMatch = bFilter.length === 0 || bFilter.includes(bName);
-      const subBrandMatch = sbFilter.length === 0 || sbFilter.includes(sbName);
-      const zoneMatch = zFilter.length === 0 || zFilter.includes(zName);
-      const cityMatch = cFilter.length === 0 || cFilter.includes(cName);
-      const areaMatch = aFilter.length === 0 || aFilter.includes(kName);
+      const brandMatch = bFilter.length === 0 || (bName && bFilter.includes(bName));
+      const subBrandMatch = sbFilter.length === 0 || (sbName && sbFilter.includes(sbName));
+      const zoneMatch = zFilter.length === 0 || (zName && zFilter.includes(zName));
+      const cityMatch = cFilter.length === 0 || (cName && cFilter.includes(cName));
+      const areaMatch = aFilter.length === 0 || (kName && aFilter.includes(kName));
 
-      if (brandMatch && zoneMatch && cityMatch && areaMatch) sbSet.add(sbName);
-      if (subBrandMatch && zoneMatch && cityMatch && areaMatch) bSet.add(bName);
-      if (brandMatch && subBrandMatch && cityMatch && areaMatch) zSet.add(zName);
-      if (brandMatch && subBrandMatch && zoneMatch && areaMatch) cSet.add(cName);
-      if (brandMatch && subBrandMatch && zoneMatch && cityMatch) aSet.add(kName);
+      if (sbName && brandMatch && zoneMatch && cityMatch && areaMatch) sbSet.add(sbName);
+      if (bName && subBrandMatch && zoneMatch && cityMatch && areaMatch) bSet.add(bName);
+      if (zName && brandMatch && subBrandMatch && cityMatch && areaMatch) zSet.add(zName);
+      if (cName && brandMatch && subBrandMatch && zoneMatch && areaMatch) cSet.add(cName);
+      if (kName && brandMatch && subBrandMatch && zoneMatch && cityMatch) aSet.add(kName);
     });
 
     setAvailBrands(Array.from(bSet).sort());
@@ -481,17 +481,17 @@ export default function OpsMatrixPage() {
 
   const filteredRows = useMemo(() => {
     return rawData.filter(r => {
-      const bName = r[0] || "Unknown";
-      const sbName = r[1] || "None";
-      const cName = r[2] || "Unknown City";
-      const kName = r[3] || "Unknown Kitchen";
-      const zName = CITY_TO_ZONE[cName] || "OTHER";
+      const bName = r[0];
+      const sbName = r[1];
+      const cName = r[2];
+      const kName = r[3];
+      const zName = cName ? CITY_TO_ZONE[cName] : undefined;
       
-      if (appliedBrands.length > 0 && !appliedBrands.includes(bName)) return false;
-      if (appliedSubBrands.length > 0 && !appliedSubBrands.includes(sbName)) return false;
-      if (appliedZones.length > 0 && !appliedZones.includes(zName)) return false;
-      if (appliedCities.length > 0 && !appliedCities.includes(cName)) return false;
-      if (appliedAreas.length > 0 && !appliedAreas.includes(kName)) return false;
+      if (appliedBrands.length > 0 && (!bName || !appliedBrands.includes(bName))) return false;
+      if (appliedSubBrands.length > 0 && (!sbName || !appliedSubBrands.includes(sbName))) return false;
+      if (appliedZones.length > 0 && (!zName || !appliedZones.includes(zName))) return false;
+      if (appliedCities.length > 0 && (!cName || !appliedCities.includes(cName))) return false;
+      if (appliedAreas.length > 0 && (!kName || !appliedAreas.includes(kName))) return false;
       return true;
     });
   }, [rawData, appliedBrands, appliedSubBrands, appliedZones, appliedCities, appliedAreas]);
