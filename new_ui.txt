@@ -1,0 +1,40 @@
+      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        <div style={{ display: "flex", gap: 12, alignItems: "center", background: C.surface, padding: "16px 24px", borderRadius: 12, border: `1px solid ${C.border}`, overflowX: "auto", whiteSpace: "nowrap" }}>
+          
+          <DateRangeButton startDate={startDate} endDate={endDate} onStartChange={setStartDate} onEndChange={setEndDate} hasError={!!dateError} />
+          
+          <div style={{ position: "relative", flexShrink: 0 }}>
+            <WeekSelector onSelect={(start, end) => {
+              setStartDate(start);
+              setEndDate(end);
+            }} />
+            <svg style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", pointerEvents: "none", color: C.muted }} width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
+          </div>
+          
+          {dateError && <span style={{ color: "#ef4444", fontSize: 13, fontWeight: 600 }}>{dateError}</span>}
+          
+          <div style={{ width: 1, height: 24, background: C.border, margin: "0 4px", flexShrink: 0 }} />
+
+          <div style={{ flexShrink: 0 }}><MultiSelectDropdown label="Brands" options={availBrands} selected={brands} onChange={setBrands} /></div>
+          <div style={{ flexShrink: 0 }}><MultiSelectDropdown label="Sub-Brands" options={availSubBrands} selected={subBrands} onChange={setSubBrands} /></div>
+          <div style={{ flexShrink: 0 }}><MultiSelectDropdown label="Zones" options={availZones} selected={zones} onChange={setZones} /></div>
+          <div style={{ flexShrink: 0 }}><MultiSelectDropdown label="Cities" options={availCities} selected={cities} onChange={setCities} /></div>
+          <div style={{ flexShrink: 0 }}><MultiSelectDropdown label="Areas" options={availAreas} selected={areas} onChange={setAreas} /></div>
+        </div>
+        
+        {/* Centered Apply/Clear Buttons */}
+        <div style={{ display: "flex", justifyContent: "center", gap: 12 }}>
+          <button 
+            onClick={handleClear}
+            style={{ padding: "8px 24px", background: "#f1f5f9", color: "#334155", border: `1px solid ${C.border}`, borderRadius: 8, fontWeight: 600, cursor: "pointer", fontSize: 14 }} 
+          >
+            Clear
+          </button>
+          <button 
+            onClick={handleApply}
+            style={{ padding: "8px 32px", background: "#1e3a8a", color: "#ffffff", border: "none", borderRadius: 8, fontWeight: 600, cursor: "pointer", fontSize: 14, boxShadow: "0 2px 4px rgba(0,0,0,0.1)", letterSpacing: 0.3 }} 
+          >
+            Apply
+          </button>
+        </div>
+      </div>
