@@ -658,13 +658,7 @@ export default function OpsMatrixPage() {
           
           <DateRangeButton startDate={startDate} endDate={endDate} onStartChange={setStartDate} onEndChange={setEndDate} hasError={!!dateError} />
           
-          <div style={{ position: "relative", flexShrink: 0 }}>
-            <WeekSelector onSelect={(start, end) => {
-              setStartDate(start);
-              setEndDate(end);
-            }} />
-            <svg style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", pointerEvents: "none", color: C.muted }} width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
-          </div>
+
           
           {dateError && <span style={{ color: "#ef4444", fontSize: 13, fontWeight: 600 }}>{dateError}</span>}
           
