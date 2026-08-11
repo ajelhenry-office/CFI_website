@@ -621,6 +621,35 @@ export default function OpsMatrixPage() {
     }).sort((a, b) => a.name.localeCompare(b.name));
   }, [filteredRows, weekDefs, isDefault, appliedBrands, appliedSubBrands, appliedAreas, appliedCities, appliedZones]);
 
+  const handleApply = () => {
+    if (dateError) return;
+    setAppliedStartDate(startDate);
+    setAppliedEndDate(endDate);
+    setAppliedBrands(brands);
+    setAppliedSubBrands(subBrands);
+    setAppliedZones(zones);
+    setAppliedCities(cities);
+    setAppliedAreas(areas);
+  };
+
+  const handleClear = () => {
+    setStartDate(iso(8));
+    setEndDate(iso(1));
+    setBrands([]);
+    setSubBrands([]);
+    setZones([]);
+    setCities([]);
+    setAreas([]);
+    
+    setAppliedStartDate(iso(8));
+    setAppliedEndDate(iso(1));
+    setAppliedBrands([]);
+    setAppliedSubBrands([]);
+    setAppliedZones([]);
+    setAppliedCities([]);
+    setAppliedAreas([]);
+  };
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 24, paddingBottom: 64 }}>
       {/* Top Filters (Draft state, applied via Apply button) */}
