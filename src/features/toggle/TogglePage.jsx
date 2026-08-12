@@ -12,13 +12,26 @@ import ManageStoresModal from "./ManageStoresModal";
 const API_BASE = import.meta.env.VITE_API_BASE_URL || (import.meta.env.PROD ? "" : "http://localhost:3001");
 
 async function post(path, body) {
-  const res = await fetch(`${API_BASE}${path}`, {
-    method: "POST",
-    headers: { ...getAuthHeaders() },
-    body: JSON.stringify(body),
-  });
-  if (handleApiError(res)) return { success: false, error: "Session expired" };
-  return res.json();
+  try {
+    const res = await fetch(`${API_BASE}${path}`, {
+      method: "POST",
+      headers: { ...getAuthHeaders() },
+      body: JSON.stringify(body),
+    });
+    if (handleApiError(res)) return { success: false, error: "Session expired" };
+    
+    if (!res.ok) {
+      try {
+        const data = await res.json();
+        return { success: false, error: data.error || `HTTP ${res.status}` };
+      } catch (e) {
+        return { success: false, error: `HTTP ${res.status} from server` };
+      }
+    }
+    return res.json();
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
 }
 
 const selectStyle = { padding: "7px 12px", borderRadius: 10, border: `1.5px solid ${C.primary}`, color: C.primary, fontSize: 12, fontWeight: 700, fontFamily: FONT, cursor: "pointer", outline: "none" };
@@ -252,7 +265,6 @@ export default function TogglePage({ userRole }) {
         {/* Action Buttons Row */}
         <div style={{ display: "flex", justifyContent: "space-between", gap: 24, marginTop: 16, flexWrap: "wrap" }}>
           {(() => {
-            const hasCakeZone = filtered.some(s => s.brand === "Cake Zone");
             return (
               <>
                 <ActionButton 
@@ -262,8 +274,7 @@ export default function TogglePage({ userRole }) {
                   bg="#f0fdf4" 
                   borderColor="#bbf7d0"
                   onClick={() => handleBulk("enable")}
-                  disabled={isBulking || hasCakeZone}
-                  title={hasCakeZone ? "Bulk Actions are disabled for Cake Zone" : ""}
+                  disabled={isBulking}
                 />
                 <ActionButton 
                   icon={<IconPower />} 
@@ -272,8 +283,7 @@ export default function TogglePage({ userRole }) {
                   bg="#fef2f2" 
                   borderColor="#fecaca"
                   onClick={() => handleBulk("disable")}
-                  disabled={isBulking || hasCakeZone}
-                  title={hasCakeZone ? "Bulk Actions are disabled for Cake Zone" : ""}
+                  disabled={isBulking}
                 />
               </>
             );

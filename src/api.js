@@ -14,7 +14,7 @@ export function getAuthHeaders() {
 }
 
 export function handleApiError(res) {
-  if (res.status === 401 || res.status === 403) {
+  if (res.status === 401) {
     localStorage.removeItem('token');
     localStorage.removeItem('user');
     window.location.href = '/';
