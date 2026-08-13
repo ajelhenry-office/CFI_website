@@ -131,6 +131,39 @@ export async function performToggleAPI(location_id, action, brand) {
   }
 }
 
+// Checks a location ID is a real UrbanPiper location before we let it into our system.
+// Uses the "verify" action (menu/catalog validation) rather than enable/disable so this
+// never touches the store's live status — confirmed live: a fake ID returns 400 "Invalid
+// location reference", a real one returns 200. For a comma-separated multi-ID store, at
+// least one ID must resolve (matches the same leniency performToggleAPI already uses).
+async function verifyLocationExists(location_id, brand) {
+  const brandKey = brand.toLowerCase().replace(/[^a-z]/g, "_");
+  const creds = UP_BRANDS[brandKey];
+  if (!creds) return { valid: false, error: `Unknown brand "${brand}" — no UrbanPiper credentials configured for it.` };
+
+  const ids = String(location_id).split(',').map(s => s.trim()).filter(Boolean);
+  const errors = [];
+  for (const id of ids) {
+    try {
+      const response = await fetch(UP_LOCATION_URL, {
+        method: "POST",
+        headers: {
+          "Authorization": `apikey ${creds.username}:${creds.apikey}`,
+          "Content-Type": "application/json",
+          ...(creds.biz_id ? { "x-upr-biz-id": creds.biz_id } : {})
+        },
+        body: JSON.stringify({ location_ref_id: String(id), action: "verify", platforms: UP_PLATFORMS }),
+      });
+      if (response.status === 200) return { valid: true };
+      const text = await response.text();
+      errors.push(`${id}: ${text}`);
+    } catch (err) {
+      errors.push(`${id}: ${err.message}`);
+    }
+  }
+  return { valid: false, error: `Not found in UrbanPiper. ${errors.join(' | ')}` };
+}
+
 // ─── SINGLE TOGGLE ENDPOINT ──────────────────────────────────
 router.post("/toggle", async (req, res) => {
   const { location_id, store_name, action, brand = "ovenfresh" } = req.body;
@@ -138,6 +171,13 @@ router.post("/toggle", async (req, res) => {
   if (!["enable", "disable"].includes(action)) return res.status(400).json({ error: 'action must be enable or disable' });
 
   const actorEmail = req.user?.email || 'Unknown';
+
+  // Paused stores are hands-off until explicitly resumed — block even a direct
+  // single-store click, so a normal Enable can't accidentally undo an intentional pause.
+  const pausedCheck = await pool.query(`SELECT paused, pause_reason FROM managed_stores WHERE location_id = $1`, [location_id]);
+  if (pausedCheck.rows[0]?.paused) {
+    return res.status(409).json({ success: false, error: `Store is paused (${pausedCheck.rows[0].pause_reason || 'no reason given'}) — resume it first in Manage Stores.` });
+  }
 
   // Update desired state in DB for the exact UI location_id string
   const desiredState = action === 'enable' ? 'ONLINE' : 'OFFLINE';
@@ -192,8 +232,12 @@ router.post("/toggle/bulk", async (req, res) => {
 
   try {
     const actorEmail = req.user?.email || 'Unknown';
-    const { jobId } = await initiateBulkJob(stores, action, filterContext, actorEmail, 'MANUAL_BULK', performToggleAPI);
-    return res.json({ success: true, jobId, message: "Bulk job initiated" });
+    const { jobId, skippedPaused } = await initiateBulkJob(stores, action, filterContext, actorEmail, 'MANUAL_BULK', performToggleAPI);
+    const pausedNote = skippedPaused ? ` (${skippedPaused} paused store${skippedPaused > 1 ? 's' : ''} skipped)` : '';
+    if (!jobId) {
+      return res.json({ success: true, jobId: null, message: `All selected stores are paused — nothing to do.${pausedNote}` });
+    }
+    return res.json({ success: true, jobId, message: `Bulk job initiated${pausedNote}` });
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
   }
@@ -474,26 +518,103 @@ router.post("/toggle/stores", async (req, res) => {
   if (!name || !brand || !location_id) {
     return res.status(400).json({ error: "name, brand, and location_id required" });
   }
+  if (!["online", "offline"].includes(status)) {
+    return res.status(400).json({ error: "Current status in UrbanPiper (online/offline) is required" });
+  }
   const storeId = id || `ST-${Date.now()}`;
 
+  // Must actually exist in UrbanPiper before we let it into our system — catches typos
+  // and unconfigured brands at add-time instead of the first time someone toggles it.
+  const check = await verifyLocationExists(location_id, brand);
+  if (!check.valid) {
+    return res.status(400).json({ success: false, error: check.error });
+  }
+
+  const desiredState = status === 'online' ? 'ONLINE' : 'OFFLINE';
   try {
     await pool.query(`
-      INSERT INTO managed_stores (id, name, brand, city, zone, location_id, status)
-      VALUES ($1, $2, $3, $4, $5, $6, $7)
-      ON CONFLICT (location_id) DO UPDATE 
-      SET name=$2, brand=$3, city=$4, zone=$5, status=$7
-    `, [storeId, name, brand, city || null, zone || null, location_id, status || 'offline']);
-    res.json({ success: true, message: "Store saved successfully" });
+      INSERT INTO managed_stores (id, name, brand, city, zone, location_id, status, status_updated_at)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+      ON CONFLICT (location_id) DO UPDATE
+      SET name=$2, brand=$3, city=$4, zone=$5, status=$7, status_updated_at=NOW()
+    `, [storeId, name, brand, city || null, zone || null, location_id, status]);
+    await pool.query(`
+      INSERT INTO store_state (location_id, brand, desired_state)
+      VALUES ($1, $2, $3)
+      ON CONFLICT (location_id) DO UPDATE SET desired_state = $3, last_updated = NOW()
+    `, [location_id, brand, desiredState]);
+    res.json({ success: true, message: "Store saved and confirmed in UrbanPiper" });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
+// Deliberately one-way: removes the store from our tracking only. We never try to
+// delete or touch anything in UrbanPiper — if it still exists there, that's expected
+// and fine. But we DO clean up our own related rows so a deleted store can never
+// reappear in an Hourly Recheck/Watchdog batch or linger in the Problems list.
 router.delete("/toggle/stores/:location_id", async (req, res) => {
   const { location_id } = req.params;
   try {
     await pool.query(`DELETE FROM managed_stores WHERE location_id = $1`, [location_id]);
+    await pool.query(`DELETE FROM store_state WHERE location_id = $1`, [location_id]);
+    await pool.query(`DELETE FROM problem_stores WHERE store_id = $1`, [location_id]);
     res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ─── PAUSE / RESUME ───────────────────────────────────────────
+// Pause turns the store off for real and marks it hands-off — excluded from every
+// bulk/automated path (see the paused filter in initiateBulkJob) and from the normal
+// single-toggle button, until explicitly resumed.
+router.post("/toggle/stores/:location_id/pause", async (req, res) => {
+  const { location_id } = req.params;
+  const { reason } = req.body;
+  const actorEmail = req.user?.email || 'Unknown';
+  try {
+    const storeRes = await pool.query(`SELECT name, brand FROM managed_stores WHERE location_id = $1`, [location_id]);
+    const store = storeRes.rows[0];
+    if (!store) return res.status(404).json({ success: false, error: "Store not found" });
+
+    const apiRes = await performToggleAPI(location_id, 'disable', store.brand);
+
+    await pool.query(`
+      UPDATE managed_stores
+      SET paused = true, paused_at = NOW(), paused_by = $1, pause_reason = $2,
+          status = 'offline', status_updated_at = NOW()
+      WHERE location_id = $3
+    `, [actorEmail, reason || null, location_id]);
+    await pool.query(`
+      INSERT INTO store_state (location_id, brand, desired_state)
+      VALUES ($1, $2, 'OFFLINE')
+      ON CONFLICT (location_id) DO UPDATE SET desired_state = 'OFFLINE', last_updated = NOW()
+    `, [location_id, store.brand]);
+    await pool.query(`INSERT INTO toggle_activity (store_name, store_id, brand, email, action, result, error_msg, is_automated, source) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+      [`${store.name} (${location_id})`, location_id, store.brand, actorEmail, 'DISABLE', apiRes.success ? 'SUCCESS' : 'FAILED', apiRes.success ? (reason || null) : apiRes.error, false, 'MANUAL_PAUSE']);
+
+    res.json({ success: true, message: apiRes.success ? "Store paused" : `Store marked paused, but the UrbanPiper call failed: ${apiRes.error}` });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.post("/toggle/stores/:location_id/resume", async (req, res) => {
+  const { location_id } = req.params;
+  const actorEmail = req.user?.email || 'Unknown';
+  try {
+    const storeRes = await pool.query(`SELECT name, brand FROM managed_stores WHERE location_id = $1`, [location_id]);
+    const store = storeRes.rows[0];
+    if (!store) return res.status(404).json({ success: false, error: "Store not found" });
+
+    // Resume just makes it a normal store again — it does NOT auto-enable. The next
+    // explicit Enable click or bulk run is what actually turns it back on.
+    await pool.query(`UPDATE managed_stores SET paused = false, paused_at = NULL, paused_by = NULL, pause_reason = NULL WHERE location_id = $1`, [location_id]);
+    await pool.query(`INSERT INTO toggle_activity (store_name, store_id, brand, email, action, result, is_automated, source) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+      [`${store.name} (${location_id})`, location_id, store.brand, actorEmail, 'MANUAL_RESUME', 'SUCCESS', false, 'MANUAL_RESUME']);
+
+    res.json({ success: true, message: "Store resumed — still offline until enabled" });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }

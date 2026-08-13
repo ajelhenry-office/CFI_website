@@ -66,10 +66,24 @@ export async function initiateBulkJob(stores, action, filterContext, actorEmail,
     throw new Error("stores array and action required");
   }
 
+  // Paused stores are completely hands-off — excluded from every bulk and automated
+  // path (manual bulk, Hourly Recheck, Watchdog all funnel through here), regardless
+  // of which one triggered this run. Only an explicit Resume can bring one back in.
+  const pausedRes = await pool.query(
+    `SELECT location_id FROM managed_stores WHERE location_id = ANY($1) AND paused = true`,
+    [stores.map(s => s.location_id)]
+  );
+  const pausedIds = new Set(pausedRes.rows.map(r => r.location_id));
+  const activeStores = stores.filter(s => !pausedIds.has(s.location_id));
+
+  if (activeStores.length === 0) {
+    return { jobId: null, skippedPaused: pausedIds.size };
+  }
+
   const desiredState = action === 'enable' ? 'ONLINE' : 'OFFLINE';
 
   // Update all desired states immediately using the original location_id (even if it's comma-separated)
-  for (const store of stores) {
+  for (const store of activeStores) {
     await pool.query(`
       INSERT INTO store_state (location_id, brand, desired_state)
       VALUES ($1, $2, $3)
@@ -80,14 +94,14 @@ export async function initiateBulkJob(stores, action, filterContext, actorEmail,
 
   const jobRes = await pool.query(
     `INSERT INTO bulk_toggle_jobs (action, total_stores, pending_count) VALUES ($1, $2, $3) RETURNING id`,
-    [action, stores.length, stores.length]
+    [action, activeStores.length, activeStores.length]
   );
   const jobId = jobRes.rows[0].id;
 
-  runBulkJob(jobId, stores, action, filterContext, performToggleAPI, actorEmail, source)
+  runBulkJob(jobId, activeStores, action, filterContext, performToggleAPI, actorEmail, source)
     .catch(err => console.error("Bulk job error:", err));
 
-  return { jobId };
+  return { jobId, skippedPaused: pausedIds.size };
 }
 
 export async function runBulkJob(jobId, stores, action, filterContext, performToggleAPI, actorEmail = 'System', source = 'MANUAL_BULK') {
