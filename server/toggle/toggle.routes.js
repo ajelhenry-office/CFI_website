@@ -1,6 +1,6 @@
 import express from "express";
 import { pool } from "../ratings/db.js";
-import { checkAndIncrementRateLimit, logProblemStore, runBulkJob } from "./queue.js";
+import { checkAndIncrementRateLimit, logProblemStore, initiateBulkJob } from "./queue.js";
 
 const router = express.Router();
 
@@ -36,7 +36,9 @@ const UP_BRANDS = {
 };
 
 // ─── HELPER: PERFORM API CALL ────────────────────────────────
-async function performToggleAPI(location_id, action, brand) {
+// Exported so the background crons (workers.js) can call it directly, in-process,
+// instead of making a self-referential HTTP request to this same server.
+export async function performToggleAPI(location_id, action, brand) {
   const brandKey = brand.toLowerCase().replace(/[^a-z]/g, "_");
   const creds = UP_BRANDS[brandKey];
   if (!creds) return { success: false, error: `Unknown brand: ${brand}` };
@@ -135,15 +137,15 @@ router.post("/toggle", async (req, res) => {
   if (!location_id || !action) return res.status(400).json({ error: "location_id and action required" });
   if (!["enable", "disable"].includes(action)) return res.status(400).json({ error: 'action must be enable or disable' });
 
-  const brandKey = brand.toLowerCase().replace(/[^a-z]/g, "_");
+  const actorEmail = req.user?.email || 'Unknown';
 
   // Update desired state in DB for the exact UI location_id string
   const desiredState = action === 'enable' ? 'ONLINE' : 'OFFLINE';
   try {
     await pool.query(`
-      INSERT INTO store_state (location_id, brand, desired_state) 
-      VALUES ($1, $2, $3) 
-      ON CONFLICT (location_id) 
+      INSERT INTO store_state (location_id, brand, desired_state)
+      VALUES ($1, $2, $3)
+      ON CONFLICT (location_id)
       DO UPDATE SET desired_state = $3, last_updated = NOW()
     `, [location_id, brand, desiredState]);
   } catch (err) {
@@ -154,24 +156,24 @@ router.post("/toggle", async (req, res) => {
   const rl = await checkAndIncrementRateLimit(brand);
   if (rl === -1) {
     await logProblemStore({ location_id, name: store_name, brand }, action, "Rate Limit Exceeded locally");
-    await pool.query(`INSERT INTO toggle_activity (store_name, store_id, email, action, result, error_msg) VALUES ($1, $2, $3, $4, $5, $6)`, 
-      [`${store_name} (${location_id})`, location_id, 'ajel@curefoods.in', action.toUpperCase(), 'FAILED', 'Rate Limit Exceeded']);
+    await pool.query(`INSERT INTO toggle_activity (store_name, store_id, brand, email, action, result, error_msg, source) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [`${store_name} (${location_id})`, location_id, brand, actorEmail, action.toUpperCase(), 'FAILED', 'Rate Limit Exceeded', 'MANUAL_SINGLE']);
     return res.status(429).json({ error: "Rate limit exceeded (18/min). Try again later." });
   }
 
   try {
     const apiRes = await performToggleAPI(location_id, action, brand);
-    
+
     if (apiRes.success) {
       await pool.query(`UPDATE managed_stores SET status = $1, status_updated_at = NOW() WHERE location_id = $2`, [action === 'enable' ? 'online' : 'offline', location_id]);
       await pool.query(`UPDATE problem_stores SET resolved = true WHERE store_id = $1 AND resolved = false`, [location_id]);
-      await pool.query(`INSERT INTO toggle_activity (store_name, store_id, email, action, result) VALUES ($1, $2, $3, $4, $5)`,
-        [`${store_name} (${location_id})`, location_id, req.user?.email || 'ajel@curefoods.in', action.toUpperCase(), 'SUCCESS']);
+      await pool.query(`INSERT INTO toggle_activity (store_name, store_id, brand, email, action, result, source) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [`${store_name} (${location_id})`, location_id, brand, actorEmail, action.toUpperCase(), 'SUCCESS', 'MANUAL_SINGLE']);
       await pool.query(`UPDATE api_health SET last_sync_time = NOW() WHERE brand = $1`, [brand]);
       return res.json(apiRes);
     } else {
-      await pool.query(`INSERT INTO toggle_activity (store_name, store_id, email, action, result, error_msg) VALUES ($1, $2, $3, $4, $5, $6)`, 
-        [`${store_name} (${location_id})`, location_id, 'ajel@curefoods.in', action.toUpperCase(), 'FAILED', apiRes.error]);
+      await pool.query(`INSERT INTO toggle_activity (store_name, store_id, brand, email, action, result, error_msg, source) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [`${store_name} (${location_id})`, location_id, brand, actorEmail, action.toUpperCase(), 'FAILED', apiRes.error, 'MANUAL_SINGLE']);
       await logProblemStore({ location_id, name: store_name, brand }, action, apiRes.error);
       return res.status(apiRes.status || 500).json(apiRes);
     }
@@ -188,37 +190,9 @@ router.post("/toggle/bulk", async (req, res) => {
     return res.status(400).json({ error: "stores array and action required" });
   }
 
-  const validStores = stores;
-
-  if (validStores.length === 0) {
-    return res.status(403).json({ success: false, error: "Action blocked: Selected live accounts (CakeZone) are frozen." });
-  }
-
   try {
-    const desiredState = action === 'enable' ? 'ONLINE' : 'OFFLINE';
-    
-    // Update all desired states immediately using the original location_id (even if it's comma-separated)
-    for (const store of validStores) {
-      await pool.query(`
-        INSERT INTO store_state (location_id, brand, desired_state) 
-        VALUES ($1, $2, $3) 
-        ON CONFLICT (location_id) 
-        DO UPDATE SET desired_state = $3, last_updated = NOW()
-      `, [store.location_id, store.brand || "ovenfresh", desiredState]);
-    }
-
-    // Flatten stores for the background worker so it works on each ID independently
-    // Actually, since performToggleAPI already splits by comma, we can just pass the original stores!
-    // The background worker will call performToggleAPI with the comma-separated string, which will handle the split.
-    const jobRes = await pool.query(
-      `INSERT INTO bulk_toggle_jobs (action, total_stores, pending_count) VALUES ($1, $2, $3) RETURNING id`,
-      [action, validStores.length, validStores.length]
-    );
-    const jobId = jobRes.rows[0].id;
-    
-    // Kick off async worker
-    runBulkJob(jobId, validStores, action, filterContext, performToggleAPI).catch(err => console.error("Bulk job error:", err));
-    
+    const actorEmail = req.user?.email || 'Unknown';
+    const { jobId } = await initiateBulkJob(stores, action, filterContext, actorEmail, 'MANUAL_BULK', performToggleAPI);
     return res.json({ success: true, jobId, message: "Bulk job initiated" });
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
@@ -240,8 +214,7 @@ router.get("/toggle/sidebar-data", async (req, res) => {
     const bulkRes = await pool.query(`SELECT * FROM bulk_toggle_jobs ORDER BY id DESC LIMIT 1`);
     const activeBulkJob = bulkRes.rows[0] || null;
 
-    // 3. Recent Actions (last 30)
-    await pool.query(`DELETE FROM toggle_activity WHERE created_at < NOW() - INTERVAL '48 hours'`);
+    // 3. Recent Actions (last 30) — retention purge now runs on its own cron in workers.js
     const actionsRes = await pool.query(`SELECT * FROM toggle_activity ORDER BY id DESC LIMIT 30`);
     
     // 4. Problem Stores
@@ -308,8 +281,8 @@ router.post("/toggle/problem/retry", async (req, res) => {
     if (apiRes.success) {
       await pool.query(`UPDATE managed_stores SET status = $1, status_updated_at = NOW() WHERE location_id = $2`, [action === 'enable' ? 'online' : 'offline', problem.store_id]);
       await pool.query(`UPDATE problem_stores SET resolved = true WHERE id = $1`, [id]);
-      await pool.query(`INSERT INTO toggle_activity (store_name, store_id, email, action, result, is_automated) VALUES ($1, $2, $3, $4, $5, $6)`,
-        [`${problem.store_name || problem.store_id} (${problem.store_id})`, problem.store_id, req.user?.email || 'System', action.toUpperCase(), 'SUCCESS', false]);
+      await pool.query(`INSERT INTO toggle_activity (store_name, store_id, brand, email, action, result, is_automated, source) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [`${problem.store_name || problem.store_id} (${problem.store_id})`, problem.store_id, problem.brand, req.user?.email || 'Unknown', action.toUpperCase(), 'SUCCESS', false, 'MANUAL_RETRY']);
       return res.json({ success: true, message: "Retry succeeded" });
     } else {
       await logProblemStore({ location_id: problem.store_id, name: problem.store_name, brand: problem.brand }, action, apiRes.error);
@@ -336,8 +309,8 @@ router.post("/toggle/problem/force-sync", async (req, res) => {
 
     await pool.query(`UPDATE managed_stores SET status = $1, status_updated_at = NOW() WHERE location_id = $2`, [status, problem.store_id]);
     await pool.query(`UPDATE problem_stores SET resolved = true WHERE id = $1`, [id]);
-    await pool.query(`INSERT INTO toggle_activity (store_name, store_id, email, action, result, is_automated) VALUES ($1, $2, $3, $4, $5, $6)`,
-      [`${problem.store_name || problem.store_id} (${problem.store_id})`, problem.store_id, req.user?.email || 'System', 'MANUAL_CORRECTION', 'SUCCESS', false]);
+    await pool.query(`INSERT INTO toggle_activity (store_name, store_id, brand, email, action, result, is_automated, source) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [`${problem.store_name || problem.store_id} (${problem.store_id})`, problem.store_id, problem.brand, req.user?.email || 'Unknown', 'MANUAL_CORRECTION', 'SUCCESS', false, 'MANUAL_CORRECTION']);
     return res.json({ success: true, message: `Marked as ${status} (manually confirmed in UrbanPiper)` });
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
@@ -362,8 +335,8 @@ router.post("/toggle/correct-status", async (req, res) => {
       DO UPDATE SET desired_state = $3, last_updated = NOW()
     `, [location_id, brand || "ovenfresh", desiredState]);
     await pool.query(`UPDATE problem_stores SET resolved = true WHERE store_id = $1 AND resolved = false`, [location_id]);
-    await pool.query(`INSERT INTO toggle_activity (store_name, store_id, email, action, result, is_automated) VALUES ($1, $2, $3, $4, $5, $6)`,
-      [`${store_name || location_id} (${location_id})`, location_id, req.user?.email || 'System', 'MANUAL_CORRECTION', 'SUCCESS', false]);
+    await pool.query(`INSERT INTO toggle_activity (store_name, store_id, brand, email, action, result, is_automated, source) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [`${store_name || location_id} (${location_id})`, location_id, brand || null, req.user?.email || 'Unknown', 'MANUAL_CORRECTION', 'SUCCESS', false, 'MANUAL_CORRECTION']);
     return res.json({ success: true, message: `Store marked ${status} to match UrbanPiper` });
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
@@ -409,17 +382,19 @@ router.get('/history/download', async (req, res) => {
   try {
     const historyRes = await pool.query(`SELECT * FROM toggle_activity ORDER BY created_at DESC`);
     
-    let csvStr = "Date/Time,User Email,Action Type,Result,Is Automated,Details\n";
+    let csvStr = "Date/Time,User Email,Brand,Source,Action Type,Result,Is Automated,Details\n";
     historyRes.rows.forEach(row => {
       const dt = new Date(row.created_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
       const email = row.email || 'System';
+      const brand = row.brand || '';
+      const source = row.source || '';
       const action = row.action;
       const result = row.result;
       const isAuto = row.is_automated ? "Yes" : "No";
       // Escape commas in store_name for CSV
       const details = `"${(row.store_name || '').replace(/"/g, '""')}"`;
-      
-      csvStr += `"${dt}","${email}","${action}","${result}","${isAuto}",${details}\n`;
+
+      csvStr += `"${dt}","${email}","${brand}","${source}","${action}","${result}","${isAuto}",${details}\n`;
     });
 
     res.setHeader('Content-Type', 'text/csv');
@@ -460,11 +435,11 @@ router.post("/toggle/update-orders", async (req, res) => {
       
       if (apiRes.success) {
         await pool.query(`UPDATE managed_stores SET status = 'offline', status_updated_at = NOW() WHERE location_id = $1`, [location_id]);
-        await pool.query(`INSERT INTO toggle_activity (store_name, store_id, email, action, result, is_automated) VALUES ($1, $2, $3, $4, $5, $6)`, 
-          [`${store_name || location_id} (${location_id})`, location_id, 'system@curefoods.in', 'DISABLE', 'SUCCESS', true]);
+        await pool.query(`INSERT INTO toggle_activity (store_name, store_id, brand, email, action, result, is_automated, source) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+          [`${store_name || location_id} (${location_id})`, location_id, brandClean, 'System — Auto-Throttle', 'DISABLE', 'SUCCESS', true, 'AUTO_THROTTLE']);
       } else {
-        await pool.query(`INSERT INTO toggle_activity (store_name, store_id, email, action, result, is_automated, error_msg) VALUES ($1, $2, $3, $4, $5, $6, $7)`, 
-          [`${store_name || location_id} (${location_id})`, location_id, 'system@curefoods.in', 'DISABLE', 'FAILED', true, apiRes.error]);
+        await pool.query(`INSERT INTO toggle_activity (store_name, store_id, brand, email, action, result, is_automated, error_msg, source) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+          [`${store_name || location_id} (${location_id})`, location_id, brandClean, 'System — Auto-Throttle', 'DISABLE', 'FAILED', true, apiRes.error, 'AUTO_THROTTLE']);
       }
     }
 
