@@ -10,11 +10,17 @@ export function startWorkers() {
   startTimingWorker();
 
   // Hourly Recheck Cron (Runs every 60 minutes)
-  // Grabs all stores where desired_state = 'ONLINE' and pushes to the bulk queue.
+  // Re-pushes "enable" to every store the user wants online (desired_state = ONLINE).
+  // This is safe to do blindly: UrbanPiper's enable/disable only controls whether a store
+  // is ALLOWED to be live within its own Swiggy/Zomato operating-hours window — it never
+  // forces a store live outside those hours, and it never touches stores the user has
+  // explicitly disabled (desired_state = OFFLINE is excluded here entirely). So this can
+  // never fight the daily schedule or a manual override — it only ever reinforces intent
+  // that's already supposed to be in effect.
   setInterval(async () => {
     try {
       console.log("[WORKERS] Running Hourly Recheck Cron...");
-      
+
       // Check if there is already a RUNNING or PAUSED bulk job. If so, skip this hour to prevent overlap lock.
       const lockRes = await pool.query(`SELECT id FROM bulk_toggle_jobs WHERE status IN ('RUNNING', 'PAUSED')`);
       if (lockRes.rows.length > 0) {
@@ -53,11 +59,11 @@ export function startWorkers() {
     try {
       console.log("[WORKERS] Running Watchdog Cron...");
       
-      // Look for eatfit stores that want to be online, but currently have < 15 active_orders
+      // Look for stores that want to be online, but currently have < 15 active_orders
       const storesRes = await pool.query(`
         SELECT location_id, brand 
         FROM store_state 
-        WHERE desired_state = 'ONLINE' AND active_orders < 15 AND brand ILIKE '%eatfit%'
+        WHERE desired_state = 'ONLINE' AND active_orders < 15
       `);
       
       const stores = storesRes.rows;

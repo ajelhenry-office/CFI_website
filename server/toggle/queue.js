@@ -37,11 +37,12 @@ export async function checkAndIncrementRateLimit(brand) {
 }
 
 export async function logProblemStore(store, action, errorMsg) {
+  const storeName = store.name || store.store_name;
   const check = await pool.query(`SELECT id, fail_count FROM problem_stores WHERE store_id = $1 AND issue_type = 'FAILED'`, [store.location_id]);
   if (check.rows.length > 0) {
     await pool.query(`UPDATE problem_stores SET fail_count = fail_count + 1, last_attempt_at = NOW(), resolved = false WHERE id = $1`, [check.rows[0].id]);
   } else {
-    await pool.query(`INSERT INTO problem_stores (store_name, store_id, brand, issue_type) VALUES ($1, $2, $3, 'FAILED')`, [store.name, store.location_id, store.brand]);
+    await pool.query(`INSERT INTO problem_stores (store_name, store_id, brand, issue_type) VALUES ($1, $2, $3, 'FAILED')`, [storeName, store.location_id, store.brand]);
   }
 }
 
@@ -85,8 +86,8 @@ export async function runBulkJob(jobId, stores, action, filterContext, performTo
 
           // Apply 15-order threshold (ONLY for eatfit)
           if (desired_state === 'ONLINE') {
-            if (brand.toLowerCase().includes('eatfit') && active_orders > 15) {
-               console.log(`[THROTTLE] ${store.location_id} active_orders = ${active_orders} > 15 (eatfit). Auto-throttling to OFFLINE.`);
+            if (brand.toLowerCase().includes('eatfit') && active_orders >= 15) {
+               console.log(`[THROTTLE] ${store.location_id} active_orders = ${active_orders} >= 15. Auto-throttling to OFFLINE.`);
                currentAction = 'disable';
             } else {
                currentAction = 'enable';
@@ -124,7 +125,8 @@ export async function runBulkJob(jobId, stores, action, filterContext, performTo
           throw new Error(toggleRes.error);
         }
         
-        await pool.query(`UPDATE managed_stores SET status = $1 WHERE location_id = $2`, [currentAction === 'enable' ? 'online' : 'offline', store.location_id]);
+        await pool.query(`UPDATE managed_stores SET status = $1, status_updated_at = NOW() WHERE location_id = $2`, [currentAction === 'enable' ? 'online' : 'offline', store.location_id]);
+        await pool.query(`UPDATE problem_stores SET resolved = true WHERE store_id = $1 AND resolved = false`, [store.location_id]);
         await pool.query('UPDATE bulk_toggle_jobs SET success_count = success_count + 1, pending_count = pending_count - 1, completed_store_ids = array_append(completed_store_ids, $1) WHERE id = $2', [store.location_id, jobId]);
         await pool.query(`UPDATE api_health SET last_sync_time = NOW() WHERE brand = $1`, [brand]);
       } catch (err) {

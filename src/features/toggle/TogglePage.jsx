@@ -169,8 +169,27 @@ export default function TogglePage({ userRole }) {
     }
   };
 
+  // Manual reconcile: staff already confirmed the real status directly in UrbanPiper.
+  // This never calls UrbanPiper (it's already correct there) — it only corrects our records.
+  const handleCorrect = async (store, actualStatus) => {
+    const res = await post("/api/toggle/correct-status", {
+      location_id: store.location_id,
+      store_name: store.name,
+      brand: store.brand.toLowerCase().replace(/[^a-z]/g, "_"),
+      status: actualStatus,
+    });
+    if (res.success) {
+      setStores((prev) => prev.map((s) => s.id === store.id ? { ...s, status: actualStatus, status_updated_at: new Date().toISOString() } : s));
+      fetchSidebar();
+    } else {
+      alert(`Correction failed: ${res.error || "Unknown error"}`);
+    }
+  };
+
   const handleBulk = async (action) => {
-    const targets = filtered.filter((s) => action === "enable" ? s.status !== "online" : s.status === "online");
+    // Send every currently-filtered store, regardless of our own possibly-stale local
+    // status — this must hit UrbanPiper for all of them, not just ones we think need it.
+    const targets = filtered;
     if (!targets.length) return;
     if (!confirm(`${action === "enable" ? "Enable" : "Disable"} ${targets.length} stores?`)) return;
     setIsBulking(true);
@@ -318,12 +337,13 @@ export default function TogglePage({ userRole }) {
       ) : (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 14 }}>
           {filtered.map((store) => (
-            <StoreCard 
-              key={store.id} 
-              store={store} 
+            <StoreCard
+              key={store.id}
+              store={store}
               dbState={storeStates[store.location_id]}
-              onToggle={handleToggle} 
-              isBulking={isBulking} 
+              onToggle={handleToggle}
+              onCorrect={handleCorrect}
+              isBulking={isBulking}
             />
           ))}
         </div>

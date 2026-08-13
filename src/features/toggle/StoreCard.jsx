@@ -7,11 +7,39 @@ const BRAND_COLOR = {
   "EatFit": "#15803d",
 };
 
-export default function StoreCard({ store, onToggle, isBulking, dbState }) {
+const STALE_AFTER_MS = 6 * 60 * 60 * 1000; // 6 hours
+
+function timeAgo(iso) {
+  if (!iso) return null;
+  const diffMs = Date.now() - new Date(iso).getTime();
+  if (diffMs < 0) return "just now";
+  const mins = Math.floor(diffMs / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  return `${days}d ago`;
+}
+
+const smallBtn = {
+  flex: 1,
+  padding: "6px 0",
+  borderRadius: 6,
+  border: "none",
+  fontSize: 9.5,
+  fontWeight: 800,
+  cursor: "pointer",
+  fontFamily: FONT,
+};
+
+export default function StoreCard({ store, onToggle, onCorrect, isBulking, dbState }) {
   const [loading, setLoading] = useState(false);
   const [hovered, setHovered] = useState(false);
   const [mockOrders, setMockOrders] = useState(dbState?.active_orders || 0);
-  
+  const [showCorrect, setShowCorrect] = useState(false);
+  const [correcting, setCorrecting] = useState(false);
+
   const isOnline = store.status === "online";
   const desiredState = dbState?.desired_state || (isOnline ? "ONLINE" : "OFFLINE");
   const busy = loading || isBulking;
@@ -23,7 +51,16 @@ export default function StoreCard({ store, onToggle, isBulking, dbState }) {
     setLoading(false);
   };
 
+  const handleCorrect = async (actualStatus) => {
+    setCorrecting(true);
+    await onCorrect(store, actualStatus);
+    setCorrecting(false);
+    setShowCorrect(false);
+  };
+
   const brandColor = BRAND_COLOR[store.brand] || C.primary;
+  const confirmedText = timeAgo(store.status_updated_at);
+  const isStale = store.status_updated_at && (Date.now() - new Date(store.status_updated_at).getTime()) > STALE_AFTER_MS;
 
   return (
     <div
@@ -53,9 +90,9 @@ export default function StoreCard({ store, onToggle, isBulking, dbState }) {
             <span style={{ fontSize: 10, fontWeight: 800, color: brandColor, textTransform: "uppercase", letterSpacing: 0.8, backgroundColor: `${brandColor}12`, borderRadius: 6, padding: "3px 7px", alignSelf: "flex-start" }}>
               {(store.brand === 'olio' || store.brand === 'eatfit') && store.zone ? store.zone : store.brand}
             </span>
-            <span style={{ 
-              fontSize: 9, fontWeight: 800, 
-              color: mockOrders > 8 ? "#dc2626" : "#15803d", 
+            <span style={{
+              fontSize: 9, fontWeight: 800,
+              color: mockOrders > 8 ? "#dc2626" : "#15803d",
               backgroundColor: mockOrders > 8 ? "#fee2e2" : "#dcfce7",
               borderRadius: 4, padding: "2px 6px", alignSelf: "flex-start"
             }}>
@@ -81,6 +118,48 @@ export default function StoreCard({ store, onToggle, isBulking, dbState }) {
             {[store.city, store.zone].filter(Boolean).join(" · ")}
           </div>
         </div>
+
+        {/* Confidence indicator + manual correction trigger */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <span style={{ fontSize: 9, fontWeight: isStale ? 700 : 500, color: isStale ? "#d97706" : C.muted }}>
+            {confirmedText ? `Confirmed ${confirmedText}` : "Not yet confirmed"}
+          </span>
+          {!showCorrect && (
+            <button
+              onClick={() => setShowCorrect(true)}
+              title="Use this if UrbanPiper shows a different status than what's shown here"
+              style={{ background: "none", border: "none", color: C.muted, fontSize: 9, fontWeight: 700, cursor: "pointer", textDecoration: "underline", padding: 0 }}
+            >
+              Fix mismatch?
+            </button>
+          )}
+        </div>
+
+        {showCorrect && (
+          <div style={{ display: "flex", gap: 5 }}>
+            <button
+              onClick={() => handleCorrect("online")}
+              disabled={correcting}
+              style={{ ...smallBtn, backgroundColor: "#dcfce7", color: "#15803d", opacity: correcting ? 0.6 : 1 }}
+            >
+              Actually Online
+            </button>
+            <button
+              onClick={() => handleCorrect("offline")}
+              disabled={correcting}
+              style={{ ...smallBtn, backgroundColor: "#fee2e2", color: "#b91c1c", opacity: correcting ? 0.6 : 1 }}
+            >
+              Actually Offline
+            </button>
+            <button
+              onClick={() => setShowCorrect(false)}
+              disabled={correcting}
+              style={{ ...smallBtn, flex: "0 0 auto", padding: "6px 10px", backgroundColor: "transparent", color: C.muted }}
+            >
+              ✕
+            </button>
+          </div>
+        )}
 
         {/* Toggle button */}
         <button
