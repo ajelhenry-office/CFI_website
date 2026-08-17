@@ -87,7 +87,10 @@ router.post('/login', async (req, res) => {
   }
 
   try {
-    const { rows } = await pool.query('SELECT * FROM authorized_users WHERE email = $1', [email]);
+    // Case-insensitive lookup — emails are stored lowercase going forward (see
+    // POST /users below), but this also protects against any existing rows that
+    // predate that normalization, or a login attempt typed with different casing.
+    const { rows } = await pool.query('SELECT * FROM authorized_users WHERE LOWER(email) = LOWER($1)', [email]);
     const user = rows[0];
 
     if (!user) {
@@ -124,7 +127,7 @@ router.post('/forgot-password', async (req, res) => {
   }
 
   try {
-    const { rows } = await pool.query('SELECT * FROM authorized_users WHERE email = $1', [email]);
+    const { rows } = await pool.query('SELECT * FROM authorized_users WHERE LOWER(email) = LOWER($1)', [email]);
     const user = rows[0];
 
     if (!user) {
@@ -181,11 +184,12 @@ router.get('/users', authMiddleware, adminMiddleware, async (req, res) => {
 
 // 3. Add new user (Admin / Super Admin only — scoped to roles they're allowed to grant)
 router.post('/users', authMiddleware, adminMiddleware, async (req, res) => {
-  const { email, role } = req.body;
+  const { role } = req.body;
+  const email = (req.body.email || '').trim().toLowerCase();
   if (!email || !role) {
     return res.status(400).json({ success: false, error: 'Email and role required' });
   }
-  if (!email.toLowerCase().endsWith('@curefoods.in')) {
+  if (!email.endsWith('@curefoods.in')) {
     return res.status(400).json({ success: false, error: 'Only @curefoods.in email addresses are allowed.' });
   }
   if (!grantableRoles(req.user.role).includes(role)) {
