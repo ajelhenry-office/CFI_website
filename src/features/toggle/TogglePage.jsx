@@ -224,8 +224,23 @@ export default function TogglePage({ userRole, userRoles }) {
     setIsBulking(false);
   };
 
+  // Full-tab freeze — a manual, DB-backed kill switch admins can flip when store
+  // changes need to stop entirely (e.g. a testing window). No store cards, no
+  // buttons, nothing that could start a real UrbanPiper action gets rendered at all.
+  if (sidebarData?.frozen) {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: "60vh", gap: 16, fontFamily: FONT, textAlign: "center" }}>
+        <div style={{ fontSize: 40 }}>🔒</div>
+        <div style={{ fontSize: 20, fontWeight: 800, color: C.primary }}>Toggle Tab Frozen</div>
+        <div style={{ fontSize: 14, color: C.muted, maxWidth: 420, lineHeight: 1.6 }}>
+          No store changes can be made right now — manual toggles, bulk actions, and store management are all paused for testing. This will be unlocked once testing is confirmed.
+        </div>
+      </div>
+    );
+  }
+
   const headerActionsNode = document.getElementById("header-actions");
-  
+
   const statsContent = (
     <div style={{ display: "flex", gap: 12 }}>
       <StatBox label="TOTAL" value={baseFiltered.length} color="#1e3a8a" bg="#f0fdfa" isActive={statusFilter === "Total"} onClick={() => setStatusFilter("Total")} />

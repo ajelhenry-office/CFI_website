@@ -19,6 +19,28 @@ function canManageStores(req, res, next) {
   next();
 }
 
+// ─── TOGGLE FREEZE ────────────────────────────────────────────
+// A manual, DB-backed kill switch for "no store changes right now" (e.g. testing
+// windows). Backed by a table (not an env var/in-memory flag) so it survives restarts
+// and can be flipped with one UPDATE, with no redeploy needed to lift it.
+export async function isToggleFrozen() {
+  const { rows } = await pool.query(`SELECT value FROM app_settings WHERE key = 'toggle_frozen'`);
+  return rows.length > 0 && rows[0].value === 'true';
+}
+
+const FROZEN_MESSAGE = "The Toggle tab is frozen right now — no store changes can be made until it's unfrozen.";
+
+// Route-level gate: blocks anything that can start a NEW real UrbanPiper action
+// (manual toggle, bulk, retry, add/pause/resume a store). Deliberately does NOT
+// block bulk/cancel or bulk/pause — those only stop an already-running job, never
+// start one, so leaving them live is strictly safer during a freeze.
+async function blockIfFrozen(req, res, next) {
+  if (await isToggleFrozen()) {
+    return res.status(423).json({ success: false, error: FROZEN_MESSAGE, frozen: true });
+  }
+  next();
+}
+
 // ─── URBANPIPER CONFIG ───────────────────────────────────────
 const UP_LOCATION_URL = "https://api.urbanpiper.com/hub/api/v1/location/";
 // Matches the platform list used by CakeZone's own working Apps Script tool, which
@@ -61,6 +83,14 @@ export const UP_BRANDS = {
 // Exported so the background crons (workers.js) can call it directly, in-process,
 // instead of making a self-referential HTTP request to this same server.
 export async function performToggleAPI(location_id, action, brand) {
+  // Backstop for the background crons (Hourly Recheck, EatFit threshold enforcer) —
+  // they call this directly, in-process, bypassing every HTTP route, so the route-level
+  // freeze gate never sees them. Checking here too means a freeze truly stops every
+  // path that can touch a real store, not just the ones triggered from the UI.
+  if (await isToggleFrozen()) {
+    return { success: false, error: FROZEN_MESSAGE, status: 423 };
+  }
+
   const brandKey = brand.toLowerCase().replace(/[^a-z]/g, "_");
   const creds = UP_BRANDS[brandKey];
   if (!creds) return { success: false, error: `Unknown brand: ${brand}` };
@@ -254,7 +284,7 @@ async function verifyLocationExists(location_id, brand, currentStatus) {
 }
 
 // ─── SINGLE TOGGLE ENDPOINT ──────────────────────────────────
-router.post("/toggle", async (req, res) => {
+router.post("/toggle", blockIfFrozen, async (req, res) => {
   const { location_id, store_name, action, brand = "ovenfresh" } = req.body;
   if (!location_id || !action) return res.status(400).json({ error: "location_id and action required" });
   if (!["enable", "disable"].includes(action)) return res.status(400).json({ error: 'action must be enable or disable' });
@@ -313,7 +343,7 @@ router.post("/toggle", async (req, res) => {
 });
 
 // ─── BULK TOGGLE ENDPOINT ──────────────────────────────────
-router.post("/toggle/bulk", async (req, res) => {
+router.post("/toggle/bulk", blockIfFrozen, async (req, res) => {
   const { stores, action, filterContext = "" } = req.body;
   if (!stores || !Array.isArray(stores) || stores.length === 0 || !action) {
     return res.status(400).json({ error: "stores array and action required" });
@@ -365,6 +395,7 @@ router.get("/toggle/sidebar-data", async (req, res) => {
     return res.json({
       success: true,
       data: {
+        frozen: await isToggleFrozen(),
         apiHealth: {
           status: healthStatus,
           requestsThisMinute: requestsUsed, // Max among brands
@@ -399,7 +430,7 @@ router.get("/toggle/audit-log", async (req, res) => {
 // ─── RESOLVE PROBLEM ENDPOINTS ────────────────────────────────
 // Actually re-attempts the toggle that previously failed, using the store's
 // recorded desired_state to know which action (enable/disable) to retry.
-router.post("/toggle/problem/retry", async (req, res) => {
+router.post("/toggle/problem/retry", blockIfFrozen, async (req, res) => {
   const { id } = req.body;
   try {
     const probRes = await pool.query(`SELECT * FROM problem_stores WHERE id = $1`, [id]);
@@ -524,7 +555,7 @@ router.post("/toggle/bulk/pause", async (req, res) => {
   res.json({ success: true });
 });
 
-router.post("/toggle/bulk/resume", async (req, res) => {
+router.post("/toggle/bulk/resume", blockIfFrozen, async (req, res) => {
   const { jobId } = req.body;
   if (!(await canControlJob(req, res, jobId))) return;
   await pool.query(`UPDATE bulk_toggle_jobs SET status = 'RUNNING' WHERE id = $1`, [jobId]);
@@ -578,7 +609,7 @@ router.get("/toggle/stores", async (req, res) => {
   }
 });
 
-router.post("/toggle/stores", canManageStores, async (req, res) => {
+router.post("/toggle/stores", canManageStores, blockIfFrozen, async (req, res) => {
   const { id, name, brand, city, zone, location_id, status } = req.body;
   if (!name || !brand || !location_id) {
     return res.status(400).json({ error: "name, brand, and location_id required" });
@@ -618,7 +649,7 @@ router.post("/toggle/stores", canManageStores, async (req, res) => {
 // delete or touch anything in UrbanPiper — if it still exists there, that's expected
 // and fine. But we DO clean up our own related rows so a deleted store can never
 // reappear in an Hourly Recheck/Watchdog batch or linger in the Problems list.
-router.delete("/toggle/stores/:location_id", canManageStores, async (req, res) => {
+router.delete("/toggle/stores/:location_id", canManageStores, blockIfFrozen, async (req, res) => {
   const { location_id } = req.params;
   try {
     await pool.query(`DELETE FROM managed_stores WHERE location_id = $1`, [location_id]);
@@ -634,7 +665,7 @@ router.delete("/toggle/stores/:location_id", canManageStores, async (req, res) =
 // Pause turns the store off for real and marks it hands-off — excluded from every
 // bulk/automated path (see the paused filter in initiateBulkJob) and from the normal
 // single-toggle button, until explicitly resumed.
-router.post("/toggle/stores/:location_id/pause", canManageStores, async (req, res) => {
+router.post("/toggle/stores/:location_id/pause", canManageStores, blockIfFrozen, async (req, res) => {
   const { location_id } = req.params;
   const { reason } = req.body;
   const actorEmail = req.user?.email || 'Unknown';
@@ -670,7 +701,7 @@ router.post("/toggle/stores/:location_id/pause", canManageStores, async (req, re
   }
 });
 
-router.post("/toggle/stores/:location_id/resume", canManageStores, async (req, res) => {
+router.post("/toggle/stores/:location_id/resume", canManageStores, blockIfFrozen, async (req, res) => {
   const { location_id } = req.params;
   const actorEmail = req.user?.email || 'Unknown';
   try {
@@ -685,6 +716,31 @@ router.post("/toggle/stores/:location_id/resume", canManageStores, async (req, r
       [`${store.name} (${location_id})`, location_id, store.brand, actorEmail, 'MANUAL_RESUME', 'SUCCESS', false, 'MANUAL_RESUME']);
 
     res.json({ success: true, message: "Store resumed — still offline until enabled" });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Admin/Super Admin can flip the freeze themselves without needing direct DB/SSH
+// access — e.g. to lock the tab before a maintenance window and unlock it after.
+router.post("/toggle/freeze", async (req, res) => {
+  const roles = req.user?.roles || [req.user?.role];
+  if (!roles.some(r => ['super_admin', 'admin'].includes(r))) {
+    return res.status(403).json({ success: false, error: "Admin access required." });
+  }
+  const { frozen } = req.body;
+  if (typeof frozen !== 'boolean') {
+    return res.status(400).json({ success: false, error: "frozen (boolean) is required." });
+  }
+  try {
+    await pool.query(
+      `INSERT INTO app_settings (key, value) VALUES ('toggle_frozen', $1)
+       ON CONFLICT (key) DO UPDATE SET value = $1`,
+      [String(frozen)]
+    );
+    await pool.query(`INSERT INTO toggle_activity (store_name, store_id, brand, email, action, result, is_automated, source) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+      ['— Toggle tab —', null, null, req.user?.email || 'Unknown', frozen ? 'FREEZE' : 'UNFREEZE', 'SUCCESS', false, frozen ? 'MANUAL_FREEZE' : 'MANUAL_UNFREEZE']);
+    res.json({ success: true, frozen });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
