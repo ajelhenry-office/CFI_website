@@ -202,9 +202,15 @@ async function tryVerifyAction(ids, creds) {
 // correctly-described existing store (it's already in that state); for an incorrectly
 // declared status it reconciles UrbanPiper to match what was entered, which is
 // reasonable for an admin actively adding a store, not a surprising side effect.
+//
+// Attempts EVERY id in the group, not just until the first success — a multi-ID store
+// is several brand storefronts sharing one kitchen, and stopping early would leave the
+// rest of the group untouched (never reconciled to the declared status) instead of
+// matching performToggleAPI's behavior, which always attempts every id in the group.
 async function tryStatusAction(ids, creds, currentStatus) {
   const action = currentStatus === 'online' ? 'enable' : 'disable';
   const errors = [];
+  let anySucceeded = false;
   for (const id of ids) {
     try {
       const response = await fetch(UP_LOCATION_URL, {
@@ -216,13 +222,17 @@ async function tryStatusAction(ids, creds, currentStatus) {
         },
         body: JSON.stringify({ location_ref_id: String(id), action, platforms: UP_PLATFORMS }),
       });
-      if (response.status >= 200 && response.status < 300) return { valid: true };
+      if (response.status >= 200 && response.status < 300) {
+        anySucceeded = true;
+        continue;
+      }
       const text = await response.text();
       errors.push(`${id}: ${text.slice(0, 200)}`);
     } catch (err) {
       errors.push(`${id}: ${err.message}`);
     }
   }
+  if (anySucceeded) return { valid: true };
   return { valid: false, error: `Not found in UrbanPiper. ${errors.join(' | ')}` };
 }
 
