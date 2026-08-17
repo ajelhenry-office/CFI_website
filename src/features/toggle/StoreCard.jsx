@@ -48,11 +48,12 @@ export default function StoreCard({ store, onToggle, onCorrect, isBulking, dbSta
   }, [dbState?.active_orders]);
 
   const isOnline = store.status === "online";
+  const isPaused = !!store.paused;
   const desiredState = dbState?.desired_state || (isOnline ? "ONLINE" : "OFFLINE");
   const busy = loading || isBulking;
 
   const handleClick = async () => {
-    if (busy) return;
+    if (busy || isPaused) return;
     setLoading(true);
     await onToggle(store, isOnline ? "disable" : "enable");
     setLoading(false);
@@ -88,7 +89,7 @@ export default function StoreCard({ store, onToggle, onCorrect, isBulking, dbSta
       }}
     >
       {/* Status bar */}
-      <div style={{ height: 4, backgroundColor: isOnline ? "#22c55e" : "#ef4444", transition: "background-color 0.3s" }} />
+      <div style={{ height: 4, backgroundColor: isPaused ? "#f59e0b" : (isOnline ? "#22c55e" : "#ef4444"), transition: "background-color 0.3s" }} />
 
       <div style={{ padding: "14px 16px", display: "flex", flexDirection: "column", gap: 10, flex: 1 }}>
         {/* Brand badge + status */}
@@ -107,10 +108,16 @@ export default function StoreCard({ store, onToggle, onCorrect, isBulking, dbSta
             </span>
           </div>
           <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
-            <span style={{ fontSize: 10, fontWeight: 800, color: isOnline ? "#15803d" : "#dc2626", border: `1px solid ${isOnline ? "#15803d" : "#dc2626"}33`, borderRadius: 20, padding: "3px 9px" }}>
-              {isOnline ? "ONLINE" : "OFFLINE"}
-            </span>
-            {desiredState && desiredState.toLowerCase() !== (isOnline ? "online" : "offline") && (
+            {isPaused ? (
+              <span style={{ fontSize: 10, fontWeight: 800, color: "#b45309", border: "1px solid #b4530933", borderRadius: 20, padding: "3px 9px" }}>
+                ⏸ PAUSED
+              </span>
+            ) : (
+              <span style={{ fontSize: 10, fontWeight: 800, color: isOnline ? "#15803d" : "#dc2626", border: `1px solid ${isOnline ? "#15803d" : "#dc2626"}33`, borderRadius: 20, padding: "3px 9px" }}>
+                {isOnline ? "ONLINE" : "OFFLINE"}
+              </span>
+            )}
+            {!isPaused && desiredState && desiredState.toLowerCase() !== (isOnline ? "online" : "offline") && (
               <span style={{ fontSize: 9, fontWeight: 700, color: "#d97706", backgroundColor: "#fef3c7", padding: "2px 6px", borderRadius: 4 }}>
                 Target: {desiredState}
               </span>
@@ -129,9 +136,9 @@ export default function StoreCard({ store, onToggle, onCorrect, isBulking, dbSta
         {/* Confidence indicator + manual correction trigger */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <span style={{ fontSize: 9, fontWeight: isStale ? 700 : 500, color: isStale ? "#d97706" : C.muted }}>
-            {confirmedText ? `Confirmed ${confirmedText}` : "Not yet confirmed"}
+            {isPaused ? (store.pause_reason ? `"${store.pause_reason}"` : "No reason given") : (confirmedText ? `Confirmed ${confirmedText}` : "Not yet confirmed")}
           </span>
-          {!showCorrect && (
+          {!isPaused && !showCorrect && (
             <button
               onClick={() => setShowCorrect(true)}
               title="Use this if UrbanPiper shows a different status than what's shown here"
@@ -142,7 +149,7 @@ export default function StoreCard({ store, onToggle, onCorrect, isBulking, dbSta
           )}
         </div>
 
-        {showCorrect && (
+        {!isPaused && showCorrect && (
           <div style={{ display: "flex", gap: 5 }}>
             <button
               onClick={() => handleCorrect("online")}
@@ -169,25 +176,31 @@ export default function StoreCard({ store, onToggle, onCorrect, isBulking, dbSta
         )}
 
         {/* Toggle button */}
-        <button
-          onClick={handleClick}
-          disabled={busy}
-          style={{
-            marginTop: "auto",
-            padding: "8px 0",
-            borderRadius: 8,
-            border: "none",
-            fontSize: 12,
-            fontWeight: 800,
-            cursor: busy ? "not-allowed" : "pointer",
-            fontFamily: FONT,
-            transition: "all 0.2s",
-            backgroundColor: isOnline ? "#fee2e2" : "#dcfce7",
-            color: isOnline ? "#b91c1c" : "#15803d",
-          }}
-        >
-          {loading ? "Working…" : isOnline ? "Disable" : "Enable"}
-        </button>
+        {isPaused ? (
+          <div style={{ marginTop: "auto", padding: "8px 0", borderRadius: 8, fontSize: 11, fontWeight: 700, textAlign: "center", backgroundColor: "#fef3c7", color: "#b45309" }}>
+            Paused — resume in Manage Stores
+          </div>
+        ) : (
+          <button
+            onClick={handleClick}
+            disabled={busy}
+            style={{
+              marginTop: "auto",
+              padding: "8px 0",
+              borderRadius: 8,
+              border: "none",
+              fontSize: 12,
+              fontWeight: 800,
+              cursor: busy ? "not-allowed" : "pointer",
+              fontFamily: FONT,
+              transition: "all 0.2s",
+              backgroundColor: isOnline ? "#fee2e2" : "#dcfce7",
+              color: isOnline ? "#b91c1c" : "#15803d",
+            }}
+          >
+            {loading ? "Working…" : isOnline ? "Disable" : "Enable"}
+          </button>
+        )}
       </div>
     </div>
   );

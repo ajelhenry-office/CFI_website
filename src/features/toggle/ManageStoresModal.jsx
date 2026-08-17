@@ -19,6 +19,9 @@ export default function ManageStoresModal({ onClose, refreshStores, stores = [] 
   const [addForm, setAddForm] = useState({ name: "", brand: "", city: "", zone: "", location_id: "", status: "offline" });
   const [addError, setAddError] = useState("");
   const [search, setSearch] = useState("");
+  const [pausingId, setPausingId] = useState(null); // location_id currently showing the reason prompt
+  const [pauseReason, setPauseReason] = useState("");
+  const [busyId, setBusyId] = useState(null);
 
   const brandsList = useMemo(() => [...new Set(stores.map(s => s.brand).filter(Boolean))].sort(), [stores]);
   const zonesList = useMemo(() => [...new Set(stores.map(s => s.zone).filter(Boolean))].sort(), [stores]);
@@ -59,6 +62,24 @@ export default function ManageStoresModal({ onClose, refreshStores, stores = [] 
     }
   };
 
+  const confirmPause = async (location_id) => {
+    setBusyId(location_id);
+    const data = await post(`/api/toggle/stores/${location_id}/pause`, { reason: pauseReason });
+    setBusyId(null);
+    setPausingId(null);
+    setPauseReason("");
+    if (data.success) refreshStores();
+    else alert(`Failed to pause: ${data.error}`);
+  };
+
+  const handleResume = async (location_id) => {
+    setBusyId(location_id);
+    const data = await post(`/api/toggle/stores/${location_id}/resume`, {});
+    setBusyId(null);
+    if (data.success) refreshStores();
+    else alert(`Failed to resume: ${data.error}`);
+  };
+
   const filteredStores = stores.filter(s =>
     s.name.toLowerCase().includes(search.toLowerCase()) ||
     s.location_id.toLowerCase().includes(search.toLowerCase()) ||
@@ -87,7 +108,7 @@ export default function ManageStoresModal({ onClose, refreshStores, stores = [] 
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: `1px solid ${C.border}`, paddingBottom: 16 }}>
           <div>
             <h2 style={{ fontSize: 22, fontWeight: 800, margin: 0, color: C.text }}>Manage Stores</h2>
-            <div style={{ fontSize: 13, color: C.muted, marginTop: 4 }}>Add or remove stores in the toggle system</div>
+            <div style={{ fontSize: 13, color: C.muted, marginTop: 4 }}>Add, remove, or pause stores in the toggle system</div>
           </div>
           <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: C.muted, fontSize: 24 }}>&times;</button>
         </div>
@@ -185,22 +206,70 @@ export default function ManageStoresModal({ onClose, refreshStores, stores = [] 
             </div>
 
             <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 8, paddingRight: 8 }}>
-              {filteredStores.map(s => (
-                <div key={s.location_id} style={{ padding: "12px 16px", backgroundColor: "#f8fafc", borderRadius: 10, border: `1px solid ${C.border}` }}>
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-                    <div style={{ minWidth: 0 }}>
-                      <div style={{ fontWeight: 700, fontSize: 14, color: C.text }}>{s.name}</div>
-                      <div style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>{s.brand} • {s.location_id} {s.city ? `• ${s.city}` : ''}</div>
+              {filteredStores.map(s => {
+                const busy = busyId === s.location_id;
+                return (
+                  <div key={s.location_id} style={{ padding: "12px 16px", backgroundColor: s.paused ? "#fffbeb" : "#f8fafc", borderRadius: 10, border: `1px solid ${s.paused ? "#fde68a" : C.border}` }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <div style={{ fontWeight: 700, fontSize: 14, color: C.text }}>{s.name}</div>
+                          {s.paused && (
+                            <span style={{ fontSize: 9.5, fontWeight: 800, color: "#b45309", backgroundColor: "#fef3c7", borderRadius: 6, padding: "2px 7px" }}>⏸ PAUSED</span>
+                          )}
+                        </div>
+                        <div style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>{s.brand} • {s.location_id} {s.city ? `• ${s.city}` : ''}</div>
+                        {s.paused && s.pause_reason && (
+                          <div style={{ fontSize: 11.5, color: "#b45309", marginTop: 4, fontStyle: "italic" }}>"{s.pause_reason}" — {s.paused_by}</div>
+                        )}
+                      </div>
+                      <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                        {s.paused ? (
+                          <button
+                            onClick={() => handleResume(s.location_id)}
+                            disabled={busy}
+                            style={{ background: "#dcfce7", border: "1px solid #86efac", color: "#15803d", borderRadius: 6, padding: "6px 12px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}
+                          >
+                            {busy ? "…" : "▶ Resume"}
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => { setPausingId(s.location_id); setPauseReason(""); }}
+                            disabled={busy}
+                            style={{ background: "#fef3c7", border: "1px solid #fde68a", color: "#b45309", borderRadius: 6, padding: "6px 12px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}
+                          >
+                            ⏸ Pause
+                          </button>
+                        )}
+                        <button
+                          onClick={() => handleDelete(s.location_id, s.name)}
+                          style={{ background: "#fee2e2", border: "1px solid #fca5a5", color: "#dc2626", borderRadius: 6, padding: "6px 12px", fontSize: 11, fontWeight: 600, cursor: "pointer" }}
+                        >
+                          Remove
+                        </button>
+                      </div>
                     </div>
-                    <button
-                      onClick={() => handleDelete(s.location_id, s.name)}
-                      style={{ background: "#fee2e2", border: "1px solid #fca5a5", color: "#dc2626", borderRadius: 6, padding: "6px 12px", fontSize: 11, fontWeight: 600, cursor: "pointer", flexShrink: 0 }}
-                    >
-                      Remove
-                    </button>
+
+                    {pausingId === s.location_id && (
+                      <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${C.borderSoft}`, display: "flex", gap: 8 }}>
+                        <input
+                          autoFocus
+                          value={pauseReason}
+                          onChange={e => setPauseReason(e.target.value)}
+                          placeholder="Reason (optional) — e.g. Renovation until further notice"
+                          style={{ ...inputStyle, fontSize: 12, padding: "7px 10px" }}
+                        />
+                        <button onClick={() => confirmPause(s.location_id)} disabled={busy} style={{ background: "#b45309", color: "#fff", border: "none", borderRadius: 6, padding: "0 14px", fontSize: 11, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
+                          {busy ? "Pausing…" : "Confirm"}
+                        </button>
+                        <button onClick={() => setPausingId(null)} style={{ background: "none", border: `1px solid ${C.border}`, color: C.muted, borderRadius: 6, padding: "0 12px", fontSize: 11, cursor: "pointer" }}>
+                          ✕
+                        </button>
+                      </div>
+                    )}
                   </div>
-                </div>
-              ))}
+                );
+              })}
               {filteredStores.length === 0 && (
                 <div style={{ padding: 20, textAlign: "center", color: C.muted, fontSize: 13 }}>No stores found.</div>
               )}

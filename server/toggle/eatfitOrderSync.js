@@ -102,7 +102,7 @@ export async function enforceEatfitThreshold() {
       SELECT ms.location_id, ms.brand, ms.name
       FROM managed_stores ms
       JOIN store_state ss ON ss.location_id = ms.location_id
-      WHERE LOWER(TRIM(ms.brand)) = 'eatfit' AND ss.desired_state = 'ONLINE'
+      WHERE LOWER(TRIM(ms.brand)) = 'eatfit' AND ms.paused = false AND ss.desired_state = 'ONLINE'
         AND (
           (ss.active_orders > $1 AND ms.status = 'online')
           OR

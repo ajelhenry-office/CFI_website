@@ -94,13 +94,28 @@ export async function initiateBulkJob(stores, action, filterContext, actorEmail,
     throw new Error("stores array and action required");
   }
 
+  // Paused stores are completely hands-off — excluded from every bulk and automated
+  // path (manual bulk, Hourly Recheck, the eatfit threshold enforcer all funnel through
+  // here), regardless of which one triggered this run. Only an explicit Resume can bring
+  // one back in.
+  const pausedRes = await pool.query(
+    `SELECT location_id FROM managed_stores WHERE location_id = ANY($1) AND paused = true`,
+    [stores.map(s => s.location_id)]
+  );
+  const pausedIds = new Set(pausedRes.rows.map(r => r.location_id));
+  const activeStores = stores.filter(s => !pausedIds.has(s.location_id));
+
+  if (activeStores.length === 0) {
+    return { jobId: null, skippedPaused: pausedIds.size };
+  }
+
   // Per-brand overlap lock: block only if a job already RUNNING/PAUSED touches one of
   // the SAME brands — unrelated brands (separate rate-limit budgets, no shared state)
   // are free to run concurrently. A job's heartbeat must be recent for it to count as
   // "still alive" — if the process that owned it crashed or restarted mid-run, its
   // heartbeat goes stale and it stops blocking anything (see the cleanup cron in
   // workers.js, which also marks it FAILED so it's not left dangling forever).
-  const brands = [...new Set(stores.map(s => (s.brand || 'ovenfresh').toLowerCase()))];
+  const brands = [...new Set(activeStores.map(s => (s.brand || 'ovenfresh').toLowerCase()))];
   const conflictRes = await pool.query(`
     SELECT id, actor_email, created_at, total_stores, pending_count, brands
     FROM bulk_toggle_jobs
@@ -128,7 +143,7 @@ export async function initiateBulkJob(stores, action, filterContext, actorEmail,
   const desiredState = action === 'enable' ? 'ONLINE' : 'OFFLINE';
 
   // Update all desired states immediately using the original location_id (even if it's comma-separated)
-  for (const store of stores) {
+  for (const store of activeStores) {
     await pool.query(`
       INSERT INTO store_state (location_id, brand, desired_state)
       VALUES ($1, $2, $3)
@@ -139,14 +154,14 @@ export async function initiateBulkJob(stores, action, filterContext, actorEmail,
 
   const jobRes = await pool.query(
     `INSERT INTO bulk_toggle_jobs (action, total_stores, pending_count, brands, actor_email, last_heartbeat_at) VALUES ($1, $2, $3, $4, $5, NOW()) RETURNING id`,
-    [action, stores.length, stores.length, brands, actorEmail]
+    [action, activeStores.length, activeStores.length, brands, actorEmail]
   );
   const jobId = jobRes.rows[0].id;
 
-  runBulkJob(jobId, stores, action, filterContext, performToggleAPI, actorEmail, source)
+  runBulkJob(jobId, activeStores, action, filterContext, performToggleAPI, actorEmail, source)
     .catch(err => console.error("Bulk job error:", err));
 
-  return { jobId };
+  return { jobId, skippedPaused: pausedIds.size };
 }
 
 export async function runBulkJob(jobId, stores, action, filterContext, performToggleAPI, actorEmail = 'System', source = 'MANUAL_BULK') {
