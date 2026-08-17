@@ -21,6 +21,41 @@ const BRAND_ZONES = {
 
 const queryCache = new Map();
 
+const ALLOWED_BRANDS = new Set([
+  "99SLICE",
+  "Arambam - Start with Millet by Urbanpiper",
+  "CakeZone ++",
+  "Eatfit - MOC",
+  "Krispy Kreme",
+  "Nomad Pizza",
+  "Olio ++",
+  "Rolls On Wheels",
+  "Roz Shawarma by Sharief Bhai",
+  "Sharief Bhai"
+]);
+
+function cleanKitchenRows(rows) {
+  if (!rows || !Array.isArray(rows)) return [];
+  const cleaned = [];
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    let bName = r[0];
+    let sbName = r[1];
+
+    if (!bName || !ALLOWED_BRANDS.has(bName)) continue;
+    if (sbName === "Home Plate - EatFit" || sbName === "Madras Curd Rice Company") continue;
+    
+    if (bName === "Krispy Kreme") {
+      sbName = null;
+    }
+
+    const newRow = [...r];
+    newRow[1] = sbName;
+    cleaned.push(newRow);
+  }
+  return cleaned;
+}
+
 const getIsoDate = (daysAgo) => {
   const d = new Date();
   d.setDate(d.getDate() - daysAgo);
@@ -58,6 +93,7 @@ export async function warmUpOpsCache() {
       if (response.ok) {
         const json = await response.json();
         if (json.data && json.data.rows) {
+          json.data.rows = cleanKitchenRows(json.data.rows);
           const cacheKey = JSON.stringify({ startDate: s, endDate: e, brand: "", zone: "", city: "", area: "" });
           queryCache.set(cacheKey, { data: json.data, timestamp: Date.now() });
           console.log(`[WORKERS] Successfully warmed up ops cache for ${s} to ${e}`);
@@ -118,10 +154,18 @@ router.post("/prep-time", async (req, res) => {
     if (!response.ok) {
       const errorText = await response.text();
       console.error("[Metabase API Error]", errorText);
-      return res.status(response.status).json({ success: false, error: "Failed to fetch data from Metabase", details: errorText });
+      // Metabase's own 401/403 must never reach the browser as-is — the frontend
+      // treats ANY 401/403 from anywhere as "your login is invalid" and logs the
+      // user out. This is an upstream service failure, not an auth failure of ours.
+      const statusToSend = [401, 403].includes(response.status) ? 502 : response.status;
+      return res.status(statusToSend).json({ success: false, error: "Failed to fetch data from Metabase", details: errorText });
     }
 
     const data = await response.json();
+    
+    if (data.data && data.data.rows) {
+      data.data.rows = cleanKitchenRows(data.data.rows);
+    }
     
     // DEBUG: Log the structure so we know how to map it in the frontend!
     if (data.data && data.data.rows && data.data.rows.length > 0) {
@@ -219,7 +263,10 @@ router.post("/prep-time/kitchen", async (req, res) => {
     if (!response.ok) {
       const errorText = await response.text();
       console.error("[Metabase API Error 2523]", errorText);
-      return res.status(response.status).json({ success: false, error: "Failed to fetch kitchen data from Metabase", details: errorText });
+      // Same reasoning as the /prep-time route above — never forward Metabase's own
+      // 401/403 as-is, or the frontend logs the user out for an unrelated upstream failure.
+      const statusToSend = [401, 403].includes(response.status) ? 502 : response.status;
+      return res.status(statusToSend).json({ success: false, error: "Failed to fetch kitchen data from Metabase", details: errorText });
     }
 
     const data = await response.json();
