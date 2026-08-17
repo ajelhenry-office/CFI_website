@@ -23,7 +23,7 @@ async function post(path, body) {
     if (!res.ok) {
       try {
         const data = await res.json();
-        return { success: false, error: data.error || `HTTP ${res.status}` };
+        return { success: false, error: data.error || `HTTP ${res.status}`, conflictingJob: data.conflictingJob };
       } catch (e) {
         return { success: false, error: `HTTP ${res.status} from server` };
       }
@@ -56,7 +56,7 @@ export default function TogglePage({ userRole }) {
   const [showManage, setShowManage] = useState(false);
   const [storeStates, setStoreStates] = useState({});
 
-  const canManageStores = ["admin", "control_tower", "clock_tower"].includes(String(userRole).toLowerCase().replace(/ /g, '_'));
+  const canManageStores = ["super_admin", "admin", "control_tower"].includes(String(userRole).toLowerCase().replace(/ /g, '_'));
 
   const handleBrandChange = (b) => { setBrand(b); setZone([]); setCity([]); setArea([]); };
   const handleZoneChange = (z) => { setZone(z); setCity([]); setArea([]); };
@@ -186,6 +186,17 @@ export default function TogglePage({ userRole }) {
     }
   };
 
+  // Brands currently in view, so we can tell if the active job (if any) actually
+  // overlaps with what these buttons would touch — an unrelated brand's job running
+  // shouldn't block this one.
+  const filteredBrandSlugs = useMemo(
+    () => new Set(filtered.map(s => s.brand.toLowerCase().replace(/[^a-z]/g, "_"))),
+    [filtered]
+  );
+  const activeJob = sidebarData?.activeBulkJob;
+  const conflictingJob = (activeJob && ["RUNNING", "PAUSED"].includes(activeJob.status) && activeJob.brands?.some(b => filteredBrandSlugs.has(b)))
+    ? activeJob : null;
+
   const handleBulk = async (action) => {
     // Send every currently-filtered store, regardless of our own possibly-stale local
     // status — this must hit UrbanPiper for all of them, not just ones we think need it.
@@ -200,6 +211,10 @@ export default function TogglePage({ userRole }) {
     }));
     const res = await post("/api/toggle/bulk", { stores: storePayload, action }).catch(() => null);
     if (res?.success) fetchSidebar();
+    else if (res?.conflictingJob) {
+      const j = res.conflictingJob;
+      alert(`Can't start — a bulk job is already running for ${j.brands.join(", ")}.\nStarted by ${j.actor_email}, ${j.total_stores - j.pending_count}/${j.total_stores} done.\nWait for it to finish or cancel it below.`);
+    }
     else if (res?.error) alert(`Bulk failed: ${res.error}`);
     setIsBulking(false);
   };
@@ -286,23 +301,25 @@ export default function TogglePage({ userRole }) {
           {(() => {
             return (
               <>
-                <ActionButton 
-                  icon={<IconPower />} 
-                  label="Bulk Enable" 
-                  color="#16a34a" 
-                  bg="#f0fdf4" 
+                <ActionButton
+                  icon={<IconPower />}
+                  label="Bulk Enable"
+                  color="#16a34a"
+                  bg="#f0fdf4"
                   borderColor="#bbf7d0"
                   onClick={() => handleBulk("enable")}
-                  disabled={isBulking}
+                  disabled={isBulking || !!conflictingJob}
+                  title={conflictingJob ? `A bulk job for ${conflictingJob.brands.join(", ")} is already running (started by ${conflictingJob.actor_email})` : undefined}
                 />
-                <ActionButton 
-                  icon={<IconPower />} 
-                  label="Bulk Disable" 
-                  color="#ef4444" 
-                  bg="#fef2f2" 
+                <ActionButton
+                  icon={<IconPower />}
+                  label="Bulk Disable"
+                  color="#ef4444"
+                  bg="#fef2f2"
                   borderColor="#fecaca"
                   onClick={() => handleBulk("disable")}
-                  disabled={isBulking}
+                  disabled={isBulking || !!conflictingJob}
+                  title={conflictingJob ? `A bulk job for ${conflictingJob.brands.join(", ")} is already running (started by ${conflictingJob.actor_email})` : undefined}
                 />
               </>
             );
@@ -351,7 +368,12 @@ export default function TogglePage({ userRole }) {
 
       {/* Sidebar, bulk island, audit modal */}
       <ToggleSidebar data={sidebarData} fetchData={fetchSidebar} />
-      <BulkProgressIsland activeBulkJob={sidebarData?.activeBulkJob} fetchData={fetchSidebar} />
+      <BulkProgressIsland
+        activeBulkJob={sidebarData?.activeBulkJob}
+        fetchData={fetchSidebar}
+        currentUserEmail={JSON.parse(localStorage.getItem("user") || "{}").email}
+        isAdmin={["super_admin", "admin"].includes(String(userRole).toLowerCase().replace(/ /g, '_'))}
+      />
       {showAudit && <AuditModal onClose={() => setShowAudit(false)} stores={stores} selectedBrands={activeFilters.brand} />}
       {showManage && <ManageStoresModal onClose={() => setShowManage(false)} refreshStores={fetchSidebar} stores={stores} />}
     </div>

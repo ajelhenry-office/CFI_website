@@ -8,9 +8,12 @@ const API_BASE = import.meta.env.VITE_API_BASE_URL || (import.meta.env.PROD ? ""
 const TAB = ["Health", "Recent", "Problems"];
 
 async function post(path, body) {
-  return fetch(`${API_BASE}${path}`, { headers: getAuthHeaders(), 
+  // Was two "headers" keys in one object literal — the second silently overwrote the
+  // first, which was the one carrying the auth token. Every call here was a guaranteed
+  // 401 as a result (Retry / Force Sync in the Problems panel never actually worked).
+  return fetch(`${API_BASE}${path}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: getAuthHeaders(),
     body: JSON.stringify(body),
   });
 }

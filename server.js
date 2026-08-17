@@ -8,7 +8,8 @@ import express from "express";
 import cors from "cors";
 import toggleRoutes from "./server/toggle/toggle.routes.js";
 import timingRoutes from "./server/timing/timing.routes.js";
-import reviewsRouter from "./server/reviews/reviewsRouter.js";
+import reviewsRouter from "./server/reviews/reviews.routes.js";
+import { ReviewPoller } from "./server/reviews/poller.js";
 import automationRoutes from "./server/ratings/automation.routes.js";
 import insightsRoutes from "./server/ratings/insights.routes.js";
 import authRoutes, { authMiddleware } from "./server/auth/auth.routes.js";
@@ -16,6 +17,21 @@ import opsRoutes from "./server/ops_matrix/ops.routes.js";
 import { handleFilterRequest } from "./server/ratings/filters.js";
 import { pool } from "./server/ratings/db.js";
 import { startWorkers } from "./server/toggle/workers.js";
+
+// Fail loudly at boot if a required secret is missing — better than silently running
+// with an undefined credential (or, before this, a hardcoded one sitting in git history).
+const REQUIRED_ENV_VARS = [
+  "JWT_SECRET",
+  "UP_USERNAME_OVENFRESH", "UP_APIKEY_OVENFRESH", "UP_BIZ_ID_OVENFRESH",
+  "UP_USERNAME_EATFIT", "UP_APIKEY_EATFIT", "UP_BIZ_ID_EATFIT",
+  "UP_USERNAME_CAKEZONE", "UP_APIKEY_CAKEZONE",
+  "UP_USERNAME_OLIO", "UP_APIKEY_OLIO",
+];
+const missingEnvVars = REQUIRED_ENV_VARS.filter((key) => !process.env[key]);
+if (missingEnvVars.length > 0) {
+  console.error(`[STARTUP] Missing required environment variable(s): ${missingEnvVars.join(", ")}`);
+  process.exit(1);
+}
 
 const app = express();
 app.use(cors());
@@ -65,4 +81,7 @@ app.listen(PORT, () => {
   
   // Start automated cron jobs (Hourly Recheck and Watchdog)
   startWorkers();
+  
+  // Start Google Reviews Auto-Reply Poller
+  ReviewPoller.startCron();
 });

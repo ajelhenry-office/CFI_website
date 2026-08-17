@@ -10,15 +10,14 @@ const row = (label, value) => (
 import { useState, useEffect } from "react";
 import { API_BASE, getAuthHeaders } from "../../api";
 
-import { Search, Grid, List, Edit2, Key, MoreVertical, X, Mail, User, Trash2, Lock, Unlock, UserCog } from "lucide-react";
+import { Search, Key, X, Mail, Trash2, Lock, Unlock, UserCog } from "lucide-react";
 
 const ROLE_STYLES = {
-  admin: { label: "Business Admin", color: "#2563eb", bg: "#dbeafe", border: "#bfdbfe" },
-  supervisor: { label: "Supervisor", color: "#16a34a", bg: "#dcfce7", border: "#bbf7d0" },
+  super_admin: { label: "Super Admin", color: "#a16207", bg: "#fef9c3", border: "#fde047" },
+  admin: { label: "Admin", color: "#2563eb", bg: "#dbeafe", border: "#bfdbfe" },
   dark_kitchen: { label: "Dark Kitchen", color: "#9333ea", bg: "#f3e8ff", border: "#e9d5ff" },
+  supervisor: { label: "Supervisor", color: "#16a34a", bg: "#dcfce7", border: "#bbf7d0" },
   control_tower: { label: "Control Tower", color: "#ea580c", bg: "#ffedd5", border: "#fed7aa" },
-  ratings_team: { label: "Ratings Team", color: "#0891b2", bg: "#cffafe", border: "#a5f3fc" },
-  operations: { label: "Operations", color: "#ca8a04", bg: "#fef9c3", border: "#fde047" },
 };
 
 const getInitials = (name) => {
@@ -34,43 +33,85 @@ const getAvatarColor = (initials) => {
   return { bg: colors[index], color: textColors[index] };
 };
 
+// A single-select role picker — replaces the old multi-checkbox grid. Access levels
+// are a ladder (Super Admin > Admin > everyone else), not combinable tags, and only
+// one role at a time is ever meaningful for what tabs someone can see.
+function RolePicker({ options, value, onChange }) {
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+      {options.map(roleKey => {
+        const style = ROLE_STYLES[roleKey] || { label: roleKey, color: "#475569", bg: "#f1f5f9", border: "#e2e8f0" };
+        const isSelected = value === roleKey;
+        return (
+          <div
+            key={roleKey}
+            onClick={() => onChange(roleKey)}
+            style={{
+              padding: "12px 16px",
+              borderRadius: 8,
+              border: `1.5px solid ${isSelected ? style.color : C.borderSoft}`,
+              backgroundColor: isSelected ? style.bg : "#fff",
+              display: "flex", alignItems: "center", gap: 12,
+              cursor: "pointer", transition: "all 0.2s"
+            }}
+          >
+            <div style={{
+              width: 16, height: 16,
+              borderRadius: "50%",
+              backgroundColor: isSelected ? style.color : "#fff",
+              border: `1px solid ${isSelected ? style.color : C.border}`,
+              display: "flex", alignItems: "center", justifyContent: "center"
+            }}>
+              {isSelected && <div style={{ width: 7, height: 7, borderRadius: "50%", backgroundColor: "#fff" }} />}
+            </div>
+            <span style={{ fontSize: 13, fontWeight: 700, color: isSelected ? style.color : C.text }}>{style.label}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export function SettingsPage() {
   const [users, setUsers] = useState([]);
+  const [grantableRoles, setGrantableRoles] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [activeTab, setActiveTab] = useState("general");
-  
-  // Modal State
+
+  // Add modal state
   const [showModal, setShowModal] = useState(false);
   const [email, setEmail] = useState("");
-  const [fullName, setFullName] = useState("");
-  const [roles, setRoles] = useState([]);
+  const [newRole, setNewRole] = useState("");
 
-  // Edit Role Modal State
+  // Edit role modal state
   const [showEditModal, setShowEditModal] = useState(false);
   const [editingUser, setEditingUser] = useState(null);
-  const [editingRoles, setEditingRoles] = useState([]);
+  const [editingRole, setEditingRole] = useState("");
 
-  // Filter State
+  // Filter state
   const [search, setSearch] = useState("");
   const [roleFilter, setRoleFilter] = useState("All Roles");
   const [statusFilter, setStatusFilter] = useState("All Status");
-  
+
   const currentUser = JSON.parse(localStorage.getItem("user") || "{}");
-  const isAdmin = currentUser.email === "ajel.henry@curefoods.in" || (currentUser.role || "").split(',').includes("admin");
+  const canManageEmployees = ["admin", "super_admin"].includes(currentUser.role);
 
   const fetchUsers = async () => {
-    if (!isAdmin) return;
+    if (!canManageEmployees) return;
     try {
       const res = await fetch(`${API_BASE}/api/auth/users`, { headers: getAuthHeaders() });
       const data = await res.json();
-      if (data.success) setUsers(data.users);
+      if (data.success) {
+        setUsers(data.users);
+        setGrantableRoles(data.grantableRoles || []);
+      }
     } catch (err) {}
   };
 
   useEffect(() => {
     fetchUsers();
-  }, [isAdmin]);
+  }, [canManageEmployees]);
 
   const handleAddUser = async (e) => {
     e.preventDefault();
@@ -82,22 +123,25 @@ export function SettingsPage() {
       alert("A user with this email already exists in the system.");
       return;
     }
+    if (!newRole) {
+      setError("Select a role.");
+      return;
+    }
     setLoading(true);
     setError("");
     try {
       const res = await fetch(`${API_BASE}/api/auth/users`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...getAuthHeaders() },
-        body: JSON.stringify({ email, role: roles.join(",") })
+        body: JSON.stringify({ email, role: newRole })
       });
       const data = await res.json();
       if (data.success) {
         setEmail("");
-        setFullName("");
-        setRoles([]);
+        setNewRole("");
         setShowModal(false);
         fetchUsers();
-        setTimeout(() => alert("Employee added successfully! A password has been auto-generated and emailed to them."), 100);
+        setTimeout(() => alert(data.message || "Employee added successfully!"), 100);
       } else {
         setError(data.error);
       }
@@ -110,17 +154,18 @@ export function SettingsPage() {
 
   const handleUpdateRole = async (e) => {
     e.preventDefault();
+    if (!editingRole) return;
     try {
       const res = await fetch(`${API_BASE}/api/auth/users/${editingUser.id}/role`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json", ...getAuthHeaders() },
-        body: JSON.stringify({ role: editingRoles.join(",") })
+        body: JSON.stringify({ role: editingRole })
       });
       const data = await res.json();
       if (data.success) {
         setShowEditModal(false);
         setEditingUser(null);
-        setEditingRoles([]);
+        setEditingRole("");
         fetchUsers();
       } else alert(data.error);
     } catch (err) {
@@ -131,18 +176,33 @@ export function SettingsPage() {
   const handleResetPassword = async (id, email) => {
     if (!confirm(`Are you sure you want to reset the password for ${email}?`)) return;
     try {
-      const res = await fetch(`${API_BASE}/api/auth/users/${id}/reset-password`, { 
+      const res = await fetch(`${API_BASE}/api/auth/users/${id}/reset-password`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...getAuthHeaders() }
       });
       const data = await res.json();
       if (data.success) {
-        alert(`Password for ${email} has been reset to: \n\n${data.newPassword}\n\nAn email has also been sent to them.`);
+        alert(`Password for ${email} has been reset to: \n\n${data.newPassword}\n\n${data.message}`);
       } else {
         alert(data.error);
       }
     } catch (err) {
       alert("Failed to reset password");
+    }
+  };
+
+  const handleToggleLock = async (id, isLocked) => {
+    try {
+      const res = await fetch(`${API_BASE}/api/auth/users/${id}/lock`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({ is_locked: !isLocked })
+      });
+      const data = await res.json();
+      if (data.success) fetchUsers();
+      else alert(data.error);
+    } catch (err) {
+      alert("Failed to update lock status");
     }
   };
 
@@ -170,26 +230,23 @@ export function SettingsPage() {
     const name = formatName(u.email).toLowerCase();
     const mail = u.email.toLowerCase();
     const matchesSearch = name.includes(search.toLowerCase()) || mail.includes(search.toLowerCase());
-    
-    const userRoles = (u.role || "").split(',');
-    const matchesRole = roleFilter === "All Roles" || userRoles.includes(roleFilter);
+    const matchesRole = roleFilter === "All Roles" || u.role === roleFilter;
     const matchesStatus = statusFilter === "All Status" || (statusFilter === "Active" && !u.is_locked) || (statusFilter === "Locked" && u.is_locked);
-    
     return matchesSearch && matchesRole && matchesStatus;
   });
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 24, width: "100%", maxWidth: activeTab === "employees" ? 1100 : 620, fontFamily: FONT }}>
-      
-      {isAdmin && (
+
+      {canManageEmployees && (
         <div style={{ display: "flex", gap: 16, borderBottom: `1px solid ${C.border}`, paddingBottom: 12, marginBottom: 8 }}>
-          <button 
+          <button
             onClick={() => setActiveTab("general")}
             style={{ background: "none", border: "none", fontSize: 14, fontWeight: 800, color: activeTab === "general" ? C.primary : C.muted, cursor: "pointer", borderBottom: activeTab === "general" ? `2px solid ${C.primary}` : "none", paddingBottom: 4 }}
           >
             General Settings
           </button>
-          <button 
+          <button
             onClick={() => setActiveTab("employees")}
             style={{ background: "none", border: "none", fontSize: 14, fontWeight: 800, color: activeTab === "employees" ? C.primary : C.muted, cursor: "pointer", borderBottom: activeTab === "employees" ? `2px solid ${C.primary}` : "none", paddingBottom: 4 }}
           >
@@ -204,9 +261,9 @@ export function SettingsPage() {
             <div style={{ fontSize: 14, fontWeight: 800, color: C.primary, marginBottom: 8 }}>User Profile</div>
             {row("Name", currentUser.email ? formatName(currentUser.email) : "Curefoods Admin")}
             {row("Email", currentUser.email || "Unknown")}
-            {row("Roles", (currentUser.role || "").split(',').map(r => r === "admin" ? "Admin" : r.replace('_', ' ')).join(', '))}
+            {row("Role", ROLE_STYLES[currentUser.role]?.label || currentUser.role || "Unknown")}
           </div>
-          
+
           <div style={cardStyle}>
             <div style={{ fontSize: 14, fontWeight: 800, color: C.primary, marginBottom: 8 }}>Connected Platforms</div>
             {["Swiggy", "Zomato", "Google"].map((p) => row(p, "Connected"))}
@@ -214,24 +271,24 @@ export function SettingsPage() {
         </>
       )}
 
-      {activeTab === "employees" && isAdmin && (
+      {activeTab === "employees" && canManageEmployees && (
         <div style={{ backgroundColor: "#fff", borderRadius: 12, border: `1px solid ${C.borderSoft}`, padding: "20px" }}>
-          
+
           {/* Top Bar: Search, Filters, View Toggles */}
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
             <div style={{ display: "flex", gap: 12 }}>
               <div style={{ position: "relative" }}>
                 <Search size={16} color={C.muted} style={{ position: "absolute", left: 12, top: 11 }} />
-                <input 
-                  type="text" 
-                  placeholder="Search by name or email..." 
+                <input
+                  type="text"
+                  placeholder="Search by name or email..."
                   value={search}
                   onChange={e => setSearch(e.target.value)}
                   style={{ padding: "10px 14px 10px 36px", borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 13, outline: "none", fontFamily: FONT, width: 220 }}
                 />
               </div>
-              <select 
-                value={roleFilter} 
+              <select
+                value={roleFilter}
                 onChange={e => setRoleFilter(e.target.value)}
                 style={{ padding: "10px 14px", borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 13, outline: "none", fontFamily: FONT, backgroundColor: "#fff", color: C.text }}
               >
@@ -239,18 +296,18 @@ export function SettingsPage() {
                 {Object.keys(ROLE_STYLES).map(k => <option key={k} value={k}>{ROLE_STYLES[k].label}</option>)}
               </select>
             </div>
-            
+
             <div style={{ display: "flex", gap: 8 }}>
-              <button 
-                onClick={() => setShowModal(true)}
-                style={{ padding: "10px 20px", borderRadius: 8, backgroundColor: "#2563eb", color: "#fff", border: "none", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: FONT }}
-              >
-                Add Employee
-              </button>
+              {grantableRoles.length > 0 && (
+                <button
+                  onClick={() => { setNewRole(""); setError(""); setShowModal(true); }}
+                  style={{ padding: "10px 20px", borderRadius: 8, backgroundColor: "#2563eb", color: "#fff", border: "none", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: FONT }}
+                >
+                  Add Employee
+                </button>
+              )}
             </div>
           </div>
-
-          {error && <div style={{ color: "#dc2626", fontSize: 13, marginBottom: 16, fontWeight: 600 }}>{error}</div>}
 
           {/* List View */}
           <div style={{ display: "flex", flexDirection: "column", borderTop: `1px solid ${C.borderSoft}` }}>
@@ -258,32 +315,29 @@ export function SettingsPage() {
               const name = formatName(u.email);
               const initials = getInitials(name);
               const avatar = getAvatarColor(initials);
-              const userRoles = (u.role || "").split(',').filter(r => r);
+              const style = ROLE_STYLES[u.role] || { label: u.role, color: "#475569", bg: "#f1f5f9", border: "#e2e8f0" };
+              const isSelf = u.email === currentUser.email;
+              const showActions = !isSelf && u.canManage;
 
               return (
                 <div key={u.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 8px", borderBottom: `1px solid ${C.borderSoft}` }}>
-                  
+
                   {/* Avatar & Name */}
                   <div style={{ display: "flex", alignItems: "center", gap: 16, width: 300 }}>
                     <div style={{ width: 44, height: 44, borderRadius: "50%", backgroundColor: avatar.bg, color: avatar.color, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15, fontWeight: 700 }}>
                       {initials}
                     </div>
                     <div>
-                      <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{name}</div>
+                      <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{name}{isSelf && <span style={{ color: C.muted, fontWeight: 500 }}> (you)</span>}</div>
                       <div style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>{u.email}</div>
                     </div>
                   </div>
 
-                  {/* Roles */}
+                  {/* Role */}
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap", flex: 1 }}>
-                    {userRoles.map(r => {
-                      const style = ROLE_STYLES[r] || { label: r, color: "#475569", bg: "#f1f5f9", border: "#e2e8f0" };
-                      return (
-                        <div key={r} style={{ padding: "4px 10px", borderRadius: 6, backgroundColor: style.bg, color: style.color, border: `1px solid ${style.border}`, fontSize: 11, fontWeight: 700 }}>
-                          {style.label}
-                        </div>
-                      );
-                    })}
+                    <div style={{ padding: "4px 10px", borderRadius: 6, backgroundColor: style.bg, color: style.color, border: `1px solid ${style.border}`, fontSize: 11, fontWeight: 700 }}>
+                      {style.label}
+                    </div>
                   </div>
 
                   {/* Status */}
@@ -293,11 +347,11 @@ export function SettingsPage() {
 
                   {/* Actions */}
                   <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                    {u.email !== currentUser.email && (
-                      <button 
+                    {showActions && (
+                      <button
                         onClick={() => {
                           setEditingUser(u);
-                          setEditingRoles((u.role || "").split(",").filter(r => r));
+                          setEditingRole(u.role);
                           setShowEditModal(true);
                         }}
                         title="Update Role"
@@ -306,15 +360,17 @@ export function SettingsPage() {
                         <UserCog size={14} />
                       </button>
                     )}
-                    <button 
-                      onClick={() => handleResetPassword(u.id, u.email)}
-                      title="Reset Password"
-                      style={{ background: "#fff", border: `1px solid ${C.border}`, padding: 8, borderRadius: 8, cursor: "pointer", color: C.muted }}
-                    >
-                      <Key size={14} />
-                    </button>
-                    {u.email !== currentUser.email && (
-                      <button 
+                    {(showActions || isSelf) && (
+                      <button
+                        onClick={() => handleResetPassword(u.id, u.email)}
+                        title="Reset Password"
+                        style={{ background: "#fff", border: `1px solid ${C.border}`, padding: 8, borderRadius: 8, cursor: "pointer", color: C.muted }}
+                      >
+                        <Key size={14} />
+                      </button>
+                    )}
+                    {showActions && (
+                      <button
                         onClick={() => handleToggleLock(u.id, u.is_locked)}
                         title={u.is_locked ? "Unlock User" : "Lock User"}
                         style={{ background: "#fff", border: `1px solid ${C.border}`, padding: 8, borderRadius: 8, cursor: "pointer", color: u.is_locked ? "#ef4444" : C.muted }}
@@ -322,8 +378,8 @@ export function SettingsPage() {
                         {u.is_locked ? <Unlock size={14} /> : <Lock size={14} />}
                       </button>
                     )}
-                    {u.email !== currentUser.email && (
-                      <button 
+                    {showActions && (
+                      <button
                         onClick={() => handleDeleteUser(u.id, u.email)}
                         title="Delete Employee"
                         style={{ background: "#fff", border: `1px solid ${C.border}`, padding: 8, borderRadius: 8, cursor: "pointer", color: "#ef4444" }}
@@ -331,10 +387,16 @@ export function SettingsPage() {
                         <Trash2 size={14} />
                       </button>
                     )}
+                    {!isSelf && !u.canManage && (
+                      <span style={{ fontSize: 10.5, color: C.muted, fontStyle: "italic" }}>No permission</span>
+                    )}
                   </div>
                 </div>
               );
             })}
+            {filteredUsers.length === 0 && (
+              <div style={{ padding: 32, textAlign: "center", color: C.muted, fontSize: 13 }}>No employees found.</div>
+            )}
           </div>
         </div>
       )}
@@ -349,84 +411,43 @@ export function SettingsPage() {
             </div>
 
             <form onSubmit={handleAddUser}>
-              <div style={{ display: "flex", gap: 16, marginBottom: 24 }}>
-                <div style={{ flex: 1 }}>
-                  <label style={{ display: "block", fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 8 }}>Email Address</label>
-                  <div style={{ position: "relative" }}>
-                    <Mail size={16} color={C.muted} style={{ position: "absolute", left: 12, top: 12 }} />
-                    <input 
-                      type="email" 
-                      placeholder="Enter email address" 
-                      value={email}
-                      onChange={e => setEmail(e.target.value)}
-                      required
-                      style={{ width: "100%", padding: "11px 14px 11px 36px", borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 13, outline: "none", fontFamily: FONT, boxSizing: "border-box" }}
-                    />
-                  </div>
-                </div>
-                <div style={{ flex: 1 }}>
-                  <label style={{ display: "block", fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 8 }}>Full Name (Optional)</label>
-                  <div style={{ position: "relative" }}>
-                    <User size={16} color={C.muted} style={{ position: "absolute", left: 12, top: 12 }} />
-                    <input 
-                      type="text" 
-                      placeholder="Enter full name" 
-                      value={fullName}
-                      onChange={e => setFullName(e.target.value)}
-                      style={{ width: "100%", padding: "11px 14px 11px 36px", borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 13, outline: "none", fontFamily: FONT, boxSizing: "border-box" }}
-                    />
-                  </div>
+              <div style={{ marginBottom: 24 }}>
+                <label style={{ display: "block", fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 8 }}>Email Address</label>
+                <div style={{ position: "relative" }}>
+                  <Mail size={16} color={C.muted} style={{ position: "absolute", left: 12, top: 12 }} />
+                  <input
+                    type="email"
+                    placeholder="name@curefoods.in"
+                    value={email}
+                    onChange={e => setEmail(e.target.value)}
+                    required
+                    style={{ width: "100%", padding: "11px 14px 11px 36px", borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 13, outline: "none", fontFamily: FONT, boxSizing: "border-box" }}
+                  />
                 </div>
               </div>
 
-              <label style={{ display: "block", fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 12 }}>Assign Roles</label>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 32 }}>
-                {Object.keys(ROLE_STYLES).map(roleKey => {
-                  const style = ROLE_STYLES[roleKey];
-                  const isSelected = roles.includes(roleKey);
-                  return (
-                    <div 
-                      key={roleKey}
-                      onClick={() => {
-                        if (isSelected) setRoles(roles.filter(r => r !== roleKey));
-                        else setRoles([...roles, roleKey]);
-                      }}
-                      style={{ 
-                        padding: "12px 16px", 
-                        borderRadius: 8, 
-                        border: `1.5px solid ${isSelected ? style.color : C.borderSoft}`, 
-                        backgroundColor: isSelected ? style.bg : "#fff",
-                        display: "flex", alignItems: "center", gap: 12, 
-                        cursor: "pointer", transition: "all 0.2s" 
-                      }}
-                    >
-                      <div style={{ 
-                        width: 16, height: 16, 
-                        borderRadius: 4, 
-                        backgroundColor: isSelected ? style.color : "#fff",
-                        border: `1px solid ${isSelected ? style.color : C.border}`,
-                        display: "flex", alignItems: "center", justifyContent: "center"
-                      }}>
-                        {isSelected && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>}
-                      </div>
-                      <span style={{ fontSize: 13, fontWeight: 700, color: isSelected ? style.color : C.text }}>{style.label}</span>
-                    </div>
-                  );
-                })}
+              <label style={{ display: "block", fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 12 }}>Assign Role</label>
+              <div style={{ marginBottom: 24 }}>
+                <RolePicker options={grantableRoles} value={newRole} onChange={setNewRole} />
               </div>
+              <div style={{ fontSize: 11.5, color: C.muted, marginBottom: 24, lineHeight: 1.5 }}>
+                A password will be generated automatically and emailed to them along with the login link and their role.
+              </div>
+
+              {error && <div style={{ fontSize: 12, color: "#b91c1c", fontWeight: 600, marginBottom: 16 }}>{error}</div>}
 
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 12 }}>
-                <button 
-                  type="button" 
+                <button
+                  type="button"
                   onClick={() => setShowModal(false)}
                   style={{ padding: "10px 24px", borderRadius: 8, backgroundColor: "#fff", color: C.text, border: `1px solid ${C.border}`, fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: FONT }}
                 >
                   Cancel
                 </button>
-                <button 
-                  type="submit" 
-                  disabled={loading || roles.length === 0}
-                  style={{ padding: "10px 24px", borderRadius: 8, backgroundColor: "#2563eb", color: "#fff", border: "none", fontWeight: 700, fontSize: 13, cursor: (loading || roles.length === 0) ? "not-allowed" : "pointer", fontFamily: FONT, opacity: (loading || roles.length === 0) ? 0.6 : 1 }}
+                <button
+                  type="submit"
+                  disabled={loading || !newRole}
+                  style={{ padding: "10px 24px", borderRadius: 8, backgroundColor: "#2563eb", color: "#fff", border: "none", fontWeight: 700, fontSize: 13, cursor: (loading || !newRole) ? "not-allowed" : "pointer", fontFamily: FONT, opacity: (loading || !newRole) ? 0.6 : 1 }}
                 >
                   {loading ? "Adding..." : "Add Employee"}
                 </button>
@@ -441,61 +462,30 @@ export function SettingsPage() {
         <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }}>
           <div style={{ backgroundColor: "#fff", borderRadius: 16, width: 600, padding: 32, boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
-              <div style={{ fontSize: 20, fontWeight: 800, color: C.text }}>Update Roles for {formatName(editingUser.email)}</div>
+              <div style={{ fontSize: 20, fontWeight: 800, color: C.text }}>Update Role for {formatName(editingUser.email)}</div>
               <button onClick={() => setShowEditModal(false)} style={{ background: "none", border: "none", cursor: "pointer", color: C.muted }}><X size={20} /></button>
             </div>
 
             <form onSubmit={handleUpdateRole}>
-              <label style={{ display: "block", fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 12 }}>Assign Roles</label>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 32 }}>
-                {Object.keys(ROLE_STYLES).map(roleKey => {
-                  const style = ROLE_STYLES[roleKey];
-                  const isSelected = editingRoles.includes(roleKey);
-                  return (
-                    <div 
-                      key={roleKey}
-                      onClick={() => {
-                        if (isSelected) setEditingRoles(editingRoles.filter(r => r !== roleKey));
-                        else setEditingRoles([...editingRoles, roleKey]);
-                      }}
-                      style={{ 
-                        padding: "12px 16px", 
-                        borderRadius: 8, 
-                        border: `1.5px solid ${isSelected ? style.color : C.borderSoft}`, 
-                        backgroundColor: isSelected ? style.bg : "#fff",
-                        display: "flex", alignItems: "center", gap: 12, 
-                        cursor: "pointer", transition: "all 0.2s" 
-                      }}
-                    >
-                      <div style={{ 
-                        width: 16, height: 16, 
-                        borderRadius: 4, 
-                        backgroundColor: isSelected ? style.color : "#fff",
-                        border: `1px solid ${isSelected ? style.color : C.border}`,
-                        display: "flex", alignItems: "center", justifyContent: "center"
-                      }}>
-                        {isSelected && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>}
-                      </div>
-                      <span style={{ fontSize: 13, fontWeight: 700, color: isSelected ? style.color : C.text }}>{style.label}</span>
-                    </div>
-                  );
-                })}
+              <label style={{ display: "block", fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 12 }}>Assign Role</label>
+              <div style={{ marginBottom: 32 }}>
+                <RolePicker options={grantableRoles} value={editingRole} onChange={setEditingRole} />
               </div>
 
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 12 }}>
-                <button 
-                  type="button" 
+                <button
+                  type="button"
                   onClick={() => setShowEditModal(false)}
                   style={{ padding: "10px 24px", borderRadius: 8, backgroundColor: "#fff", color: C.text, border: `1px solid ${C.border}`, fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: FONT }}
                 >
                   Cancel
                 </button>
-                <button 
-                  type="submit" 
-                  disabled={editingRoles.length === 0}
-                  style={{ padding: "10px 24px", borderRadius: 8, backgroundColor: "#2563eb", color: "#fff", border: "none", fontWeight: 700, fontSize: 13, cursor: editingRoles.length === 0 ? "not-allowed" : "pointer", fontFamily: FONT, opacity: editingRoles.length === 0 ? 0.6 : 1 }}
+                <button
+                  type="submit"
+                  disabled={!editingRole}
+                  style={{ padding: "10px 24px", borderRadius: 8, backgroundColor: "#2563eb", color: "#fff", border: "none", fontWeight: 700, fontSize: 13, cursor: !editingRole ? "not-allowed" : "pointer", fontFamily: FONT, opacity: !editingRole ? 0.6 : 1 }}
                 >
-                  Save Roles
+                  Save Role
                 </button>
               </div>
             </form>
@@ -522,4 +512,3 @@ export function ThemePage() {
     </div>
   );
 }
-

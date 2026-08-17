@@ -12,6 +12,7 @@ const SOURCE_META = {
   AUTO_HOURLY_RECHECK:   { label: "Hourly Recheck",  color: "#0f766e", bg: "#ccfbf1" },
   AUTO_WATCHDOG:         { label: "Watchdog",        color: "#0f766e", bg: "#ccfbf1" },
   AUTO_THROTTLE:         { label: "Auto-Throttle",   color: "#b91c1c", bg: "#fee2e2" },
+  AUTO_EATFIT_THRESHOLD: { label: "Order Threshold", color: "#b91c1c", bg: "#fee2e2" },
 };
 
 function SourceBadge({ log }) {

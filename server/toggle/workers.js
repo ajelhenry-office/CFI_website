@@ -3,10 +3,16 @@ import { warmUpOpsCache } from '../ops_matrix/ops.routes.js';
 import { startTimingWorker } from '../timing/timingWorker.js';
 import { initiateBulkJob } from './queue.js';
 import { performToggleAPI } from './toggle.routes.js';
+import { raiseAlert, resolveAlert } from '../alerts/alertService.js';
+import { scheduleDailyHealthCheck } from '../alerts/dailyHealthCheck.js';
+import { scheduleEatfitOrderSync, scheduleEatfitThresholdEnforcer } from './eatfitOrderSync.js';
 
 export function startWorkers() {
   console.log("[WORKERS] Starting background workers...");
   startTimingWorker();
+  scheduleDailyHealthCheck(8, 0); // 8:00 AM IST daily
+  scheduleEatfitOrderSync(); // every 5 min — keeps active_orders fresh
+  scheduleEatfitThresholdEnforcer(); // every 10 min — throttles down/wakes up based on that data
 
   // Hourly Recheck Cron (Runs every 60 minutes)
   // Re-pushes "enable" to every store the user wants online (desired_state = ONLINE).
@@ -40,49 +46,48 @@ export function startWorkers() {
       console.log(`[WORKERS] Hourly Recheck found ${stores.length} ONLINE stores to verify.`);
 
       await initiateBulkJob(stores, "enable", " (Hourly Recheck)", "System — Hourly Recheck", "AUTO_HOURLY_RECHECK", performToggleAPI);
+      await resolveAlert('HOURLY_RECHECK_ERROR');
 
     } catch (err) {
       console.error("[WORKERS] Hourly Recheck failed:", err);
+      await raiseAlert('HOURLY_RECHECK_ERROR', 'CRITICAL',
+        'The Hourly Recheck cron threw an error and did not complete its run. This is the safety net that keeps stores online — if this keeps happening, that automation may be effectively off.',
+        err.message);
     }
   }, 60 * 60 * 1000); // 60 minutes
 
 
-  // Watchdog Cron (Runs every 10 minutes)
-  // Grabs eatfit stores where desired_state = 'ONLINE' but they are physically OFFLINE due to threshold cooling
+  // Watchdog Cron — removed. Its entire job (waking up eatfit stores once their order
+  // count drops back down) is now done by scheduleEatfitThresholdEnforcer() above,
+  // which does it more correctly (uses the shared EATFIT_THROTTLE_THRESHOLD constant
+  // and the correct <= boundary — this cron's old `active_orders < 15` had an off-by-one
+  // gap where a store sitting at exactly 15 would never get picked up) and more
+  // completely (it also handles throttling DOWN, not just waking up). Running both was
+  // pure redundant work.
+
+  // Stale Bulk Job Cleanup (Runs every 10 minutes)
+  // If the server crashes or restarts mid-job, that job's row is stuck at RUNNING
+  // forever — nothing else ever resolves it. The overlap lock in initiateBulkJob
+  // already ignores jobs whose heartbeat has gone stale, so this doesn't block new
+  // jobs from starting — but the stuck row would sit there indefinitely otherwise,
+  // showing as "still running" in the UI. Mark it FAILED so it's honestly reported.
   setInterval(async () => {
     try {
-      console.log("[WORKERS] Running Watchdog Cron...");
-
-      // Look for stores that want to be online, but currently have < 15 active_orders
-      const storesRes = await pool.query(`
-        SELECT location_id, brand
-        FROM store_state
-        WHERE desired_state = 'ONLINE' AND active_orders < 15
+      const res = await pool.query(`
+        UPDATE bulk_toggle_jobs SET status = 'FAILED'
+        WHERE status IN ('RUNNING', 'PAUSED') AND last_heartbeat_at < NOW() - INTERVAL '10 minutes'
+        RETURNING id, brands, actor_email, total_stores, pending_count
       `);
-
-      const stores = storesRes.rows;
-      if (stores.length === 0) return;
-
-      // Find stores that we recently disabled automatically (Auto-throttled).
-      const coolingRes = await pool.query(`
-        SELECT DISTINCT store_id as location_id
-        FROM toggle_activity
-        WHERE created_at >= NOW() - INTERVAL '2 hour'
-        AND action = 'DISABLE'
-        AND (source = 'AUTO_THROTTLE' OR is_automated = true OR store_name LIKE 'Bulk%')
-      `);
-      const coolingStoreIds = coolingRes.rows.map(r => r.location_id);
-
-      const storesToWakeUp = stores.filter(s => coolingStoreIds.includes(s.location_id));
-
-      if (storesToWakeUp.length === 0) return;
-
-      console.log(`[WORKERS] Watchdog found ${storesToWakeUp.length} cooled stores ready to wake up.`);
-
-      await initiateBulkJob(storesToWakeUp, "enable", " (Watchdog Wakeup)", "System — Watchdog", "AUTO_WATCHDOG", performToggleAPI);
-
+      if (res.rowCount > 0) {
+        console.log(`[WORKERS] Marked ${res.rowCount} stale bulk job(s) as FAILED (no heartbeat for 10+ min).`);
+        for (const job of res.rows) {
+          await raiseAlert('BULK_JOB_STUCK', 'WARNING',
+            `A bulk job (started by ${job.actor_email} for ${job.brands?.join(', ')}) stopped sending a heartbeat and was marked FAILED — likely the server restarted or crashed mid-run.`,
+            `Job #${job.id} — ${job.total_stores - job.pending_count}/${job.total_stores} stores had completed before it stopped.`);
+        }
+      }
     } catch (err) {
-      console.error("[WORKERS] Watchdog failed:", err);
+      console.error("[WORKERS] Stale bulk job cleanup failed:", err);
     }
   }, 10 * 60 * 1000); // 10 minutes
 

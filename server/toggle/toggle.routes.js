@@ -1,37 +1,55 @@
 import express from "express";
 import { pool } from "../ratings/db.js";
-import { checkAndIncrementRateLimit, logProblemStore, initiateBulkJob } from "./queue.js";
+import { checkAndIncrementRateLimit, logProblemStore, initiateBulkJob, resolveOnlineAction } from "./queue.js";
+import { raiseAlert } from "../alerts/alertService.js";
 
 const router = express.Router();
 
+// Store management (add/delete/pause/resume) was only ever gated in the frontend —
+// any authenticated user could call these endpoints directly regardless of role.
+// Matches the same role set the frontend's canManageStores check already uses.
+function canManageStores(req, res, next) {
+  if (!['super_admin', 'admin', 'control_tower'].includes(req.user?.role)) {
+    return res.status(403).json({ success: false, error: "You don't have permission to manage stores." });
+  }
+  next();
+}
+
 // ─── URBANPIPER CONFIG ───────────────────────────────────────
 const UP_LOCATION_URL = "https://api.urbanpiper.com/hub/api/v1/location/";
-const UP_PLATFORMS    = ["swiggy", "zomato"];
+// Matches the platform list used by CakeZone's own working Apps Script tool, which
+// confirms real stores exist on more than just swiggy/zomato — the narrower list here
+// meant KitchenPulse could never toggle a store's listing on any of the others. Safe
+// to widen: performToggleAPI already strips a platform from the list and retries if
+// UrbanPiper says it's "not valid for platform X", so an extra platform a given store
+// doesn't actually have never breaks the call.
+const UP_PLATFORMS    = ["swiggy", "zomato", "dotpe", "ownly", "dunzo", "magicpin", "masalabox", "tipplr", "bitsila"];
 
-const UP_BRANDS = {
+// No hardcoded fallbacks — a missing credential must fail loudly (see the startup
+// check in server.js), not silently run on a value that's sitting in git history.
+export const UP_BRANDS = {
   ovenfresh: {
-    username : process.env.UP_USERNAME_OVENFRESH || "biz_adm_pmNKQXRHStVR",
-    apikey   : process.env.UP_APIKEY_OVENFRESH   || "78cb85198b12fa391437679c5878bc7b50e38896",
-    biz_id   : process.env.UP_BIZ_ID_OVENFRESH   || "62978428",
+    username : process.env.UP_USERNAME_OVENFRESH,
+    apikey   : process.env.UP_APIKEY_OVENFRESH,
+    biz_id   : process.env.UP_BIZ_ID_OVENFRESH,
   },
   paris_cakes___desserts: {
-    username : process.env.UP_USERNAME_OVENFRESH || "biz_adm_pmNKQXRHStVR",
-    apikey   : process.env.UP_APIKEY_OVENFRESH   || "78cb85198b12fa391437679c5878bc7b50e38896",
-    biz_id   : process.env.UP_BIZ_ID_OVENFRESH   || "62978428",
+    username : process.env.UP_USERNAME_OVENFRESH,
+    apikey   : process.env.UP_APIKEY_OVENFRESH,
+    biz_id   : process.env.UP_BIZ_ID_OVENFRESH,
   },
   eatfit: {
-    username : process.env.UP_USERNAME_EATFIT || "biz_adm_QXJeFIgABXFq",
-    apikey   : process.env.UP_APIKEY_EATFIT   || "a7d35eac21f5e6eab9d760d25d71a899c3ba2178",
-    biz_id   : process.env.UP_BIZ_ID_EATFIT   || "60578050",
+    username : process.env.UP_USERNAME_EATFIT,
+    apikey   : process.env.UP_APIKEY_EATFIT,
+    biz_id   : process.env.UP_BIZ_ID_EATFIT,
   },
-
   cake_zone: {
-    username : process.env.UP_USERNAME_CAKEZONE || "biz_adm_zzXEiLApvfel",
-    apikey   : process.env.UP_APIKEY_CAKEZONE   || "e4d7ccbe7e7342169523c37a516488fe3146a46c",
+    username : process.env.UP_USERNAME_CAKEZONE,
+    apikey   : process.env.UP_APIKEY_CAKEZONE,
   },
   olio: {
-    username : process.env.UP_USERNAME_OLIO || "biz_adm_iIqzrwJgxyOK",
-    apikey   : process.env.UP_APIKEY_OLIO   || "c8e89a781c58a8ed636ff2a9c693d1bd503a454e",
+    username : process.env.UP_USERNAME_OLIO,
+    apikey   : process.env.UP_APIKEY_OLIO,
   },
 };
 
@@ -73,6 +91,17 @@ export async function performToggleAPI(location_id, action, brand) {
       finalResponseText = await response.text();
       console.log("[UP] Raw Response for", id, ":", finalStatus, finalResponseText);
 
+      // 401/403 means the API credentials themselves are the problem — invalid,
+      // revoked, or expired — not that this one store/ID is wrong. Every future call
+      // for this brand will fail the same way until someone fixes the credentials, so
+      // this is worth a distinct, urgent alert rather than looking like an ordinary
+      // per-store failure.
+      if (finalStatus === 401 || finalStatus === 403) {
+        raiseAlert(`UP_AUTH_ERROR:${brand}`, 'CRITICAL',
+          `UrbanPiper rejected our API credentials for "${brand}" (HTTP ${finalStatus}). Every toggle for this brand will fail until this is fixed.`,
+          finalResponseText).catch(() => {});
+      }
+
       // Simple 429 Rate Limit backoff
       if (finalStatus === 429) {
         console.log(`[UP] Rate limited (429) for ${id}, waiting 2 seconds before retry...`);
@@ -96,8 +125,12 @@ export async function performToggleAPI(location_id, action, brand) {
               continue;
             }
           } else if (errBody.message && (errBody.message.includes("Invalid platform") || errBody.message.includes("not associated"))) {
-            if (currentPlatforms.length > 2) {
-              currentPlatforms = ["swiggy", "zomato"];
+            // Can't tell WHICH platform this message is about, so narrow one at a time
+            // (drop the last one and retry) instead of jumping straight to a hardcoded
+            // 2-platform fallback — with a 9-platform list now, that used to mean losing
+            // up to 7 legitimately-valid platforms over a single ambiguous error.
+            if (currentPlatforms.length > 1) {
+              currentPlatforms = currentPlatforms.slice(0, -1);
               continue;
             }
           }
@@ -172,13 +205,6 @@ router.post("/toggle", async (req, res) => {
 
   const actorEmail = req.user?.email || 'Unknown';
 
-  // Paused stores are hands-off until explicitly resumed — block even a direct
-  // single-store click, so a normal Enable can't accidentally undo an intentional pause.
-  const pausedCheck = await pool.query(`SELECT paused, pause_reason FROM managed_stores WHERE location_id = $1`, [location_id]);
-  if (pausedCheck.rows[0]?.paused) {
-    return res.status(409).json({ success: false, error: `Store is paused (${pausedCheck.rows[0].pause_reason || 'no reason given'}) — resume it first in Manage Stores.` });
-  }
-
   // Update desired state in DB for the exact UI location_id string
   const desiredState = action === 'enable' ? 'ONLINE' : 'OFFLINE';
   try {
@@ -198,7 +224,7 @@ router.post("/toggle", async (req, res) => {
     await logProblemStore({ location_id, name: store_name, brand }, action, "Rate Limit Exceeded locally");
     await pool.query(`INSERT INTO toggle_activity (store_name, store_id, brand, email, action, result, error_msg, source) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
       [`${store_name} (${location_id})`, location_id, brand, actorEmail, action.toUpperCase(), 'FAILED', 'Rate Limit Exceeded', 'MANUAL_SINGLE']);
-    return res.status(429).json({ error: "Rate limit exceeded (18/min). Try again later." });
+    return res.status(429).json({ error: "Rate limit exceeded (180/min). Try again later." });
   }
 
   try {
@@ -232,13 +258,14 @@ router.post("/toggle/bulk", async (req, res) => {
 
   try {
     const actorEmail = req.user?.email || 'Unknown';
-    const { jobId, skippedPaused } = await initiateBulkJob(stores, action, filterContext, actorEmail, 'MANUAL_BULK', performToggleAPI);
-    const pausedNote = skippedPaused ? ` (${skippedPaused} paused store${skippedPaused > 1 ? 's' : ''} skipped)` : '';
-    if (!jobId) {
-      return res.json({ success: true, jobId: null, message: `All selected stores are paused — nothing to do.${pausedNote}` });
-    }
-    return res.json({ success: true, jobId, message: `Bulk job initiated${pausedNote}` });
+    const { jobId } = await initiateBulkJob(stores, action, filterContext, actorEmail, 'MANUAL_BULK', performToggleAPI);
+    return res.json({ success: true, jobId, message: 'Bulk job initiated' });
   } catch (err) {
+    // A brand-overlap conflict carries structured details (who/when/progress) so the
+    // frontend can show a real message instead of a generic error.
+    if (err.conflictingJob) {
+      return res.status(409).json({ success: false, error: err.message, conflictingJob: err.conflictingJob });
+    }
     return res.status(500).json({ success: false, error: err.message });
   }
 });
@@ -274,7 +301,7 @@ router.get("/toggle/sidebar-data", async (req, res) => {
         apiHealth: {
           status: healthStatus,
           requestsThisMinute: requestsUsed, // Max among brands
-          maxLimit: 18,
+          maxLimit: 180,
           lastSyncTime: healthRes.rows[0]?.last_sync_time || new Date(),
           keepaliveStatus: "Stopped"
         },
@@ -312,11 +339,16 @@ router.post("/toggle/problem/retry", async (req, res) => {
     const problem = probRes.rows[0];
     if (!problem) return res.status(404).json({ success: false, error: "Problem not found" });
 
-    const stateRes = await pool.query(`SELECT desired_state FROM store_state WHERE location_id = $1`, [problem.store_id]);
+    const stateRes = await pool.query(`SELECT desired_state, active_orders FROM store_state WHERE location_id = $1`, [problem.store_id]);
     const desiredState = stateRes.rows[0]?.desired_state;
     if (!desiredState) return res.status(400).json({ success: false, error: "No desired state recorded for this store" });
 
-    const action = desiredState === 'ONLINE' ? 'enable' : 'disable';
+    // Must respect the eatfit threshold too — otherwise retrying a store whose
+    // AUTO_THROTTLE disable failed (landing it in Problem Stores) would incorrectly
+    // re-enable an overloaded kitchen instead of retrying the disable it actually needs.
+    const action = desiredState === 'ONLINE'
+      ? resolveOnlineAction(problem.brand, stateRes.rows[0]?.active_orders)
+      : 'disable';
 
     const rl = await checkAndIncrementRateLimit(problem.brand);
     if (rl === -1) return res.status(429).json({ success: false, error: "Rate limit exceeded, try again shortly" });
@@ -387,44 +419,47 @@ router.post("/toggle/correct-status", async (req, res) => {
   }
 });
 
+// Only the job's own owner, or an Admin/Super Admin, can pause/resume/cancel it —
+// previously anyone with the tab open could stop someone else's job.
+async function canControlJob(req, res, jobId) {
+  const jobRes = await pool.query(`SELECT actor_email FROM bulk_toggle_jobs WHERE id = $1`, [jobId]);
+  if (jobRes.rows.length === 0) {
+    res.status(404).json({ success: false, error: "Job not found" });
+    return false;
+  }
+  const isOwner = jobRes.rows[0].actor_email === req.user?.email;
+  const isAdmin = ['admin', 'super_admin'].includes(req.user?.role);
+  if (!isOwner && !isAdmin) {
+    res.status(403).json({ success: false, error: "Only the job's owner or an Admin can control it." });
+    return false;
+  }
+  return true;
+}
+
 router.post("/toggle/bulk/cancel", async (req, res) => {
   const { jobId } = req.body;
+  if (!(await canControlJob(req, res, jobId))) return;
   await pool.query(`UPDATE bulk_toggle_jobs SET status = 'CANCELLED' WHERE id = $1`, [jobId]);
   res.json({ success: true });
 });
 
 router.post("/toggle/bulk/pause", async (req, res) => {
   const { jobId } = req.body;
+  if (!(await canControlJob(req, res, jobId))) return;
   await pool.query(`UPDATE bulk_toggle_jobs SET status = 'PAUSED' WHERE id = $1`, [jobId]);
   res.json({ success: true });
 });
 
 router.post("/toggle/bulk/resume", async (req, res) => {
   const { jobId } = req.body;
+  if (!(await canControlJob(req, res, jobId))) return;
   await pool.query(`UPDATE bulk_toggle_jobs SET status = 'RUNNING' WHERE id = $1`, [jobId]);
   res.json({ success: true });
 });
 
-// ─── UTILITY LOCATIONS (EXISTING) ─────────────────────────
-router.get("/locations", async (req, res) => {
-  const brand = req.query.brand || "ovenfresh";
-  const brandKey = brand.toLowerCase().replace(/[^a-z]/g, "_");
-  const creds = UP_BRANDS[brandKey];
-  if (!creds) return res.status(400).json({ error: `Unknown brand: ${brand}` });
-  try {
-    const response = await fetch(UP_LOCATION_URL, {
-      method  : "GET",
-      headers : { "Authorization" : `apikey ${creds.username}:${creds.apikey}`, ...(creds.biz_id ? { "x-upr-biz-id": creds.biz_id } : {}) }
-    });
-    const responseText = await response.text();
-    try { return res.json({ success: true, locations: JSON.parse(responseText) }); } catch(e) { return res.status(500).json({error: "Parse failed"}); }
-  } catch (err) { return    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
 router.get('/history/download', async (req, res) => {
   try {
-    const historyRes = await pool.query(`SELECT * FROM toggle_activity ORDER BY created_at DESC`);
+    const historyRes = await pool.query(`SELECT * FROM toggle_activity WHERE created_at >= NOW() - INTERVAL '48 hours' ORDER BY created_at DESC`);
     
     let csvStr = "Date/Time,User Email,Brand,Source,Action Type,Result,Is Automated,Details\n";
     historyRes.rows.forEach(row => {
@@ -450,50 +485,6 @@ router.get('/history/download', async (req, res) => {
   }
 });
 
-// ─── ORDER VOLUME ENDPOINT (WEBHOOK) ─────────────────────────
-router.post("/toggle/update-orders", async (req, res) => {
-  const { location_id, active_orders, brand, store_name } = req.body;
-  if (!location_id || active_orders === undefined) {
-    return res.status(400).json({ error: "location_id and active_orders required" });
-  }
-
-  const brandClean = brand || "ovenfresh";
-  const brandKey = brandClean.toLowerCase().replace(/[^a-z]/g, "_");
-
-  try {
-    const currentStateRes = await pool.query(`
-      INSERT INTO store_state (location_id, brand, active_orders) 
-      VALUES ($1, $2, $3) 
-      ON CONFLICT (location_id) 
-      DO UPDATE SET active_orders = $3, last_updated = NOW()
-      RETURNING desired_state
-    `, [location_id, brandClean, active_orders]);
-    
-    const desiredState = currentStateRes.rows[0]?.desired_state;
-
-    // Auto-disable logic (ONLY for eatfit)
-    if (brandKey.includes("eatfit") && active_orders >= 15 && desiredState === 'ONLINE') {
-      console.log(`[AUTO-TOGGLE] ${location_id} has ${active_orders} orders. Disabling.`);
-      
-      const apiRes = await performToggleAPI(location_id, 'disable', brandClean);
-      
-      if (apiRes.success) {
-        await pool.query(`UPDATE managed_stores SET status = 'offline', status_updated_at = NOW() WHERE location_id = $1`, [location_id]);
-        await pool.query(`INSERT INTO toggle_activity (store_name, store_id, brand, email, action, result, is_automated, source) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-          [`${store_name || location_id} (${location_id})`, location_id, brandClean, 'System — Auto-Throttle', 'DISABLE', 'SUCCESS', true, 'AUTO_THROTTLE']);
-      } else {
-        await pool.query(`INSERT INTO toggle_activity (store_name, store_id, brand, email, action, result, is_automated, error_msg, source) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-          [`${store_name || location_id} (${location_id})`, location_id, brandClean, 'System — Auto-Throttle', 'DISABLE', 'FAILED', true, apiRes.error, 'AUTO_THROTTLE']);
-      }
-    }
-
-    return res.json({ success: true });
-  } catch (err) {
-    console.error("Failed to update orders:", err);
-    return res.status(500).json({ success: false, error: err.message });
-  }
-});
-
 router.get("/toggle/store-states", async (req, res) => {
   try {
     const result = await pool.query(`SELECT * FROM store_state`);
@@ -513,7 +504,7 @@ router.get("/toggle/stores", async (req, res) => {
   }
 });
 
-router.post("/toggle/stores", async (req, res) => {
+router.post("/toggle/stores", canManageStores, async (req, res) => {
   const { id, name, brand, city, zone, location_id, status } = req.body;
   if (!name || !brand || !location_id) {
     return res.status(400).json({ error: "name, brand, and location_id required" });
@@ -553,68 +544,13 @@ router.post("/toggle/stores", async (req, res) => {
 // delete or touch anything in UrbanPiper — if it still exists there, that's expected
 // and fine. But we DO clean up our own related rows so a deleted store can never
 // reappear in an Hourly Recheck/Watchdog batch or linger in the Problems list.
-router.delete("/toggle/stores/:location_id", async (req, res) => {
+router.delete("/toggle/stores/:location_id", canManageStores, async (req, res) => {
   const { location_id } = req.params;
   try {
     await pool.query(`DELETE FROM managed_stores WHERE location_id = $1`, [location_id]);
     await pool.query(`DELETE FROM store_state WHERE location_id = $1`, [location_id]);
     await pool.query(`DELETE FROM problem_stores WHERE store_id = $1`, [location_id]);
     res.json({ success: true });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-// ─── PAUSE / RESUME ───────────────────────────────────────────
-// Pause turns the store off for real and marks it hands-off — excluded from every
-// bulk/automated path (see the paused filter in initiateBulkJob) and from the normal
-// single-toggle button, until explicitly resumed.
-router.post("/toggle/stores/:location_id/pause", async (req, res) => {
-  const { location_id } = req.params;
-  const { reason } = req.body;
-  const actorEmail = req.user?.email || 'Unknown';
-  try {
-    const storeRes = await pool.query(`SELECT name, brand FROM managed_stores WHERE location_id = $1`, [location_id]);
-    const store = storeRes.rows[0];
-    if (!store) return res.status(404).json({ success: false, error: "Store not found" });
-
-    const apiRes = await performToggleAPI(location_id, 'disable', store.brand);
-
-    await pool.query(`
-      UPDATE managed_stores
-      SET paused = true, paused_at = NOW(), paused_by = $1, pause_reason = $2,
-          status = 'offline', status_updated_at = NOW()
-      WHERE location_id = $3
-    `, [actorEmail, reason || null, location_id]);
-    await pool.query(`
-      INSERT INTO store_state (location_id, brand, desired_state)
-      VALUES ($1, $2, 'OFFLINE')
-      ON CONFLICT (location_id) DO UPDATE SET desired_state = 'OFFLINE', last_updated = NOW()
-    `, [location_id, store.brand]);
-    await pool.query(`INSERT INTO toggle_activity (store_name, store_id, brand, email, action, result, error_msg, is_automated, source) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-      [`${store.name} (${location_id})`, location_id, store.brand, actorEmail, 'DISABLE', apiRes.success ? 'SUCCESS' : 'FAILED', apiRes.success ? (reason || null) : apiRes.error, false, 'MANUAL_PAUSE']);
-
-    res.json({ success: true, message: apiRes.success ? "Store paused" : `Store marked paused, but the UrbanPiper call failed: ${apiRes.error}` });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-router.post("/toggle/stores/:location_id/resume", async (req, res) => {
-  const { location_id } = req.params;
-  const actorEmail = req.user?.email || 'Unknown';
-  try {
-    const storeRes = await pool.query(`SELECT name, brand FROM managed_stores WHERE location_id = $1`, [location_id]);
-    const store = storeRes.rows[0];
-    if (!store) return res.status(404).json({ success: false, error: "Store not found" });
-
-    // Resume just makes it a normal store again — it does NOT auto-enable. The next
-    // explicit Enable click or bulk run is what actually turns it back on.
-    await pool.query(`UPDATE managed_stores SET paused = false, paused_at = NULL, paused_by = NULL, pause_reason = NULL WHERE location_id = $1`, [location_id]);
-    await pool.query(`INSERT INTO toggle_activity (store_name, store_id, brand, email, action, result, is_automated, source) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-      [`${store.name} (${location_id})`, location_id, store.brand, actorEmail, 'MANUAL_RESUME', 'SUCCESS', false, 'MANUAL_RESUME']);
-
-    res.json({ success: true, message: "Store resumed — still offline until enabled" });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }

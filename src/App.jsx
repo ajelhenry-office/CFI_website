@@ -12,6 +12,7 @@ import { SettingsPage, ThemePage } from "./features/static/StaticPages";
 import LoginPage from "./features/auth/LoginPage";
 import ChatbotWidget from "./features/chat/ChatbotWidget";
 import { fetchFilters } from "./features/ratings/ratingsApi";
+import { API_BASE, getAuthHeaders } from "./api";
 
 const iso = (offsetDays) => {
   const d = new Date();
@@ -74,6 +75,28 @@ export default function App() {
       alive = false;
     };
   }, [user, activeTab]);
+
+  // The backend now always enforces the CURRENT role on every request (a role change
+  // takes effect immediately, server-side) — but the sidebar/tab list here is driven by
+  // the role cached in localStorage at login, which would otherwise lag until next
+  // login. Poll a lightweight "who am I" endpoint periodically so a demotion/promotion
+  // shows up in the UI without needing to log out.
+  useEffect(() => {
+    if (!user) return;
+    const syncRole = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/auth/me`, { headers: getAuthHeaders() });
+        const data = await res.json();
+        if (data.success && data.user.role !== user.role) {
+          const updated = { ...user, role: data.user.role };
+          localStorage.setItem("user", JSON.stringify(updated));
+          setUser(updated);
+        }
+      } catch (err) { /* offline or logged out — next request will handle it */ }
+    };
+    const timer = setInterval(syncRole, 5 * 60 * 1000); // every 5 minutes
+    return () => clearInterval(timer);
+  }, [user]);
 
   if (!user) {
     return <LoginPage onLogin={setUser} />;

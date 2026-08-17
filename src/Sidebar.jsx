@@ -41,6 +41,7 @@ const ICON_FOR = {
 };
 
 export const ROLE_PERMISSIONS = {
+  super_admin: ["toggle", "timing", "reviews", "backfilling", "ratings", "ops_matrix", "settings", "theme"],
   admin: ["toggle", "timing", "reviews", "backfilling", "ratings", "ops_matrix", "settings", "theme"],
   dark_kitchen: ["ratings", "ops_matrix"],
   supervisor: ["ratings", "ops_matrix", "reviews", "backfilling"],
