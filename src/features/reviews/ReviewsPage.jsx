@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { C, FONT, cardStyle, pillButton, spinnerStyle } from "../../theme";
+import { getAuthHeaders } from "../../api";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || (import.meta.env.PROD ? "" : "http://localhost:3001");
 
@@ -32,7 +33,7 @@ export default function ReviewsPage() {
   const load = useCallback(() => {
     setLoading(true);
     setError(null);
-    fetch(`${API_BASE}/api/reviews`)
+    fetch(`${API_BASE}/api/reviews`, { headers: getAuthHeaders() })
       .then((r) => r.json())
       .then((d) => setReviews(Array.isArray(d) ? d : d.reviews || []))
       .catch((e) => setError(e.message))
@@ -44,7 +45,7 @@ export default function ReviewsPage() {
   const fetchNew = async () => {
     setFetching(true);
     try {
-      const res = await fetch(`${API_BASE}/api/reviews/fetch-new`);
+      const res = await fetch(`${API_BASE}/api/reviews/fetch-new`, { headers: getAuthHeaders() });
       const d = await res.json();
       if (d.reviews) setReviews(Array.isArray(d.reviews) ? d.reviews : []);
     } catch (e) {
@@ -59,7 +60,7 @@ export default function ReviewsPage() {
     try {
       const res = await fetch(`${API_BASE}/api/reviews/${review.id}/generate`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: getAuthHeaders(),
         body: JSON.stringify({ review_text: review.review_text, star_rating: review.star_rating, store_name: review.store_name, brand: review.brand }),
       });
       const d = await res.json();
@@ -76,7 +77,7 @@ export default function ReviewsPage() {
     try {
       await fetch(`${API_BASE}/api/reviews/${review.id}/approve`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: getAuthHeaders(),
         body: JSON.stringify({ replyText, name: review.name }),
       });
       setReplies((r) => { const n = { ...r }; delete n[review.id]; return n; });
