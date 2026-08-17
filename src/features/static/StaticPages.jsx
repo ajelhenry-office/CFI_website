@@ -33,19 +33,21 @@ const getAvatarColor = (initials) => {
   return { bg: colors[index], color: textColors[index] };
 };
 
-// A single-select role picker — replaces the old multi-checkbox grid. Access levels
-// are a ladder (Super Admin > Admin > everyone else), not combinable tags, and only
-// one role at a time is ever meaningful for what tabs someone can see.
+// Multi-select role picker — an employee can hold more than one role at once (e.g.
+// Supervisor + Control Tower). `value` is an array; clicking a role toggles it in/out.
 function RolePicker({ options, value, onChange }) {
+  const toggle = (roleKey) => {
+    onChange(value.includes(roleKey) ? value.filter(r => r !== roleKey) : [...value, roleKey]);
+  };
   return (
     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
       {options.map(roleKey => {
         const style = ROLE_STYLES[roleKey] || { label: roleKey, color: "#475569", bg: "#f1f5f9", border: "#e2e8f0" };
-        const isSelected = value === roleKey;
+        const isSelected = value.includes(roleKey);
         return (
           <div
             key={roleKey}
-            onClick={() => onChange(roleKey)}
+            onClick={() => toggle(roleKey)}
             style={{
               padding: "12px 16px",
               borderRadius: 8,
@@ -57,12 +59,12 @@ function RolePicker({ options, value, onChange }) {
           >
             <div style={{
               width: 16, height: 16,
-              borderRadius: "50%",
+              borderRadius: 4,
               backgroundColor: isSelected ? style.color : "#fff",
               border: `1px solid ${isSelected ? style.color : C.border}`,
               display: "flex", alignItems: "center", justifyContent: "center"
             }}>
-              {isSelected && <div style={{ width: 7, height: 7, borderRadius: "50%", backgroundColor: "#fff" }} />}
+              {isSelected && <div style={{ width: 8, height: 8, borderRadius: 2, backgroundColor: "#fff" }} />}
             </div>
             <span style={{ fontSize: 13, fontWeight: 700, color: isSelected ? style.color : C.text }}>{style.label}</span>
           </div>
@@ -82,12 +84,12 @@ export function SettingsPage() {
   // Add modal state
   const [showModal, setShowModal] = useState(false);
   const [email, setEmail] = useState("");
-  const [newRole, setNewRole] = useState("");
+  const [newRoles, setNewRoles] = useState([]);
 
-  // Edit role modal state
+  // Edit roles modal state
   const [showEditModal, setShowEditModal] = useState(false);
   const [editingUser, setEditingUser] = useState(null);
-  const [editingRole, setEditingRole] = useState("");
+  const [editingRoles, setEditingRoles] = useState([]);
 
   // Filter state
   const [search, setSearch] = useState("");
@@ -123,8 +125,8 @@ export function SettingsPage() {
       alert("A user with this email already exists in the system.");
       return;
     }
-    if (!newRole) {
-      setError("Select a role.");
+    if (newRoles.length === 0) {
+      setError("Select at least one role.");
       return;
     }
     setLoading(true);
@@ -133,12 +135,12 @@ export function SettingsPage() {
       const res = await fetch(`${API_BASE}/api/auth/users`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...getAuthHeaders() },
-        body: JSON.stringify({ email, role: newRole })
+        body: JSON.stringify({ email, roles: newRoles })
       });
       const data = await res.json();
       if (data.success) {
         setEmail("");
-        setNewRole("");
+        setNewRoles([]);
         setShowModal(false);
         fetchUsers();
         setTimeout(() => alert(data.message || "Employee added successfully!"), 100);
@@ -154,18 +156,18 @@ export function SettingsPage() {
 
   const handleUpdateRole = async (e) => {
     e.preventDefault();
-    if (!editingRole) return;
+    if (editingRoles.length === 0) return;
     try {
       const res = await fetch(`${API_BASE}/api/auth/users/${editingUser.id}/role`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json", ...getAuthHeaders() },
-        body: JSON.stringify({ role: editingRole })
+        body: JSON.stringify({ roles: editingRoles })
       });
       const data = await res.json();
       if (data.success) {
         setShowEditModal(false);
         setEditingUser(null);
-        setEditingRole("");
+        setEditingRoles([]);
         fetchUsers();
       } else alert(data.error);
     } catch (err) {
@@ -230,7 +232,8 @@ export function SettingsPage() {
     const name = formatName(u.email).toLowerCase();
     const mail = u.email.toLowerCase();
     const matchesSearch = name.includes(search.toLowerCase()) || mail.includes(search.toLowerCase());
-    const matchesRole = roleFilter === "All Roles" || u.role === roleFilter;
+    const userRoles = u.roles && u.roles.length ? u.roles : [u.role];
+    const matchesRole = roleFilter === "All Roles" || userRoles.includes(roleFilter);
     const matchesStatus = statusFilter === "All Status" || (statusFilter === "Active" && !u.is_locked) || (statusFilter === "Locked" && u.is_locked);
     return matchesSearch && matchesRole && matchesStatus;
   });
@@ -261,7 +264,10 @@ export function SettingsPage() {
             <div style={{ fontSize: 14, fontWeight: 800, color: C.primary, marginBottom: 8 }}>User Profile</div>
             {row("Name", currentUser.email ? formatName(currentUser.email) : "Curefoods Admin")}
             {row("Email", currentUser.email || "Unknown")}
-            {row("Role", ROLE_STYLES[currentUser.role]?.label || currentUser.role || "Unknown")}
+            {row("Role", (currentUser.roles && currentUser.roles.length ? currentUser.roles : [currentUser.role])
+              .filter(Boolean)
+              .map(r => ROLE_STYLES[r]?.label || r)
+              .join(", ") || "Unknown")}
           </div>
 
           <div style={cardStyle}>
@@ -300,7 +306,7 @@ export function SettingsPage() {
             <div style={{ display: "flex", gap: 8 }}>
               {grantableRoles.length > 0 && (
                 <button
-                  onClick={() => { setNewRole(""); setError(""); setShowModal(true); }}
+                  onClick={() => { setNewRoles([]); setError(""); setShowModal(true); }}
                   style={{ padding: "10px 20px", borderRadius: 8, backgroundColor: "#2563eb", color: "#fff", border: "none", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: FONT }}
                 >
                   Add Employee
@@ -315,7 +321,7 @@ export function SettingsPage() {
               const name = formatName(u.email);
               const initials = getInitials(name);
               const avatar = getAvatarColor(initials);
-              const style = ROLE_STYLES[u.role] || { label: u.role, color: "#475569", bg: "#f1f5f9", border: "#e2e8f0" };
+              const roles = u.roles && u.roles.length ? u.roles : [u.role];
               const isSelf = u.email === currentUser.email;
               const showActions = !isSelf && u.canManage;
 
@@ -333,11 +339,16 @@ export function SettingsPage() {
                     </div>
                   </div>
 
-                  {/* Role */}
+                  {/* Roles */}
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap", flex: 1 }}>
-                    <div style={{ padding: "4px 10px", borderRadius: 6, backgroundColor: style.bg, color: style.color, border: `1px solid ${style.border}`, fontSize: 11, fontWeight: 700 }}>
-                      {style.label}
-                    </div>
+                    {roles.map(r => {
+                      const style = ROLE_STYLES[r] || { label: r, color: "#475569", bg: "#f1f5f9", border: "#e2e8f0" };
+                      return (
+                        <div key={r} style={{ padding: "4px 10px", borderRadius: 6, backgroundColor: style.bg, color: style.color, border: `1px solid ${style.border}`, fontSize: 11, fontWeight: 700 }}>
+                          {style.label}
+                        </div>
+                      );
+                    })}
                   </div>
 
                   {/* Status */}
@@ -351,7 +362,7 @@ export function SettingsPage() {
                       <button
                         onClick={() => {
                           setEditingUser(u);
-                          setEditingRole(u.role);
+                          setEditingRoles(u.roles && u.roles.length ? u.roles : [u.role]);
                           setShowEditModal(true);
                         }}
                         title="Update Role"
@@ -426,12 +437,12 @@ export function SettingsPage() {
                 </div>
               </div>
 
-              <label style={{ display: "block", fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 12 }}>Assign Role</label>
+              <label style={{ display: "block", fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 12 }}>Assign Role(s)</label>
               <div style={{ marginBottom: 24 }}>
-                <RolePicker options={grantableRoles} value={newRole} onChange={setNewRole} />
+                <RolePicker options={grantableRoles} value={newRoles} onChange={setNewRoles} />
               </div>
               <div style={{ fontSize: 11.5, color: C.muted, marginBottom: 24, lineHeight: 1.5 }}>
-                A password will be generated automatically and emailed to them along with the login link and their role.
+                A password will be generated automatically and emailed to them along with the login link and their role{newRoles.length > 1 ? "s" : ""}. You can select more than one role.
               </div>
 
               {error && <div style={{ fontSize: 12, color: "#b91c1c", fontWeight: 600, marginBottom: 16 }}>{error}</div>}
@@ -446,8 +457,8 @@ export function SettingsPage() {
                 </button>
                 <button
                   type="submit"
-                  disabled={loading || !newRole}
-                  style={{ padding: "10px 24px", borderRadius: 8, backgroundColor: "#2563eb", color: "#fff", border: "none", fontWeight: 700, fontSize: 13, cursor: (loading || !newRole) ? "not-allowed" : "pointer", fontFamily: FONT, opacity: (loading || !newRole) ? 0.6 : 1 }}
+                  disabled={loading || newRoles.length === 0}
+                  style={{ padding: "10px 24px", borderRadius: 8, backgroundColor: "#2563eb", color: "#fff", border: "none", fontWeight: 700, fontSize: 13, cursor: (loading || newRoles.length === 0) ? "not-allowed" : "pointer", fontFamily: FONT, opacity: (loading || newRoles.length === 0) ? 0.6 : 1 }}
                 >
                   {loading ? "Adding..." : "Add Employee"}
                 </button>
@@ -457,19 +468,22 @@ export function SettingsPage() {
         </div>
       )}
 
-      {/* Edit Role Modal */}
+      {/* Edit Roles Modal */}
       {showEditModal && editingUser && (
         <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }}>
           <div style={{ backgroundColor: "#fff", borderRadius: 16, width: 600, padding: 32, boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
-              <div style={{ fontSize: 20, fontWeight: 800, color: C.text }}>Update Role for {formatName(editingUser.email)}</div>
+              <div style={{ fontSize: 20, fontWeight: 800, color: C.text }}>Update Roles for {formatName(editingUser.email)}</div>
               <button onClick={() => setShowEditModal(false)} style={{ background: "none", border: "none", cursor: "pointer", color: C.muted }}><X size={20} /></button>
             </div>
 
             <form onSubmit={handleUpdateRole}>
-              <label style={{ display: "block", fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 12 }}>Assign Role</label>
-              <div style={{ marginBottom: 32 }}>
-                <RolePicker options={grantableRoles} value={editingRole} onChange={setEditingRole} />
+              <label style={{ display: "block", fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 12 }}>Assign Role(s)</label>
+              <div style={{ marginBottom: 8 }}>
+                <RolePicker options={grantableRoles} value={editingRoles} onChange={setEditingRoles} />
+              </div>
+              <div style={{ fontSize: 11.5, color: C.muted, marginBottom: 24, lineHeight: 1.5 }}>
+                Select as many roles as apply — this employee will get the combined access of every role selected.
               </div>
 
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 12 }}>
@@ -482,10 +496,10 @@ export function SettingsPage() {
                 </button>
                 <button
                   type="submit"
-                  disabled={!editingRole}
-                  style={{ padding: "10px 24px", borderRadius: 8, backgroundColor: "#2563eb", color: "#fff", border: "none", fontWeight: 700, fontSize: 13, cursor: !editingRole ? "not-allowed" : "pointer", fontFamily: FONT, opacity: !editingRole ? 0.6 : 1 }}
+                  disabled={editingRoles.length === 0}
+                  style={{ padding: "10px 24px", borderRadius: 8, backgroundColor: "#2563eb", color: "#fff", border: "none", fontWeight: 700, fontSize: 13, cursor: editingRoles.length === 0 ? "not-allowed" : "pointer", fontFamily: FONT, opacity: editingRoles.length === 0 ? 0.6 : 1 }}
                 >
-                  Save Role
+                  Save Role{editingRoles.length > 1 ? "s" : ""}
                 </button>
               </div>
             </form>

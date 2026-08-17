@@ -9,7 +9,11 @@ const router = express.Router();
 // any authenticated user could call these endpoints directly regardless of role.
 // Matches the same role set the frontend's canManageStores check already uses.
 function canManageStores(req, res, next) {
-  if (!['super_admin', 'admin', 'control_tower'].includes(req.user?.role)) {
+  // Employees can hold more than one role — check the full set (req.user.roles), not
+  // just req.user.role (the highest-ranked one), so Control Tower still grants access
+  // even when it's someone's secondary role.
+  const roles = req.user?.roles || [req.user?.role];
+  if (!roles.some(r => ['super_admin', 'admin', 'control_tower'].includes(r))) {
     return res.status(403).json({ success: false, error: "You don't have permission to manage stores." });
   }
   next();

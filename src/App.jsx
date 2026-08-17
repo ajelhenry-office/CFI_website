@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import Sidebar, { NAV_ITEMS, ROLE_PERMISSIONS } from "./Sidebar";
+import Sidebar, { NAV_ITEMS, tabsForRoles } from "./Sidebar";
 import GlobalFilters from "./GlobalFilters";
 import { C, FONT } from "./theme";
 import TogglePage from "./features/toggle/TogglePage";
@@ -42,7 +42,7 @@ export default function App() {
     let initialTab = "toggle";
     if (savedUser) {
       const parsed = JSON.parse(savedUser);
-      const allowed = ROLE_PERMISSIONS[parsed.role] || ["ratings"];
+      const allowed = tabsForRoles(parsed.roles || [parsed.role]);
       initialTab = allowed[0];
     }
 
@@ -59,8 +59,8 @@ export default function App() {
   useEffect(() => {
     if (!user) return;
 
-    // Ensure activeTab is valid for the logged-in user's role
-    const allowed = ROLE_PERMISSIONS[user.role] || ["ratings"];
+    // Ensure activeTab is valid for the logged-in user's roles
+    const allowed = tabsForRoles(user.roles || [user.role]);
     if (!allowed.includes(activeTab)) {
       setActiveTab(allowed[0]);
     }
@@ -87,8 +87,13 @@ export default function App() {
       try {
         const res = await fetch(`${API_BASE}/api/auth/me`, { headers: getAuthHeaders() });
         const data = await res.json();
-        if (data.success && data.user.role !== user.role) {
-          const updated = { ...user, role: data.user.role };
+        const currentRoles = user.roles || [user.role];
+        const rolesChanged = data.success && (
+          data.user.role !== user.role ||
+          JSON.stringify([...(data.user.roles || [])].sort()) !== JSON.stringify([...currentRoles].sort())
+        );
+        if (rolesChanged) {
+          const updated = { ...user, role: data.user.role, roles: data.user.roles };
           localStorage.setItem("user", JSON.stringify(updated));
           setUser(updated);
         }
@@ -129,7 +134,7 @@ export default function App() {
         }}
         collapsed={collapsed}
         onToggleCollapse={() => setCollapsed(true)}
-        role={user.role}
+        roles={user.roles || [user.role]}
       />
 
       <main style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", position: "relative" }}>
@@ -187,7 +192,7 @@ export default function App() {
         </header>
 
         <div style={{ flex: 1, overflowY: "auto", padding: "22px 28px 60px" }}>
-          {activeTab === "toggle" && <TogglePage userRole={user.role} />}
+          {activeTab === "toggle" && <TogglePage userRole={user.role} userRoles={user.roles || [user.role]} />}
           {activeTab === "timing" && <TimingPage globalFilters={globalFilters} />}
           {activeTab === "reviews" && <ReviewsPage globalFilters={globalFilters} />}
           {activeTab === "backfilling" && <RouteBackfillingPage globalFilters={globalFilters} />}

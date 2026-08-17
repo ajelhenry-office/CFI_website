@@ -48,8 +48,18 @@ export const ROLE_PERMISSIONS = {
   control_tower: ["toggle"],
 };
 
-export default function Sidebar({ active, onNavigate, collapsed, onToggleCollapse, role }) {
-  const allowedTabs = ROLE_PERMISSIONS[role] || ["ratings"]; // default fallback
+// An employee can hold more than one role now — visible tabs are the union of every
+// role they hold, not just one. A Supervisor + Control Tower person sees both sets.
+export function tabsForRoles(roles) {
+  const list = Array.isArray(roles) && roles.length ? roles : [];
+  const tabs = new Set();
+  list.forEach(r => (ROLE_PERMISSIONS[r] || []).forEach(t => tabs.add(t)));
+  if (tabs.size === 0) return ["ratings"]; // default fallback
+  return [...tabs];
+}
+
+export default function Sidebar({ active, onNavigate, collapsed, onToggleCollapse, roles }) {
+  const allowedTabs = tabsForRoles(roles);
   const visibleNavItems = NAV_ITEMS.filter(item => allowedTabs.includes(item.key));
   return (
     <aside

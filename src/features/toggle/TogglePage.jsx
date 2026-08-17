@@ -36,7 +36,7 @@ async function post(path, body) {
 
 const selectStyle = { padding: "7px 12px", borderRadius: 10, border: `1.5px solid ${C.primary}`, color: C.primary, fontSize: 12, fontWeight: 700, fontFamily: FONT, cursor: "pointer", outline: "none" };
 
-export default function TogglePage({ userRole }) {
+export default function TogglePage({ userRole, userRoles }) {
   const [stores, setStores] = useState([]);
   
   // Pending filters (multi-select)
@@ -56,7 +56,12 @@ export default function TogglePage({ userRole }) {
   const [showManage, setShowManage] = useState(false);
   const [storeStates, setStoreStates] = useState({});
 
-  const canManageStores = ["super_admin", "admin", "control_tower"].includes(String(userRole).toLowerCase().replace(/ /g, '_'));
+  // An employee can hold more than one role — check the full set so Control Tower
+  // still grants store-management access even when it's a secondary role, not just
+  // whichever single role happened to be passed down.
+  const normalize = (r) => String(r).toLowerCase().replace(/ /g, '_');
+  const roleSet = (userRoles && userRoles.length ? userRoles : [userRole]).map(normalize);
+  const canManageStores = roleSet.some(r => ["super_admin", "admin", "control_tower"].includes(r));
 
   const handleBrandChange = (b) => { setBrand(b); setZone([]); setCity([]); setArea([]); };
   const handleZoneChange = (z) => { setZone(z); setCity([]); setArea([]); };
