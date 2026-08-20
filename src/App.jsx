@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import Sidebar, { NAV_ITEMS, ROLE_PERMISSIONS } from "./Sidebar";
+import Sidebar, { NAV_ITEMS, tabsForRoles } from "./Sidebar";
 import GlobalFilters from "./GlobalFilters";
 import { C, FONT } from "./theme";
 import TogglePage from "./features/toggle/TogglePage";
@@ -42,7 +42,7 @@ export default function App() {
     let initialTab = "toggle";
     if (savedUser) {
       const parsed = JSON.parse(savedUser);
-      const allowed = ROLE_PERMISSIONS[parsed.role] || ["ratings"];
+      const allowed = tabsForRoles(parsed.roles || [parsed.role]);
       initialTab = allowed[0];
     }
 
@@ -59,8 +59,8 @@ export default function App() {
   useEffect(() => {
     if (!user) return;
 
-    // Ensure activeTab is valid for the logged-in user's role
-    const allowed = ROLE_PERMISSIONS[user.role] || ["ratings"];
+    // Ensure activeTab is valid for the logged-in user's roles
+    const allowed = tabsForRoles(user.roles || [user.role]);
     if (!allowed.includes(activeTab)) {
       setActiveTab(allowed[0]);
     }
@@ -87,8 +87,13 @@ export default function App() {
       try {
         const res = await fetch(`${API_BASE}/api/auth/me`, { headers: getAuthHeaders() });
         const data = await res.json();
-        if (data.success && data.user.role !== user.role) {
-          const updated = { ...user, role: data.user.role };
+        const currentRoles = user.roles || [user.role];
+        const rolesChanged = data.success && (
+          data.user.role !== user.role ||
+          JSON.stringify([...(data.user.roles || [])].sort()) !== JSON.stringify([...currentRoles].sort())
+        );
+        if (rolesChanged) {
+          const updated = { ...user, role: data.user.role, roles: data.user.roles };
           localStorage.setItem("user", JSON.stringify(updated));
           setUser(updated);
         }
@@ -129,7 +134,7 @@ export default function App() {
         }}
         collapsed={collapsed}
         onToggleCollapse={() => setCollapsed(true)}
-        role={user.role}
+        roles={user.roles || [user.role]}
       />
 
       <main style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", position: "relative" }}>
@@ -160,34 +165,38 @@ export default function App() {
           </button>
         )}
 
-        <header
-          style={{
-            padding: collapsed ? "20px 28px 16px 58px" : "20px 28px 16px",
-            borderBottom: `1px solid ${C.border}`,
-            display: "flex",
-            flexDirection: "column",
-            gap: 14,
-          }}
-        >
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <div>
-              <h1 style={{ fontSize: 24, fontWeight: 800, color: C.primary, margin: 0, letterSpacing: -0.3 }}>{title}</h1>
-              <div style={{ fontSize: 13, color: C.muted, marginTop: 3 }}>{subtitle}</div>
+        {/* The Reviews tab has its own full header and its own filter bar built in —
+            this shared one would just be a redundant duplicate above it. */}
+        {activeTab !== "reviews" && (
+          <header
+            style={{
+              padding: collapsed ? "20px 28px 16px 58px" : "20px 28px 16px",
+              borderBottom: `1px solid ${C.border}`,
+              display: "flex",
+              flexDirection: "column",
+              gap: 14,
+            }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div>
+                <h1 style={{ fontSize: 24, fontWeight: 800, color: C.primary, margin: 0, letterSpacing: -0.3 }}>{title}</h1>
+                <div style={{ fontSize: 13, color: C.muted, marginTop: 3 }}>{subtitle}</div>
+              </div>
+              <div id="header-actions"></div>
             </div>
-            <div id="header-actions"></div>
-          </div>
-          {activeTab !== "toggle" && activeTab !== "timing" && activeTab !== "settings" && activeTab !== "ops_matrix" && (
-            <GlobalFilters
-              filters={globalFilters}
-              masterData={masterData}
-              onChange={updateFilters}
-              onClearAll={() => setGlobalFilters({ ...DEFAULT_FILTERS, dateFrom: "", dateTo: "" })}
-            />
-          )}
-        </header>
+            {activeTab !== "toggle" && activeTab !== "timing" && activeTab !== "settings" && activeTab !== "ops_matrix" && (
+              <GlobalFilters
+                filters={globalFilters}
+                masterData={masterData}
+                onChange={updateFilters}
+                onClearAll={() => setGlobalFilters({ ...DEFAULT_FILTERS, dateFrom: "", dateTo: "" })}
+              />
+            )}
+          </header>
+        )}
 
-        <div style={{ flex: 1, overflowY: "auto", padding: "22px 28px 60px" }}>
-          {activeTab === "toggle" && <TogglePage userRole={user.role} />}
+        <div style={{ flex: 1, overflowY: "auto", padding: activeTab === "reviews" ? 0 : "22px 28px 60px" }}>
+          {activeTab === "toggle" && <TogglePage userRole={user.role} userRoles={user.roles || [user.role]} />}
           {activeTab === "timing" && <TimingPage globalFilters={globalFilters} />}
           {activeTab === "reviews" && <ReviewsPage globalFilters={globalFilters} />}
           {activeTab === "backfilling" && <RouteBackfillingPage globalFilters={globalFilters} />}

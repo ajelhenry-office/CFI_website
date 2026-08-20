@@ -8,8 +8,12 @@ import { sendAlertEmail } from '../auth/emailService.js';
 // config change needed. ALERT_EMAILS stays available for anyone extra beyond those
 // two roles.
 export async function getRecipients() {
+  // Employees can hold more than one role now, so match against the full roles
+  // array (roles && ARRAY[...] = "overlaps with"), not just the primary `role` column
+  // — otherwise someone whose primary role is e.g. Supervisor but who also holds
+  // Control Tower would silently stop getting these alerts.
   const roleRes = await pool.query(
-    `SELECT email FROM authorized_users WHERE role IN ('super_admin', 'control_tower') AND is_locked = false`
+    `SELECT email FROM authorized_users WHERE roles && ARRAY['super_admin', 'control_tower'] AND is_locked = false`
   );
   const extra = (process.env.ALERT_EMAILS || '').split(',').map(e => e.trim()).filter(Boolean);
   return [...new Set([...roleRes.rows.map(r => r.email), ...extra])];

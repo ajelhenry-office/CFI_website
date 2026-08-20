@@ -7,38 +7,10 @@ const BRAND_COLOR = {
   "eatfit": "#15803d",
 };
 
-const STALE_AFTER_MS = 6 * 60 * 60 * 1000; // 6 hours
-
-function timeAgo(iso) {
-  if (!iso) return null;
-  const diffMs = Date.now() - new Date(iso).getTime();
-  if (diffMs < 0) return "just now";
-  const mins = Math.floor(diffMs / 60000);
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  const days = Math.floor(hrs / 24);
-  return `${days}d ago`;
-}
-
-const smallBtn = {
-  flex: 1,
-  padding: "6px 0",
-  borderRadius: 6,
-  border: "none",
-  fontSize: 9.5,
-  fontWeight: 800,
-  cursor: "pointer",
-  fontFamily: FONT,
-};
-
-export default function StoreCard({ store, onToggle, onCorrect, isBulking, dbState }) {
+export default function StoreCard({ store, onToggle, isBulking, dbState, readOnly = false }) {
   const [loading, setLoading] = useState(false);
   const [hovered, setHovered] = useState(false);
   const [mockOrders, setMockOrders] = useState(dbState?.active_orders || 0);
-  const [showCorrect, setShowCorrect] = useState(false);
-  const [correcting, setCorrecting] = useState(false);
 
   // useState's initial value only runs once on mount — without this, the badge stays
   // frozen at whatever active_orders was when the card first rendered, never picking
@@ -48,26 +20,23 @@ export default function StoreCard({ store, onToggle, onCorrect, isBulking, dbSta
   }, [dbState?.active_orders]);
 
   const isOnline = store.status === "online";
+  const isPaused = !!store.paused;
   const desiredState = dbState?.desired_state || (isOnline ? "ONLINE" : "OFFLINE");
   const busy = loading || isBulking;
 
   const handleClick = async () => {
-    if (busy) return;
+    if (busy || isPaused) return;
     setLoading(true);
     await onToggle(store, isOnline ? "disable" : "enable");
     setLoading(false);
   };
 
-  const handleCorrect = async (actualStatus) => {
-    setCorrecting(true);
-    await onCorrect(store, actualStatus);
-    setCorrecting(false);
-    setShowCorrect(false);
-  };
-
   const brandColor = BRAND_COLOR[store.brand] || C.primary;
-  const confirmedText = timeAgo(store.status_updated_at);
-  const isStale = store.status_updated_at && (Date.now() - new Date(store.status_updated_at).getTime()) > STALE_AFTER_MS;
+  // The order-count badge and its threshold only mean anything for eatfit — it's the
+  // only brand the backend tracks active_orders for or auto-throttles on (see
+  // EATFIT_THROTTLE_THRESHOLD server-side); other brands' active_orders is never
+  // populated, so showing it there would just be a meaningless stale zero.
+  const isEatfit = String(store.brand).toLowerCase() === 'eatfit';
 
   return (
     <div
@@ -88,7 +57,7 @@ export default function StoreCard({ store, onToggle, onCorrect, isBulking, dbSta
       }}
     >
       {/* Status bar */}
-      <div style={{ height: 4, backgroundColor: isOnline ? "#22c55e" : "#ef4444", transition: "background-color 0.3s" }} />
+      <div style={{ height: 4, backgroundColor: isPaused ? "#f59e0b" : (isOnline ? "#22c55e" : "#ef4444"), transition: "background-color 0.3s" }} />
 
       <div style={{ padding: "14px 16px", display: "flex", flexDirection: "column", gap: 10, flex: 1 }}>
         {/* Brand badge + status */}
@@ -97,20 +66,28 @@ export default function StoreCard({ store, onToggle, onCorrect, isBulking, dbSta
             <span style={{ fontSize: 10, fontWeight: 800, color: brandColor, textTransform: "uppercase", letterSpacing: 0.8, backgroundColor: `${brandColor}12`, borderRadius: 6, padding: "3px 7px", alignSelf: "flex-start" }}>
               {(store.brand === 'olio' || store.brand === 'eatfit') && store.zone ? store.zone : store.brand}
             </span>
-            <span style={{
-              fontSize: 9, fontWeight: 800,
-              color: mockOrders > 15 ? "#dc2626" : "#15803d",
-              backgroundColor: mockOrders > 15 ? "#fee2e2" : "#dcfce7",
-              borderRadius: 4, padding: "2px 6px", alignSelf: "flex-start"
-            }}>
-              Orders: {mockOrders}
-            </span>
+            {isEatfit && (
+              <span style={{
+                fontSize: 9, fontWeight: 800,
+                color: mockOrders > 15 ? "#dc2626" : "#15803d",
+                backgroundColor: mockOrders > 15 ? "#fee2e2" : "#dcfce7",
+                borderRadius: 4, padding: "2px 6px", alignSelf: "flex-start"
+              }}>
+                Orders: {mockOrders}
+              </span>
+            )}
           </div>
           <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
-            <span style={{ fontSize: 10, fontWeight: 800, color: isOnline ? "#15803d" : "#dc2626", border: `1px solid ${isOnline ? "#15803d" : "#dc2626"}33`, borderRadius: 20, padding: "3px 9px" }}>
-              {isOnline ? "ONLINE" : "OFFLINE"}
-            </span>
-            {desiredState && desiredState.toLowerCase() !== (isOnline ? "online" : "offline") && (
+            {isPaused ? (
+              <span style={{ fontSize: 10, fontWeight: 800, color: "#b45309", border: "1px solid #b4530933", borderRadius: 20, padding: "3px 9px" }}>
+                ⏸ PAUSED
+              </span>
+            ) : (
+              <span style={{ fontSize: 10, fontWeight: 800, color: isOnline ? "#15803d" : "#dc2626", border: `1px solid ${isOnline ? "#15803d" : "#dc2626"}33`, borderRadius: 20, padding: "3px 9px" }}>
+                {isOnline ? "ONLINE" : "OFFLINE"}
+              </span>
+            )}
+            {!isPaused && desiredState && desiredState.toLowerCase() !== (isOnline ? "online" : "offline") && (
               <span style={{ fontSize: 9, fontWeight: 700, color: "#d97706", backgroundColor: "#fef3c7", padding: "2px 6px", borderRadius: 4 }}>
                 Target: {desiredState}
               </span>
@@ -126,68 +103,40 @@ export default function StoreCard({ store, onToggle, onCorrect, isBulking, dbSta
           </div>
         </div>
 
-        {/* Confidence indicator + manual correction trigger */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <span style={{ fontSize: 9, fontWeight: isStale ? 700 : 500, color: isStale ? "#d97706" : C.muted }}>
-            {confirmedText ? `Confirmed ${confirmedText}` : "Not yet confirmed"}
-          </span>
-          {!showCorrect && (
-            <button
-              onClick={() => setShowCorrect(true)}
-              title="Use this if UrbanPiper shows a different status than what's shown here"
-              style={{ background: "none", border: "none", color: C.muted, fontSize: 9, fontWeight: 700, cursor: "pointer", textDecoration: "underline", padding: 0 }}
-            >
-              Fix mismatch?
-            </button>
-          )}
-        </div>
-
-        {showCorrect && (
-          <div style={{ display: "flex", gap: 5 }}>
-            <button
-              onClick={() => handleCorrect("online")}
-              disabled={correcting}
-              style={{ ...smallBtn, backgroundColor: "#dcfce7", color: "#15803d", opacity: correcting ? 0.6 : 1 }}
-            >
-              Actually Online
-            </button>
-            <button
-              onClick={() => handleCorrect("offline")}
-              disabled={correcting}
-              style={{ ...smallBtn, backgroundColor: "#fee2e2", color: "#b91c1c", opacity: correcting ? 0.6 : 1 }}
-            >
-              Actually Offline
-            </button>
-            <button
-              onClick={() => setShowCorrect(false)}
-              disabled={correcting}
-              style={{ ...smallBtn, flex: "0 0 auto", padding: "6px 10px", backgroundColor: "transparent", color: C.muted }}
-            >
-              ✕
-            </button>
+        {isPaused && (
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <span style={{ fontSize: 9, fontWeight: 500, color: C.muted }}>
+              {store.pause_reason ? `"${store.pause_reason}"` : "No reason given"}
+            </span>
           </div>
         )}
 
-        {/* Toggle button */}
-        <button
-          onClick={handleClick}
-          disabled={busy}
-          style={{
-            marginTop: "auto",
-            padding: "8px 0",
-            borderRadius: 8,
-            border: "none",
-            fontSize: 12,
-            fontWeight: 800,
-            cursor: busy ? "not-allowed" : "pointer",
-            fontFamily: FONT,
-            transition: "all 0.2s",
-            backgroundColor: isOnline ? "#fee2e2" : "#dcfce7",
-            color: isOnline ? "#b91c1c" : "#15803d",
-          }}
-        >
-          {loading ? "Working…" : isOnline ? "Disable" : "Enable"}
-        </button>
+        {/* Toggle button — hidden entirely in read-only (Home/all-brands) view */}
+        {isPaused ? (
+          <div style={{ marginTop: "auto", padding: "8px 0", borderRadius: 8, fontSize: 11, fontWeight: 700, textAlign: "center", backgroundColor: "#fef3c7", color: "#b45309" }}>
+            Paused — resume in Manage Stores
+          </div>
+        ) : readOnly ? null : (
+          <button
+            onClick={handleClick}
+            disabled={busy}
+            style={{
+              marginTop: "auto",
+              padding: "8px 0",
+              borderRadius: 8,
+              border: "none",
+              fontSize: 12,
+              fontWeight: 800,
+              cursor: busy ? "not-allowed" : "pointer",
+              fontFamily: FONT,
+              transition: "all 0.2s",
+              backgroundColor: isOnline ? "#fee2e2" : "#dcfce7",
+              color: isOnline ? "#b91c1c" : "#15803d",
+            }}
+          >
+            {loading ? "Working…" : isOnline ? "Disable" : "Enable"}
+          </button>
+        )}
       </div>
     </div>
   );

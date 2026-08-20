@@ -1,7 +1,7 @@
 import { pool } from '../ratings/db.js';
 import { warmUpOpsCache } from '../ops_matrix/ops.routes.js';
 import { startTimingWorker } from '../timing/timingWorker.js';
-import { initiateBulkJob } from './queue.js';
+import { initiateBulkJob, normalizeBrandKey, AUTO_MANAGED_BRANDS } from './queue.js';
 import { performToggleAPI } from './toggle.routes.js';
 import { raiseAlert, resolveAlert } from '../alerts/alertService.js';
 import { scheduleDailyHealthCheck } from '../alerts/dailyHealthCheck.js';
@@ -30,22 +30,45 @@ export function startWorkers() {
     try {
       console.log("[WORKERS] Running Hourly Recheck Cron...");
 
-      // Check if there is already a RUNNING or PAUSED bulk job. If so, skip this hour to prevent overlap lock.
-      const lockRes = await pool.query(`SELECT id FROM bulk_toggle_jobs WHERE status IN ('RUNNING', 'PAUSED')`);
-      if (lockRes.rows.length > 0) {
-         console.log("[WORKERS] Hourly Recheck skipped due to active bulk job lock.");
-         return;
-      }
-
       // Fetch all stores that should be online
       const storesRes = await pool.query(`SELECT location_id, brand FROM store_state WHERE desired_state = 'ONLINE'`);
       const stores = storesRes.rows;
 
       if (stores.length === 0) return;
 
-      console.log(`[WORKERS] Hourly Recheck found ${stores.length} ONLINE stores to verify.`);
+      // One initiateBulkJob call PER BRAND, not one call spanning every brand together.
+      // initiateBulkJob's own overlap lock only blocks a brand that's already RUNNING/
+      // PAUSED elsewhere (see queue.js) — but that lock is computed over whatever set of
+      // brands a single call touches. A single call across every brand at once meant one
+      // brand's manual bulk job (e.g. Olio) made this skip ALL brands, every hour, until
+      // it finished — even ones with no relation to it. Splitting per brand lets each
+      // brand's Hourly Recheck run independently, exactly like the eatfit threshold
+      // enforcer and manual bulk actions already do.
+      //
+      // Only ever groups brands in AUTO_MANAGED_BRANDS — this cron acts with nobody at
+      // the wheel, so it must never pick up Ovenfresh (or anything else outside the 3
+      // real brands) just because a store was left at desired_state = 'ONLINE' there
+      // from earlier testing. Uses the shared normalizeBrandKey (not a bare
+      // .toLowerCase()) so "Cake Zone" / "cake zone" / "cake_zone" all land in the same
+      // bucket instead of silently fragmenting.
+      const storesByBrand = new Map();
+      for (const store of stores) {
+        const key = normalizeBrandKey(store.brand || 'ovenfresh');
+        if (!AUTO_MANAGED_BRANDS.includes(key)) continue;
+        if (!storesByBrand.has(key)) storesByBrand.set(key, []);
+        storesByBrand.get(key).push(store);
+      }
 
-      await initiateBulkJob(stores, "enable", " (Hourly Recheck)", "System — Hourly Recheck", "AUTO_HOURLY_RECHECK", performToggleAPI);
+      if (storesByBrand.size === 0) return;
+      const actedOnCount = [...storesByBrand.values()].reduce((sum, s) => sum + s.length, 0);
+      console.log(`[WORKERS] Hourly Recheck found ${actedOnCount} ONLINE stores across ${storesByBrand.size} auto-managed brand(s) to verify.`);
+
+      for (const [brandKey, brandStores] of storesByBrand) {
+        const result = await initiateBulkJob(brandStores, "enable", " (Hourly Recheck)", "System — Hourly Recheck", "AUTO_HOURLY_RECHECK", performToggleAPI);
+        if (result.blocked) {
+          console.log(`[WORKERS] Hourly Recheck skipped ${brandKey} this cycle — a job already running for it.`);
+        }
+      }
       await resolveAlert('HOURLY_RECHECK_ERROR');
 
     } catch (err) {

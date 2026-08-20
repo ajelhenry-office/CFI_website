@@ -13,9 +13,12 @@ async function initAuthDB() {
         email VARCHAR(255) UNIQUE NOT NULL,
         password_hash VARCHAR(255) NOT NULL,
         role VARCHAR(50) DEFAULT 'user',
+        roles TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
+    await client.query(`ALTER TABLE authorized_users ADD COLUMN IF NOT EXISTS roles TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[]`);
+    await client.query(`UPDATE authorized_users SET roles = ARRAY[role] WHERE roles = '{}' OR roles IS NULL`);
 
     // Check if admin exists
     const res = await client.query('SELECT id FROM authorized_users WHERE email = $1', ['ajel.henry@curefoods.in']);
@@ -23,8 +26,8 @@ async function initAuthDB() {
       console.log('Inserting default admin user ajel.henry@curefoods.in...');
       const hashedPassword = await bcrypt.hash('Curefoods@2026', 10);
       await client.query(
-        'INSERT INTO authorized_users (email, password_hash, role) VALUES ($1, $2, $3)',
-        ['ajel.henry@curefoods.in', hashedPassword, 'admin']
+        'INSERT INTO authorized_users (email, password_hash, role, roles) VALUES ($1, $2, $3, $4)',
+        ['ajel.henry@curefoods.in', hashedPassword, 'admin', ['admin']]
       );
       console.log('Admin user created successfully.');
     } else {

@@ -9,6 +9,8 @@ const SOURCE_META = {
   MANUAL_BULK:           { label: "Manual Bulk",     color: "#132664", bg: "#eef1f9" },
   MANUAL_RETRY:          { label: "Retry",           color: "#b45309", bg: "#fef3c7" },
   MANUAL_CORRECTION:     { label: "Correction",      color: "#7c3aed", bg: "#f3e8ff" },
+  MANUAL_PAUSE:          { label: "Paused",          color: "#b45309", bg: "#fef3c7" },
+  MANUAL_RESUME:         { label: "Resumed",         color: "#15803d", bg: "#dcfce7" },
   AUTO_HOURLY_RECHECK:   { label: "Hourly Recheck",  color: "#0f766e", bg: "#ccfbf1" },
   AUTO_WATCHDOG:         { label: "Watchdog",        color: "#0f766e", bg: "#ccfbf1" },
   AUTO_THROTTLE:         { label: "Auto-Throttle",   color: "#b91c1c", bg: "#fee2e2" },
