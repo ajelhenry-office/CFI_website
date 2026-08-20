@@ -165,33 +165,37 @@ export default function App() {
           </button>
         )}
 
-        <header
-          style={{
-            padding: collapsed ? "20px 28px 16px 58px" : "20px 28px 16px",
-            borderBottom: `1px solid ${C.border}`,
-            display: "flex",
-            flexDirection: "column",
-            gap: 14,
-          }}
-        >
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <div>
-              <h1 style={{ fontSize: 24, fontWeight: 800, color: C.primary, margin: 0, letterSpacing: -0.3 }}>{title}</h1>
-              <div style={{ fontSize: 13, color: C.muted, marginTop: 3 }}>{subtitle}</div>
+        {/* The Reviews tab has its own full header and its own filter bar built in —
+            this shared one would just be a redundant duplicate above it. */}
+        {activeTab !== "reviews" && (
+          <header
+            style={{
+              padding: collapsed ? "20px 28px 16px 58px" : "20px 28px 16px",
+              borderBottom: `1px solid ${C.border}`,
+              display: "flex",
+              flexDirection: "column",
+              gap: 14,
+            }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div>
+                <h1 style={{ fontSize: 24, fontWeight: 800, color: C.primary, margin: 0, letterSpacing: -0.3 }}>{title}</h1>
+                <div style={{ fontSize: 13, color: C.muted, marginTop: 3 }}>{subtitle}</div>
+              </div>
+              <div id="header-actions"></div>
             </div>
-            <div id="header-actions"></div>
-          </div>
-          {activeTab !== "toggle" && activeTab !== "timing" && activeTab !== "settings" && activeTab !== "ops_matrix" && (
-            <GlobalFilters
-              filters={globalFilters}
-              masterData={masterData}
-              onChange={updateFilters}
-              onClearAll={() => setGlobalFilters({ ...DEFAULT_FILTERS, dateFrom: "", dateTo: "" })}
-            />
-          )}
-        </header>
+            {activeTab !== "toggle" && activeTab !== "timing" && activeTab !== "settings" && activeTab !== "ops_matrix" && (
+              <GlobalFilters
+                filters={globalFilters}
+                masterData={masterData}
+                onChange={updateFilters}
+                onClearAll={() => setGlobalFilters({ ...DEFAULT_FILTERS, dateFrom: "", dateTo: "" })}
+              />
+            )}
+          </header>
+        )}
 
-        <div style={{ flex: 1, overflowY: "auto", padding: "22px 28px 60px" }}>
+        <div style={{ flex: 1, overflowY: "auto", padding: activeTab === "reviews" ? 0 : "22px 28px 60px" }}>
           {activeTab === "toggle" && <TogglePage userRole={user.role} userRoles={user.roles || [user.role]} />}
           {activeTab === "timing" && <TimingPage globalFilters={globalFilters} />}
           {activeTab === "reviews" && <ReviewsPage globalFilters={globalFilters} />}

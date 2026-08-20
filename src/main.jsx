@@ -1,6 +1,7 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import App from './App.jsx'
+import './tailwind.css'
 
 // Override fetch to inject Auth token globally
 const originalFetch = window.fetch;
