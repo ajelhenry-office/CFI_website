@@ -1,11 +1,9 @@
 import { useState } from "react";
 import { getAuthHeaders } from "../../api";
-import { C, FONT } from "../../theme";
+import { C, FONT, pillButton } from "../../theme";
 import ActivityLog from "./ActivityLog";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || (import.meta.env.PROD ? "" : "http://localhost:3001");
-
-const TAB = ["Health", "Recent", "Problems"];
 
 async function post(path, body) {
   // Was two "headers" keys in one object literal — the second silently overwrote the
@@ -18,14 +16,38 @@ async function post(path, body) {
   });
 }
 
-export default function ToggleSidebar({ data, fetchData }) {
+function timeAgo(iso) {
+  const mins = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  return `${Math.round(mins / 60)}h ago`;
+}
+
+// data/jobs come from separate fetches (see TogglePage): `data` is the (possibly
+// brand-scoped) sidebar-data response driving Health/Recent/Problems, `jobs` is always
+// every brand's active bulk jobs regardless of which workspace is open — this is the
+// replacement for what used to be a floating popup. Staff now check status here on
+// their own, on login, instead of it interrupting them automatically.
+export default function ToggleSidebar({ data, jobs, hasBrandContext, fetchData, currentUserEmail, isAdmin }) {
   const [isOpen, setIsOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState("Health");
+  const [activeTab, setActiveTab] = useState("Jobs");
+
+  // Health/Recent/Problems only mean something once a specific brand's workspace is
+  // open — Jobs (any bulk job, any brand) is always available, including from Home.
+  const TAB = hasBrandContext ? ["Jobs", "Health", "Recent", "Problems"] : ["Jobs"];
+  // If the tab list just shrank (e.g. left a brand workspace while on "Problems"),
+  // fall back to Jobs rather than rendering a blank pane for a tab that no longer exists.
+  const effectiveTab = TAB.includes(activeTab) ? activeTab : "Jobs";
 
   const { apiHealth, recentActions = [], problemStores = [], dailyStats = {} } = data || {};
+  const activeJobs = (jobs || []).filter((j) => !["COMPLETED", "CANCELLED", "FAILED"].includes(j.status));
 
   const resolveProblems = (id, endpoint) =>
     post(`/api/toggle/problem/${endpoint}`, { id }).then(fetchData);
+
+  const handlePauseJob = (jobId) => post("/api/toggle/bulk/pause", { jobId }).then(fetchData);
+  const handleResumeJob = (jobId) => post("/api/toggle/bulk/resume", { jobId }).then(fetchData);
+  const handleCancelJob = (jobId) => { if (confirm("Cancel this bulk job?")) post("/api/toggle/bulk/cancel", { jobId }).then(fetchData); };
 
   return (
     <>
@@ -53,7 +75,7 @@ export default function ToggleSidebar({ data, fetchData }) {
             boxShadow: "-4px 0 16px rgba(19,38,100,0.15)",
           }}
         >
-          STATUS ▲
+          {activeJobs.length > 0 ? `STATUS ▲ (${activeJobs.length} RUNNING)` : "STATUS ▲"}
         </button>
       )}
 
@@ -93,22 +115,44 @@ export default function ToggleSidebar({ data, fetchData }) {
                 padding: "6px 0",
                 borderRadius: 8,
                 border: `1.5px solid ${C.primary}`,
-                backgroundColor: activeTab === t ? C.primary : "transparent",
-                color: activeTab === t ? "#fff" : C.primary,
+                backgroundColor: effectiveTab === t ? C.primary : "transparent",
+                color: effectiveTab === t ? "#fff" : C.primary,
                 fontSize: 11,
                 fontWeight: 800,
                 cursor: "pointer",
                 fontFamily: FONT,
               }}
             >
-              {t}
+              {t === "Jobs" && activeJobs.length > 0 ? `${t} (${activeJobs.length})` : t}
             </button>
           ))}
         </div>
 
         <div style={{ flex: 1, padding: "16px 20px", overflowY: "auto" }}>
+          {/* Jobs tab — every currently running/paused bulk job, any brand, manual or
+              automated. This is the replacement for the old floating popup. */}
+          {effectiveTab === "Jobs" && (
+            activeJobs.length === 0 ? (
+              <div style={{ fontSize: 12, color: C.muted, padding: "12px 0" }}>No bulk jobs running right now.</div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {activeJobs.map((job) => (
+                  <JobCard
+                    key={job.id}
+                    job={job}
+                    currentUserEmail={currentUserEmail}
+                    isAdmin={isAdmin}
+                    onPause={() => handlePauseJob(job.id)}
+                    onResume={() => handleResumeJob(job.id)}
+                    onCancel={() => handleCancelJob(job.id)}
+                  />
+                ))}
+              </div>
+            )
+          )}
+
           {/* Health tab */}
-          {activeTab === "Health" && (
+          {effectiveTab === "Health" && (
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
               {[
                 { label: "API Status", value: apiHealth?.status ?? "—" },
@@ -126,10 +170,10 @@ export default function ToggleSidebar({ data, fetchData }) {
           )}
 
           {/* Recent tab */}
-          {activeTab === "Recent" && <ActivityLog actions={recentActions} />}
+          {effectiveTab === "Recent" && <ActivityLog actions={recentActions} />}
 
           {/* Problems tab */}
-          {activeTab === "Problems" && (
+          {effectiveTab === "Problems" && (
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               {problemStores.length === 0 ? (
                 <div style={{ fontSize: 12, color: C.muted, padding: "12px 0" }}>No problem stores — all clear.</div>
@@ -168,5 +212,59 @@ export default function ToggleSidebar({ data, fetchData }) {
         />
       )}
     </>
+  );
+}
+
+function JobCard({ job, currentUserEmail, isAdmin, onPause, onResume, onCancel }) {
+  const { id, action, total_stores, pending_count, status, actor_email, created_at, brands } = job;
+  const done = total_stores - pending_count;
+  const pct = total_stores > 0 ? Math.round((done / total_stores) * 100) : 0;
+  const canControl = isAdmin || actor_email === currentUserEmail;
+
+  // Rough ETA from observed throughput so far — an estimate, not a promise.
+  const elapsedMin = (Date.now() - new Date(created_at).getTime()) / 60000;
+  const rate = elapsedMin > 0.1 ? done / elapsedMin : 0;
+  const etaMin = rate > 0 && pending_count > 0 ? Math.ceil(pending_count / rate) : null;
+
+  return (
+    <div style={{ border: `1.5px solid ${C.primary}`, borderRadius: 10, padding: "10px 12px", backgroundColor: "rgba(19,38,100,0.03)" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
+        <div>
+          <div style={{ fontSize: 11.5, fontWeight: 800, color: C.primary }}>
+            Bulk {action?.toUpperCase()} — #{id} {brands?.length ? `· ${brands.join(", ")}` : ""}
+          </div>
+          <div style={{ fontSize: 10, color: C.muted, marginTop: 1 }}>
+            {done} / {total_stores} stores · {status}
+          </div>
+          <div style={{ fontSize: 9.5, color: C.muted, marginTop: 2 }}>
+            Started by {actor_email || "Unknown"} · {timeAgo(created_at)}
+            {etaMin != null && ` · ~${etaMin} min left`}
+          </div>
+        </div>
+        <span style={{ fontSize: 12, fontWeight: 900, color: C.primary, flexShrink: 0 }}>{pct}%</span>
+      </div>
+
+      {/* Progress bar */}
+      <div style={{ height: 5, borderRadius: 6, backgroundColor: `${C.primary}1a`, overflow: "hidden", marginBottom: 8 }}>
+        <div style={{ height: "100%", width: `${pct}%`, backgroundColor: C.primary, borderRadius: 6, transition: "width 0.4s ease" }} />
+      </div>
+
+      <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+        {!canControl && (
+          <span style={{ fontSize: 9.5, color: C.muted, fontStyle: "italic" }}>Only {actor_email || "the owner"} or an Admin can control this job</span>
+        )}
+        {canControl && status === "RUNNING" && (
+          <button style={{ ...pillButton(false), fontSize: 10, padding: "5px 12px" }} onClick={onPause}>Pause</button>
+        )}
+        {canControl && status === "PAUSED" && (
+          <button style={{ ...pillButton(true), fontSize: 10, padding: "5px 12px" }} onClick={onResume}>Resume</button>
+        )}
+        {canControl && (
+          <button style={{ ...pillButton(false), fontSize: 10, padding: "5px 12px", borderColor: "#dc3545", color: "#dc3545" }} onClick={onCancel}>
+            Cancel
+          </button>
+        )}
+      </div>
+    </div>
   );
 }

@@ -14,9 +14,9 @@ async function post(path, body) {
   return res.json();
 }
 
-export default function ManageStoresModal({ onClose, refreshStores, stores = [] }) {
+export default function ManageStoresModal({ onClose, refreshStores, stores = [], lockedBrand = null }) {
   const [loading, setLoading] = useState(false);
-  const [addForm, setAddForm] = useState({ name: "", brand: "", city: "", zone: "", location_id: "", status: "offline" });
+  const [addForm, setAddForm] = useState({ name: "", brand: lockedBrand || "", city: "", zone: "", location_id: "", status: "offline" });
   const [addError, setAddError] = useState("");
   const [search, setSearch] = useState("");
   const [pausingId, setPausingId] = useState(null); // location_id currently showing the reason prompt
@@ -131,13 +131,19 @@ export default function ManageStoresModal({ onClose, refreshStores, stores = [] 
                 </div>
                 <div>
                   <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: C.muted, marginBottom: 6 }}>Brand</label>
-                  <SearchableSelect
-                    options={brandsList}
-                    value={addForm.brand}
-                    onChange={v => setAddForm({...addForm, brand: v})}
-                    placeholder="Select or Type"
-                    allowCustom={true}
-                  />
+                  {lockedBrand ? (
+                    <div style={{ ...inputStyle, backgroundColor: "#f1f5f9", color: C.muted, cursor: "not-allowed" }}>
+                      {lockedBrand}
+                    </div>
+                  ) : (
+                    <SearchableSelect
+                      options={brandsList}
+                      value={addForm.brand}
+                      onChange={v => setAddForm({...addForm, brand: v})}
+                      placeholder="Select or Type"
+                      allowCustom={true}
+                    />
+                  )}
                 </div>
               </div>
               <div>

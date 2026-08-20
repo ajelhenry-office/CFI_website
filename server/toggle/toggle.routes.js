@@ -1,6 +1,6 @@
 import express from "express";
 import { pool } from "../ratings/db.js";
-import { checkAndIncrementRateLimit, logProblemStore, initiateBulkJob, resolveOnlineAction } from "./queue.js";
+import { checkAndIncrementRateLimit, logProblemStore, initiateBulkJob, resolveOnlineAction, RATE_LIMIT_CEILING, normalizeBrandKey } from "./queue.js";
 import { raiseAlert } from "../alerts/alertService.js";
 
 const router = express.Router();
@@ -21,22 +21,32 @@ function canManageStores(req, res, next) {
 
 // ─── TOGGLE FREEZE ────────────────────────────────────────────
 // A manual, DB-backed kill switch for "no store changes right now" (e.g. testing
-// windows). Backed by a table (not an env var/in-memory flag) so it survives restarts
-// and can be flipped with one UPDATE, with no redeploy needed to lift it.
-export async function isToggleFrozen() {
-  const { rows } = await pool.query(`SELECT value FROM app_settings WHERE key = 'toggle_frozen'`);
+// windows) — one flag PER BRAND, not tab-wide, since each brand is its own
+// independent workspace now. Backed by a table (not an env var/in-memory flag) so it
+// survives restarts and can be flipped with one UPDATE, with no redeploy needed to
+// lift it.
+export async function isToggleFrozen(brand) {
+  const key = `toggle_frozen_${normalizeBrandKey(brand)}`;
+  const { rows } = await pool.query(`SELECT value FROM app_settings WHERE key = $1`, [key]);
   return rows.length > 0 && rows[0].value === 'true';
 }
 
-const FROZEN_MESSAGE = "The Toggle tab is frozen right now — no store changes can be made until it's unfrozen.";
+function frozenMessage(brand) {
+  return `The ${brand} workspace is frozen right now — no store changes can be made until it's unfrozen.`;
+}
 
 // Route-level gate: blocks anything that can start a NEW real UrbanPiper action
 // (manual toggle, bulk, retry, add/pause/resume a store). Deliberately does NOT
 // block bulk/cancel or bulk/pause — those only stop an already-running job, never
 // start one, so leaving them live is strictly safer during a freeze.
+//
+// Only usable where the brand is already sitting in req.body (single toggle, add
+// store) — routes that only learn the brand after a DB lookup (retry, pause/resume,
+// delete, bulk) check isToggleFrozen()/frozenMessage() inline instead, once they have it.
 async function blockIfFrozen(req, res, next) {
-  if (await isToggleFrozen()) {
-    return res.status(423).json({ success: false, error: FROZEN_MESSAGE, frozen: true });
+  const brand = req.body?.brand;
+  if (brand && await isToggleFrozen(brand)) {
+    return res.status(423).json({ success: false, error: frozenMessage(brand), frozen: true });
   }
   next();
 }
@@ -87,11 +97,11 @@ export async function performToggleAPI(location_id, action, brand) {
   // they call this directly, in-process, bypassing every HTTP route, so the route-level
   // freeze gate never sees them. Checking here too means a freeze truly stops every
   // path that can touch a real store, not just the ones triggered from the UI.
-  if (await isToggleFrozen()) {
-    return { success: false, error: FROZEN_MESSAGE, status: 423 };
+  if (await isToggleFrozen(brand)) {
+    return { success: false, error: frozenMessage(brand), status: 423 };
   }
 
-  const brandKey = brand.toLowerCase().replace(/[^a-z]/g, "_");
+  const brandKey = normalizeBrandKey(brand);
   const creds = UP_BRANDS[brandKey];
   if (!creds) return { success: false, error: `Unknown brand: ${brand}` };
 
@@ -103,6 +113,14 @@ export async function performToggleAPI(location_id, action, brand) {
     let currentPlatforms = [...UP_PLATFORMS];
     let finalStatus = 500;
     let finalResponseText = "";
+    let rateLimitRetries = 0;
+    // Bounded — this used to retry 429s forever with no cap. A store that UrbanPiper
+    // keeps rate-limiting would loop every 2s indefinitely, holding this chunk's
+    // Promise.all open forever (stalling the whole bulk job past it) and generating
+    // sustained background request volume that starves unrelated requests on the same
+    // Node process. 5 tries (~10s of backoff) is enough to ride out a transient limit;
+    // past that, treat it as a real failure like any other and move on.
+    const MAX_RATE_LIMIT_RETRIES = 5;
 
     while (currentPlatforms.length > 0) {
       const payload = {
@@ -136,9 +154,15 @@ export async function performToggleAPI(location_id, action, brand) {
           finalResponseText).catch(() => {});
       }
 
-      // Simple 429 Rate Limit backoff
+      // Rate Limit backoff — bounded, see MAX_RATE_LIMIT_RETRIES above.
       if (finalStatus === 429) {
-        console.log(`[UP] Rate limited (429) for ${id}, waiting 2 seconds before retry...`);
+        rateLimitRetries++;
+        if (rateLimitRetries > MAX_RATE_LIMIT_RETRIES) {
+          console.log(`[UP] ${id} still 429 after ${MAX_RATE_LIMIT_RETRIES} retries — giving up, marking failed.`);
+          overallError = `UrbanPiper returned 429 for ${id} after ${MAX_RATE_LIMIT_RETRIES} retries`;
+          break;
+        }
+        console.log(`[UP] Rate limited (429) for ${id}, waiting 2 seconds before retry... (${rateLimitRetries}/${MAX_RATE_LIMIT_RETRIES})`);
         await new Promise(res => setTimeout(res, 2000));
         continue; // Retry the same platforms
       }
@@ -271,7 +295,7 @@ async function tryStatusAction(ids, creds, currentStatus) {
 }
 
 async function verifyLocationExists(location_id, brand, currentStatus) {
-  const brandKey = brand.toLowerCase().replace(/[^a-z]/g, "_");
+  const brandKey = normalizeBrandKey(brand);
   const creds = UP_BRANDS[brandKey];
   if (!creds) return { valid: false, error: `Unknown brand "${brand}" — no UrbanPiper credentials configured for it.` };
 
@@ -317,7 +341,7 @@ router.post("/toggle", blockIfFrozen, async (req, res) => {
     await logProblemStore({ location_id, name: store_name, brand }, action, "Rate Limit Exceeded locally");
     await pool.query(`INSERT INTO toggle_activity (store_name, store_id, brand, email, action, result, error_msg, source) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
       [`${store_name} (${location_id})`, location_id, brand, actorEmail, action.toUpperCase(), 'FAILED', 'Rate Limit Exceeded', 'MANUAL_SINGLE']);
-    return res.status(429).json({ error: "Rate limit exceeded (180/min). Try again later." });
+    return res.status(429).json({ error: `Rate limit exceeded (${RATE_LIMIT_CEILING}/min). Try again later.` });
   }
 
   try {
@@ -343,10 +367,21 @@ router.post("/toggle", blockIfFrozen, async (req, res) => {
 });
 
 // ─── BULK TOGGLE ENDPOINT ──────────────────────────────────
-router.post("/toggle/bulk", blockIfFrozen, async (req, res) => {
+router.post("/toggle/bulk", async (req, res) => {
   const { stores, action, filterContext = "" } = req.body;
   if (!stores || !Array.isArray(stores) || stores.length === 0 || !action) {
     return res.status(400).json({ error: "stores array and action required" });
+  }
+
+  // Brand isn't a single top-level field here (it's per-store) — check every distinct
+  // brand in this request up front so a frozen brand rejects the whole request
+  // immediately, instead of creating a job that then fails every store inside it via
+  // performToggleAPI's own backstop.
+  const requestedBrands = [...new Set(stores.map(s => s.brand || "ovenfresh"))];
+  for (const b of requestedBrands) {
+    if (await isToggleFrozen(b)) {
+      return res.status(423).json({ success: false, error: frozenMessage(b), frozen: true });
+    }
   }
 
   try {
@@ -370,40 +405,65 @@ router.post("/toggle/bulk", blockIfFrozen, async (req, res) => {
 // ─── SIDEBAR DATA API ──────────────────────────────────────
 router.get("/toggle/sidebar-data", async (req, res) => {
   try {
+    // Optional ?brand= scoping — the Home/all-brands view omits it and gets today's
+    // aggregate behavior; a brand workspace passes its own brand so every section
+    // (health, jobs, activity, problems, stats, frozen) only reflects that one brand.
+    const brand = req.query.brand ? normalizeBrandKey(req.query.brand) : null;
+
     // 1. API Health
-    const healthRes = await pool.query(`SELECT * FROM api_health`);
+    const healthRes = brand
+      ? await pool.query(`SELECT * FROM api_health WHERE brand = $1`, [brand])
+      : await pool.query(`SELECT * FROM api_health`);
     let healthStatus = "Healthy";
     let requestsUsed = 0;
     healthRes.rows.forEach(r => {
       requestsUsed = Math.max(requestsUsed, r.requests_this_minute);
     });
 
-    // 2. Latest Bulk Job (Running, Paused, or recently Completed)
-    const bulkRes = await pool.query(`SELECT * FROM bulk_toggle_jobs ORDER BY id DESC LIMIT 1`);
-    const activeBulkJob = bulkRes.rows[0] || null;
+    // 2. Every currently active bulk job — different brands can run concurrently (see
+    // initiateBulkJob's per-brand overlap lock in queue.js), so this can legitimately be
+    // more than one row on the Home view. Falls back to the single most recent job (any
+    // status) so the UI still has something to show right after a job finishes.
+    const activeBulkRes = brand
+      ? await pool.query(`SELECT * FROM bulk_toggle_jobs WHERE status IN ('RUNNING', 'PAUSED') AND $1 = ANY(brands) ORDER BY id DESC`, [brand])
+      : await pool.query(`SELECT * FROM bulk_toggle_jobs WHERE status IN ('RUNNING', 'PAUSED') ORDER BY id DESC`);
+    const activeBulkJobs = activeBulkRes.rows;
+    if (activeBulkJobs.length === 0) {
+      const lastRes = brand
+        ? await pool.query(`SELECT * FROM bulk_toggle_jobs WHERE $1 = ANY(brands) ORDER BY id DESC LIMIT 1`, [brand])
+        : await pool.query(`SELECT * FROM bulk_toggle_jobs ORDER BY id DESC LIMIT 1`);
+      if (lastRes.rows[0]) activeBulkJobs.push(lastRes.rows[0]);
+    }
 
     // 3. Recent Actions (last 30) — retention purge now runs on its own cron in workers.js
-    const actionsRes = await pool.query(`SELECT * FROM toggle_activity ORDER BY id DESC LIMIT 30`);
-    
+    const actionsRes = brand
+      ? await pool.query(`SELECT * FROM toggle_activity WHERE brand = $1 ORDER BY id DESC LIMIT 30`, [brand])
+      : await pool.query(`SELECT * FROM toggle_activity ORDER BY id DESC LIMIT 30`);
+
     // 4. Problem Stores
-    const problemsRes = await pool.query(`SELECT * FROM problem_stores WHERE resolved = false ORDER BY last_attempt_at DESC`);
+    const problemsRes = brand
+      ? await pool.query(`SELECT * FROM problem_stores WHERE resolved = false AND brand = $1 ORDER BY last_attempt_at DESC`, [brand])
+      : await pool.query(`SELECT * FROM problem_stores WHERE resolved = false ORDER BY last_attempt_at DESC`);
 
     // 5. Daily Stats
-    const todayRes = await pool.query(`SELECT COUNT(*) as count FROM toggle_activity WHERE result = 'SUCCESS' AND created_at >= CURRENT_DATE`);
+    const todayRes = brand
+      ? await pool.query(`SELECT COUNT(*) as count FROM toggle_activity WHERE result = 'SUCCESS' AND created_at >= CURRENT_DATE AND brand = $1`, [brand])
+      : await pool.query(`SELECT COUNT(*) as count FROM toggle_activity WHERE result = 'SUCCESS' AND created_at >= CURRENT_DATE`);
     const dailySuccessCount = parseInt(todayRes.rows[0].count, 10);
 
     return res.json({
       success: true,
       data: {
-        frozen: await isToggleFrozen(),
+        // Home (no brand) is never frozen — only a brand workspace can be.
+        frozen: brand ? await isToggleFrozen(brand) : false,
         apiHealth: {
           status: healthStatus,
           requestsThisMinute: requestsUsed, // Max among brands
-          maxLimit: 180,
+          maxLimit: RATE_LIMIT_CEILING,
           lastSyncTime: healthRes.rows[0]?.last_sync_time || new Date(),
           keepaliveStatus: "Stopped"
         },
-        activeBulkJob,
+        activeBulkJobs,
         recentActions: actionsRes.rows,
         problemStores: problemsRes.rows,
         dailyStats: {
@@ -430,12 +490,18 @@ router.get("/toggle/audit-log", async (req, res) => {
 // ─── RESOLVE PROBLEM ENDPOINTS ────────────────────────────────
 // Actually re-attempts the toggle that previously failed, using the store's
 // recorded desired_state to know which action (enable/disable) to retry.
-router.post("/toggle/problem/retry", blockIfFrozen, async (req, res) => {
+router.post("/toggle/problem/retry", async (req, res) => {
   const { id } = req.body;
   try {
     const probRes = await pool.query(`SELECT * FROM problem_stores WHERE id = $1`, [id]);
     const problem = probRes.rows[0];
     if (!problem) return res.status(404).json({ success: false, error: "Problem not found" });
+
+    // Brand is only known once we've loaded the problem row, so the freeze check
+    // happens here instead of via the blockIfFrozen middleware.
+    if (await isToggleFrozen(problem.brand)) {
+      return res.status(423).json({ success: false, error: frozenMessage(problem.brand), frozen: true });
+    }
 
     // Defensive: a paused store should never get a real UrbanPiper call from here,
     // even though pausing already resolves any open problem for it.
@@ -498,32 +564,6 @@ router.post("/toggle/problem/force-sync", async (req, res) => {
   }
 });
 
-// General manual reconcile: any store, any time — for when staff confirm the real
-// status directly in UrbanPiper (not just ones already flagged as failed). This never
-// calls UrbanPiper (it's already correct there) — it only corrects our own records.
-router.post("/toggle/correct-status", async (req, res) => {
-  const { location_id, brand, store_name, status } = req.body;
-  if (!location_id || !["online", "offline"].includes(status)) {
-    return res.status(400).json({ success: false, error: "location_id and status ('online'|'offline') required" });
-  }
-  const desiredState = status === 'online' ? 'ONLINE' : 'OFFLINE';
-  try {
-    await pool.query(`UPDATE managed_stores SET status = $1, status_updated_at = NOW() WHERE location_id = $2`, [status, location_id]);
-    await pool.query(`
-      INSERT INTO store_state (location_id, brand, desired_state)
-      VALUES ($1, $2, $3)
-      ON CONFLICT (location_id)
-      DO UPDATE SET desired_state = $3, last_updated = NOW()
-    `, [location_id, brand || "ovenfresh", desiredState]);
-    await pool.query(`UPDATE problem_stores SET resolved = true WHERE store_id = $1 AND resolved = false`, [location_id]);
-    await pool.query(`INSERT INTO toggle_activity (store_name, store_id, brand, email, action, result, is_automated, source) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-      [`${store_name || location_id} (${location_id})`, location_id, brand || null, req.user?.email || 'Unknown', 'MANUAL_CORRECTION', 'SUCCESS', false, 'MANUAL_CORRECTION']);
-    return res.json({ success: true, message: `Store marked ${status} to match UrbanPiper` });
-  } catch (err) {
-    return res.status(500).json({ success: false, error: err.message });
-  }
-});
-
 // Only the job's own owner, or an Admin/Super Admin, can pause/resume/cancel it —
 // previously anyone with the tab open could stop someone else's job.
 async function canControlJob(req, res, jobId) {
@@ -555,9 +595,19 @@ router.post("/toggle/bulk/pause", async (req, res) => {
   res.json({ success: true });
 });
 
-router.post("/toggle/bulk/resume", blockIfFrozen, async (req, res) => {
+router.post("/toggle/bulk/resume", async (req, res) => {
   const { jobId } = req.body;
   if (!(await canControlJob(req, res, jobId))) return;
+
+  // Brand is only known once we've loaded the job row, so the freeze check happens
+  // here instead of via the blockIfFrozen middleware.
+  const jobRes = await pool.query(`SELECT brands FROM bulk_toggle_jobs WHERE id = $1`, [jobId]);
+  for (const b of (jobRes.rows[0]?.brands || [])) {
+    if (await isToggleFrozen(b)) {
+      return res.status(423).json({ success: false, error: frozenMessage(b), frozen: true });
+    }
+  }
+
   await pool.query(`UPDATE bulk_toggle_jobs SET status = 'RUNNING' WHERE id = $1`, [jobId]);
   res.json({ success: true });
 });
@@ -649,9 +699,16 @@ router.post("/toggle/stores", canManageStores, blockIfFrozen, async (req, res) =
 // delete or touch anything in UrbanPiper — if it still exists there, that's expected
 // and fine. But we DO clean up our own related rows so a deleted store can never
 // reappear in an Hourly Recheck/Watchdog batch or linger in the Problems list.
-router.delete("/toggle/stores/:location_id", canManageStores, blockIfFrozen, async (req, res) => {
+router.delete("/toggle/stores/:location_id", canManageStores, async (req, res) => {
   const { location_id } = req.params;
   try {
+    // Brand is only known once we've loaded the store row, so the freeze check
+    // happens here instead of via the blockIfFrozen middleware.
+    const storeRes = await pool.query(`SELECT brand FROM managed_stores WHERE location_id = $1`, [location_id]);
+    if (storeRes.rows[0] && await isToggleFrozen(storeRes.rows[0].brand)) {
+      return res.status(423).json({ success: false, error: frozenMessage(storeRes.rows[0].brand), frozen: true });
+    }
+
     await pool.query(`DELETE FROM managed_stores WHERE location_id = $1`, [location_id]);
     await pool.query(`DELETE FROM store_state WHERE location_id = $1`, [location_id]);
     await pool.query(`DELETE FROM problem_stores WHERE store_id = $1`, [location_id]);
@@ -665,7 +722,7 @@ router.delete("/toggle/stores/:location_id", canManageStores, blockIfFrozen, asy
 // Pause turns the store off for real and marks it hands-off — excluded from every
 // bulk/automated path (see the paused filter in initiateBulkJob) and from the normal
 // single-toggle button, until explicitly resumed.
-router.post("/toggle/stores/:location_id/pause", canManageStores, blockIfFrozen, async (req, res) => {
+router.post("/toggle/stores/:location_id/pause", canManageStores, async (req, res) => {
   const { location_id } = req.params;
   const { reason } = req.body;
   const actorEmail = req.user?.email || 'Unknown';
@@ -673,6 +730,12 @@ router.post("/toggle/stores/:location_id/pause", canManageStores, blockIfFrozen,
     const storeRes = await pool.query(`SELECT name, brand FROM managed_stores WHERE location_id = $1`, [location_id]);
     const store = storeRes.rows[0];
     if (!store) return res.status(404).json({ success: false, error: "Store not found" });
+
+    // Brand is only known once we've loaded the store row, so the freeze check
+    // happens here instead of via the blockIfFrozen middleware.
+    if (await isToggleFrozen(store.brand)) {
+      return res.status(423).json({ success: false, error: frozenMessage(store.brand), frozen: true });
+    }
 
     const apiRes = await performToggleAPI(location_id, 'disable', store.brand);
 
@@ -701,13 +764,19 @@ router.post("/toggle/stores/:location_id/pause", canManageStores, blockIfFrozen,
   }
 });
 
-router.post("/toggle/stores/:location_id/resume", canManageStores, blockIfFrozen, async (req, res) => {
+router.post("/toggle/stores/:location_id/resume", canManageStores, async (req, res) => {
   const { location_id } = req.params;
   const actorEmail = req.user?.email || 'Unknown';
   try {
     const storeRes = await pool.query(`SELECT name, brand FROM managed_stores WHERE location_id = $1`, [location_id]);
     const store = storeRes.rows[0];
     if (!store) return res.status(404).json({ success: false, error: "Store not found" });
+
+    // Brand is only known once we've loaded the store row, so the freeze check
+    // happens here instead of via the blockIfFrozen middleware.
+    if (await isToggleFrozen(store.brand)) {
+      return res.status(423).json({ success: false, error: frozenMessage(store.brand), frozen: true });
+    }
 
     // Resume just makes it a normal store again — it does NOT auto-enable. The next
     // explicit Enable click or bulk run is what actually turns it back on.
@@ -722,25 +791,27 @@ router.post("/toggle/stores/:location_id/resume", canManageStores, blockIfFrozen
 });
 
 // Admin/Super Admin can flip the freeze themselves without needing direct DB/SSH
-// access — e.g. to lock the tab before a maintenance window and unlock it after.
+// access — e.g. to lock one brand's workspace before a maintenance window and unlock
+// it after. Scoped to a single brand — freezing CakeZone never touches Olio/EatFit.
 router.post("/toggle/freeze", async (req, res) => {
   const roles = req.user?.roles || [req.user?.role];
   if (!roles.some(r => ['super_admin', 'admin'].includes(r))) {
     return res.status(403).json({ success: false, error: "Admin access required." });
   }
-  const { frozen } = req.body;
-  if (typeof frozen !== 'boolean') {
-    return res.status(400).json({ success: false, error: "frozen (boolean) is required." });
+  const { frozen, brand } = req.body;
+  if (typeof frozen !== 'boolean' || !brand) {
+    return res.status(400).json({ success: false, error: "frozen (boolean) and brand are required." });
   }
   try {
+    const key = `toggle_frozen_${normalizeBrandKey(brand)}`;
     await pool.query(
-      `INSERT INTO app_settings (key, value) VALUES ('toggle_frozen', $1)
-       ON CONFLICT (key) DO UPDATE SET value = $1`,
-      [String(frozen)]
+      `INSERT INTO app_settings (key, value) VALUES ($1, $2)
+       ON CONFLICT (key) DO UPDATE SET value = $2`,
+      [key, String(frozen)]
     );
     await pool.query(`INSERT INTO toggle_activity (store_name, store_id, brand, email, action, result, is_automated, source) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-      ['— Toggle tab —', null, null, req.user?.email || 'Unknown', frozen ? 'FREEZE' : 'UNFREEZE', 'SUCCESS', false, frozen ? 'MANUAL_FREEZE' : 'MANUAL_UNFREEZE']);
-    res.json({ success: true, frozen });
+      [`— ${brand} workspace —`, null, brand, req.user?.email || 'Unknown', frozen ? 'FREEZE' : 'UNFREEZE', 'SUCCESS', false, frozen ? 'MANUAL_FREEZE' : 'MANUAL_UNFREEZE']);
+    res.json({ success: true, frozen, brand });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }

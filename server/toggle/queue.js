@@ -1,6 +1,23 @@
 import { pool } from '../ratings/db.js';
 import { raiseAlert } from '../alerts/alertService.js';
 
+// Single source of truth for brand-key normalization — lives here (not
+// toggle.routes.js, which already imports from this file) so both toggle.routes.js and
+// workers.js can share the exact same rule without a circular import. Previously this
+// same regex was independently duplicated in 4+ places (performToggleAPI,
+// verifyLocationExists, checkAndIncrementRateLimit, the old toggle.routes.js copy, plus
+// the frontend's own copy) — this is the one everything else should now import.
+export function normalizeBrandKey(brand) {
+  return String(brand || "").toLowerCase().replace(/[^a-z]/g, "_");
+}
+
+// The 3 real, day-to-day brands automation is allowed to act on without a human
+// explicitly starting it — imported by the Hourly Recheck cron so it can never touch a
+// brand outside this list (e.g. Ovenfresh), even if that brand happens to have a store
+// left at desired_state = 'ONLINE' from earlier testing. Keys must already be
+// normalizeBrandKey() output (e.g. "cake_zone", not "Cake Zone" or "cake zone").
+export const AUTO_MANAGED_BRANDS = ['olio', 'eatfit', 'cake_zone'];
+
 // Single source of truth for the eatfit auto-throttle threshold — imported wherever
 // this number is needed (the JIT check below, the enforcer cron, the legacy webhook)
 // instead of being duplicated as a hardcoded literal in each place.
@@ -17,17 +34,27 @@ export function resolveOnlineAction(brand, activeOrders) {
   return 'enable';
 }
 
-// effectiveLimit lets callers self-throttle below the real UrbanPiper ceiling. Bulk
-// jobs pass a lower number so they always leave headroom for single urgent actions
-// (e.g. "the store ran out of gas, disable it now") to go through immediately instead
-// of getting flat-out rejected because a big bulk sync is consuming the whole budget.
-export async function checkAndIncrementRateLimit(brand, effectiveLimit = 180) {
+// Single source of truth for our own per-brand rate ceiling (deliberately below
+// UrbanPiper's actual limit, as headroom) — imported wherever this number is needed
+// (the default below, the bulk self-throttle, the sidebar's displayed max, and the
+// single-toggle route's error message) instead of being duplicated as a hardcoded
+// literal in each place, which is exactly how the bulk self-throttle below used to
+// silently drift out of sync with this ceiling.
+export const RATE_LIMIT_CEILING = 100;
+
+// Bulk jobs self-throttle below RATE_LIMIT_CEILING (not the full ceiling) so single
+// urgent toggles always have headroom instead of getting a flat 429 while a large bulk
+// sync is consuming the whole shared budget for that brand.
+export const BULK_RATE_LIMIT = 90;
+
+// effectiveLimit lets callers self-throttle below the real UrbanPiper ceiling.
+export async function checkAndIncrementRateLimit(brand, effectiveLimit = RATE_LIMIT_CEILING) {
   // Normalize here, once, regardless of what casing/format the caller happens to pass
   // in ("Cake Zone" vs "cake_zone") — this is the same UrbanPiper account and needs to
   // share one rate-limit bucket. Without this, differently-formatted brand strings
   // (e.g. a store added via Manage Stores, which doesn't normalize before storing)
   // fragment into separate buckets, undercounting real UrbanPiper usage.
-  const brandKey = brand.toLowerCase().replace(/[^a-z]/g, "_");
+  const brandKey = normalizeBrandKey(brand);
 
   // Try to increment atomically if we're still in the same minute
   let res = await pool.query(`
@@ -174,19 +201,31 @@ export async function runBulkJob(jobId, stores, action, filterContext, performTo
     // Bump the heartbeat every chunk — this is what tells the overlap lock and the
     // stale-job cleanup cron that this job is still genuinely alive, not abandoned
     // by a crashed/restarted process.
+    //
+    // FAILED is stops-the-loop too, same as CANCELLED — it's ONLY ever set by that
+    // same stale-job cleanup cron (nothing else marks a job FAILED), meaning "we
+    // believe the process that owned this died." If this loop is still alive to read
+    // that verdict, the cleanup was a false positive (this job just had one slow
+    // stretch, e.g. a long rate-limit wait, that pushed its heartbeat past the 10-min
+    // staleness window) — but the verdict has already been acted on: the overlap lock
+    // no longer sees this job as blocking, so a fresh job for the same brand may
+    // already be running. Ignoring FAILED and continuing anyway is exactly how a job
+    // silently kept toggling real stores for hours under a "FAILED" label with zero
+    // visibility in the UI, invisibly competing for the same rate-limit budget as
+    // whatever replaced it.
     let jobRes = await pool.query('UPDATE bulk_toggle_jobs SET last_heartbeat_at = NOW() WHERE id = $1 RETURNING status', [jobId]);
     let status = jobRes.rows[0]?.status;
 
-    if (status === 'CANCELLED') break;
+    if (['CANCELLED', 'FAILED'].includes(status)) break;
 
     while (status === 'PAUSED') {
       await new Promise(r => setTimeout(r, 2000));
       jobRes = await pool.query('UPDATE bulk_toggle_jobs SET last_heartbeat_at = NOW() WHERE id = $1 RETURNING status', [jobId]);
       status = jobRes.rows[0]?.status;
-      if (status === 'CANCELLED') break;
+      if (['CANCELLED', 'FAILED'].includes(status)) break;
     }
 
-    if (status === 'CANCELLED') break;
+    if (['CANCELLED', 'FAILED'].includes(status)) break;
 
     // Process chunk concurrently
     await Promise.all(chunk.map(async (store) => {
@@ -201,7 +240,11 @@ export async function runBulkJob(jobId, stores, action, filterContext, performTo
         if (stateRes.rows.length > 0) {
           const { desired_state, active_orders } = stateRes.rows[0];
 
-          // Skip if manual override happened during the queue
+          // Skip if manual override happened during the queue — a manual single-store
+          // action always wins over whatever this bulk/auto job (manual bulk, Hourly
+          // Recheck, or a manual bulk disable) was about to do to that same store.
+          // Symmetric both ways: a manual disable beats an enable-direction job, and a
+          // manual enable beats a disable-direction job.
           if (desired_state === 'OFFLINE' && currentAction === 'enable') {
             console.log(`[JIT] Skipping ${store.location_id} - user set to OFFLINE manually.`);
             await pool.query('UPDATE bulk_toggle_jobs SET success_count = success_count + 1, pending_count = pending_count - 1 WHERE id = $1', [jobId]);
@@ -209,6 +252,17 @@ export async function runBulkJob(jobId, stores, action, filterContext, performTo
               storeName: storeLabel, storeId: store.location_id, brand,
               actorEmail, action: 'ENABLE', result: 'SUCCESS',
               errorMsg: 'Skipped — manually set OFFLINE mid-queue', isBulk: true,
+              isAutomated: isAutomatedSource, bulkJobId: jobId, source,
+            });
+            return; // Skip this store
+          }
+          if (desired_state === 'ONLINE' && currentAction === 'disable') {
+            console.log(`[JIT] Skipping ${store.location_id} - user set to ONLINE manually.`);
+            await pool.query('UPDATE bulk_toggle_jobs SET success_count = success_count + 1, pending_count = pending_count - 1 WHERE id = $1', [jobId]);
+            await logActivity({
+              storeName: storeLabel, storeId: store.location_id, brand,
+              actorEmail, action: 'DISABLE', result: 'SUCCESS',
+              errorMsg: 'Skipped — manually set ONLINE mid-queue', isBulk: true,
               isAutomated: isAutomatedSource, bulkJobId: jobId, source,
             });
             return; // Skip this store
@@ -230,10 +284,7 @@ export async function runBulkJob(jobId, stores, action, filterContext, performTo
 
       // Wait for rate limit
       while (true) {
-        // Bulk jobs self-throttle to 160/min (not the real 180 ceiling) so single urgent
-        // toggles always have headroom instead of getting a flat 429 while a large bulk
-        // run is consuming the whole shared budget for that brand.
-        const rl = await checkAndIncrementRateLimit(brand, 160);
+        const rl = await checkAndIncrementRateLimit(brand, BULK_RATE_LIMIT);
         if (rl === -1) {
           const hRes = await pool.query(`SELECT minute_start_time FROM api_health WHERE brand = $1`, [brand]);
           const start = new Date(hRes.rows[0].minute_start_time);
