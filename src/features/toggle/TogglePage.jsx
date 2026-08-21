@@ -11,12 +11,20 @@ import ManageStoresModal from "./ManageStoresModal";
 const API_BASE = import.meta.env.VITE_API_BASE_URL || (import.meta.env.PROD ? "" : "http://localhost:3001");
 
 // The 3 real, day-to-day brands — each run by a different person, each its own
-// independent workspace. Ovenfresh (and anything else) is test-only: it never gets a
-// tile, it's only reachable from Home by picking it explicitly in the Brand filter.
+// independent workspace.
+//
+// Testing window: Olio/EatFit/CakeZone are frozen at the DB level while Ovenfresh and
+// Cheesecakes By CakeZone (181 Cake Zone stores re-tagged to their own brand, see
+// toggle.routes.js's UP_BRANDS) are the only ones meant to actually work right now.
+// Olio/EatFit/CakeZone stay in this list — a frozen brand still gets a tile, it just
+// shows the frozen screen when entered — so nothing needs to be removed here to take
+// them offline, only added to bring the test brands on.
 const REAL_BRANDS = [
   { key: "olio", label: "Olio" },
   { key: "eatfit", label: "EatFit" },
   { key: "cake_zone", label: "CakeZone" },
+  { key: "ovenfresh", label: "Ovenfresh" },
+  { key: "cheesecakes_by_cakezone", label: "Cheesecakes By CakeZone" },
 ];
 const normalizeBrand = (b) => String(b || "").toLowerCase().replace(/[^a-z]/g, "_");
 

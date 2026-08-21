@@ -87,6 +87,17 @@ export const UP_BRANDS = {
     username : process.env.UP_USERNAME_OLIO,
     apikey   : process.env.UP_APIKEY_OLIO,
   },
+  // Not a separate UrbanPiper account — these are 181 real Cake Zone stores whose
+  // *name* happens to contain "Cheesecakes By CakeZone" (a product line, not a
+  // distinct business). Splitting them into their own brand key here is purely for
+  // OUR OWN isolation (own workspace, own rate-limit counter, own freeze switch) while
+  // Cake Zone itself is frozen for testing — it still shares Cake Zone's real
+  // UrbanPiper credentials, so it draws from the same real account-side rate limit,
+  // same as paris_cakes___desserts sharing Ovenfresh's above.
+  cheesecakes_by_cakezone: {
+    username : process.env.UP_USERNAME_CAKEZONE,
+    apikey   : process.env.UP_APIKEY_CAKEZONE,
+  },
 };
 
 // ─── HELPER: PERFORM API CALL ────────────────────────────────

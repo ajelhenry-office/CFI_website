@@ -5,6 +5,7 @@ const BRAND_COLOR = {
   "Cake Zone": "#d97706",
   "Ovenfresh": "#132664",
   "eatfit": "#15803d",
+  "Cheesecakes By CakeZone": "#9333ea",
 };
 
 export default function StoreCard({ store, onToggle, isBulking, dbState, readOnly = false }) {
