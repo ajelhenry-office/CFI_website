@@ -668,6 +668,7 @@ router.post("/toggle/stores", canManageStores, blockIfFrozen, async (req, res) =
     return res.status(400).json({ error: "Current status in UrbanPiper (online/offline) is required" });
   }
   const storeId = id || `ST-${Date.now()}`;
+  const actorEmail = req.user?.email || 'Unknown';
 
   // Must actually exist in UrbanPiper before we let it into our system — catches typos
   // and unconfigured brands at add-time instead of the first time someone toggles it.
@@ -689,6 +690,8 @@ router.post("/toggle/stores", canManageStores, blockIfFrozen, async (req, res) =
       VALUES ($1, $2, $3)
       ON CONFLICT (location_id) DO UPDATE SET desired_state = $3, last_updated = NOW()
     `, [location_id, brand, desiredState]);
+    await pool.query(`INSERT INTO toggle_activity (store_name, store_id, brand, email, action, result, is_automated, source) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+      [`${name} (${location_id})`, location_id, brand, actorEmail, 'ADD_STORE', 'SUCCESS', false, 'MANUAL_ADD_STORE']);
     res.json({ success: true, message: "Store saved and confirmed in UrbanPiper" });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -701,17 +704,25 @@ router.post("/toggle/stores", canManageStores, blockIfFrozen, async (req, res) =
 // reappear in an Hourly Recheck/Watchdog batch or linger in the Problems list.
 router.delete("/toggle/stores/:location_id", canManageStores, async (req, res) => {
   const { location_id } = req.params;
+  const actorEmail = req.user?.email || 'Unknown';
   try {
     // Brand is only known once we've loaded the store row, so the freeze check
-    // happens here instead of via the blockIfFrozen middleware.
-    const storeRes = await pool.query(`SELECT brand FROM managed_stores WHERE location_id = $1`, [location_id]);
-    if (storeRes.rows[0] && await isToggleFrozen(storeRes.rows[0].brand)) {
-      return res.status(423).json({ success: false, error: frozenMessage(storeRes.rows[0].brand), frozen: true });
+    // happens here instead of via the blockIfFrozen middleware. Also grabs name/brand
+    // up front since both are needed for the audit entry below, and the row won't
+    // exist to look up anymore once it's deleted.
+    const storeRes = await pool.query(`SELECT name, brand FROM managed_stores WHERE location_id = $1`, [location_id]);
+    const store = storeRes.rows[0];
+    if (store && await isToggleFrozen(store.brand)) {
+      return res.status(423).json({ success: false, error: frozenMessage(store.brand), frozen: true });
     }
 
     await pool.query(`DELETE FROM managed_stores WHERE location_id = $1`, [location_id]);
     await pool.query(`DELETE FROM store_state WHERE location_id = $1`, [location_id]);
     await pool.query(`DELETE FROM problem_stores WHERE store_id = $1`, [location_id]);
+    if (store) {
+      await pool.query(`INSERT INTO toggle_activity (store_name, store_id, brand, email, action, result, is_automated, source) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+        [`${store.name} (${location_id})`, location_id, store.brand, actorEmail, 'DELETE_STORE', 'SUCCESS', false, 'MANUAL_DELETE_STORE']);
+    }
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
