@@ -12,7 +12,10 @@ const API_BASE = import.meta.env.VITE_API_BASE_URL || (import.meta.env.PROD ? ""
 
 // The 3 real, day-to-day brands — each run by a different person, each its own
 // independent workspace. Ovenfresh (and anything else) is test-only: it never gets a
-// tile, it's only reachable from Home by picking it explicitly in the Brand filter.
+// tile, it's only reachable from Home by picking it explicitly in the Brand filter —
+// and right now it's also frozen at the DB level, so even that path is locked until
+// explicitly unfrozen. Cheesecakes By CakeZone was a temporary split-out of 181 Cake
+// Zone stores for testing; those stores are back under Cake Zone's own brand now.
 const REAL_BRANDS = [
   { key: "olio", label: "Olio" },
   { key: "eatfit", label: "EatFit" },

@@ -40,12 +40,15 @@ export function resolveOnlineAction(brand, activeOrders) {
 // single-toggle route's error message) instead of being duplicated as a hardcoded
 // literal in each place, which is exactly how the bulk self-throttle below used to
 // silently drift out of sync with this ceiling.
-export const RATE_LIMIT_CEILING = 100;
+// Set to 18 — 2 below UrbanPiper's own documented ceiling of 20/min for this endpoint
+// (confirmed from their API docs), matching what Olio's legacy Apps Script already
+// safely runs at long-term. Applies to every brand equally.
+export const RATE_LIMIT_CEILING = 18;
 
 // Bulk jobs self-throttle below RATE_LIMIT_CEILING (not the full ceiling) so single
 // urgent toggles always have headroom instead of getting a flat 429 while a large bulk
 // sync is consuming the whole shared budget for that brand.
-export const BULK_RATE_LIMIT = 90;
+export const BULK_RATE_LIMIT = 16;
 
 // effectiveLimit lets callers self-throttle below the real UrbanPiper ceiling.
 export async function checkAndIncrementRateLimit(brand, effectiveLimit = RATE_LIMIT_CEILING) {
@@ -294,6 +297,32 @@ export async function runBulkJob(jobId, stores, action, filterContext, performTo
         } else {
           break; // Allowed
         }
+      }
+
+      // Re-check for a manual override that landed *during* the rate-limit wait above.
+      // The JIT check earlier only sees state as of before that wait — at a strict
+      // 16-18/min budget that wait is now commonly tens of seconds, long enough for a
+      // real manual click to land in between and otherwise get silently overwritten by
+      // whatever this loop already decided to do before waiting.
+      try {
+        const freshState = await pool.query(`SELECT desired_state FROM store_state WHERE location_id = $1`, [store.location_id]);
+        const freshDesired = freshState.rows[0]?.desired_state;
+        const overriddenOffline = freshDesired === 'OFFLINE' && currentAction === 'enable';
+        const overriddenOnline = freshDesired === 'ONLINE' && currentAction === 'disable';
+        if (overriddenOffline || overriddenOnline) {
+          console.log(`[JIT] Skipping ${store.location_id} - user set to ${freshDesired} manually during the rate-limit wait.`);
+          await pool.query('UPDATE bulk_toggle_jobs SET success_count = success_count + 1, pending_count = pending_count - 1 WHERE id = $1', [jobId]);
+          await logActivity({
+            storeName: storeLabel, storeId: store.location_id, brand,
+            actorEmail, action: currentAction.toUpperCase(), result: 'SUCCESS',
+            errorMsg: `Skipped — manually set ${freshDesired} during rate-limit wait`, isBulk: true,
+            isAutomated: isAutomatedSource, bulkJobId: jobId, source,
+          });
+          return; // Skip this store — the rate-limit slot already spent is an acceptable
+                   // small cost for actually respecting the manual action.
+        }
+      } catch (err) {
+        console.error("[Post-wait override check error]", err);
       }
 
       // Perform toggle
