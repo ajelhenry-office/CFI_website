@@ -259,8 +259,15 @@ export default function TogglePage({ userRole, userRoles }) {
       brand: store.brand.toLowerCase().replace(/[^a-z]/g, "_"),
     });
     if (res.success) {
-      setStores((prev) => prev.map((s) => s.id === store.id ? { ...s, status: action === "enable" ? "online" : "offline" } : s));
+      // Use what the backend actually did (resolvedAction), not what was clicked —
+      // an eatfit enable can get held back by the order threshold, in which case the
+      // store is still really offline even though the request itself succeeded.
+      const actualAction = res.resolvedAction || action;
+      setStores((prev) => prev.map((s) => s.id === store.id ? { ...s, status: actualAction === "enable" ? "online" : "offline" } : s));
       fetchSidebar();
+      if (res.wasAutoThrottled) {
+        alert(`${store.name} held back — active order count is above the safe threshold. It will enable automatically once orders drop, or you can check the order count and try again shortly.`);
+      }
     } else {
       alert(`Toggle failed: ${res.error || "Unknown error"}`);
     }
