@@ -7,6 +7,7 @@ import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import toggleRoutes from "./server/toggle/toggle.routes.js";
+import webhookRoutes from "./server/toggle/webhookReceiver.js";
 import timingRoutes from "./server/timing/timing.routes.js";
 import reviewsRouter from "./server/reviews/reviews.routes.js";
 import { ReviewPoller } from "./server/reviews/poller.js";
@@ -26,6 +27,7 @@ const REQUIRED_ENV_VARS = [
   "UP_USERNAME_EATFIT", "UP_APIKEY_EATFIT", "UP_BIZ_ID_EATFIT",
   "UP_USERNAME_CAKEZONE", "UP_APIKEY_CAKEZONE",
   "UP_USERNAME_OLIO", "UP_APIKEY_OLIO",
+  "WEBHOOK_SHARED_SECRET",
 ];
 const missingEnvVars = REQUIRED_ENV_VARS.filter((key) => !process.env[key]);
 if (missingEnvVars.length > 0) {
@@ -59,6 +61,10 @@ app.get("/test-db", async (req, res) => {
 // ─── MOUNT MODULAR ROUTES ─────────────────────────────────────
 // Open route for login
 app.use("/api/auth", authRoutes);
+
+// Open route for UrbanPiper's store_action webhook callback — it can't carry our JWT,
+// so it authenticates via a shared-secret header instead (see webhookReceiver.js).
+app.use("/api", webhookRoutes);
 
 // Strictly secure all other API routes
 app.use("/api", authMiddleware);

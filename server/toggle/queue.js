@@ -11,6 +11,26 @@ export function normalizeBrandKey(brand) {
   return String(brand || "").toLowerCase().replace(/[^a-z]/g, "_");
 }
 
+// Master switch for the whole Toggle tab, every brand at once — unlike the per-brand
+// freeze (which only blocks a brand's final UrbanPiper call while its crons keep firing
+// regardless, still creating jobs and burning rate-limit budget every cycle), this stops
+// the crons themselves from doing any work at all. Meant for "nothing should be running"
+// windows (e.g. testing prep) rather than day-to-day per-brand control.
+export async function isTogglePaused() {
+  const { rows } = await pool.query(`SELECT value FROM app_settings WHERE key = 'toggle_all_paused'`);
+  return rows.length > 0 && rows[0].value === 'true';
+}
+
+// Moved here from toggle.routes.js (which imports it back) for the same reason
+// normalizeBrandKey and isTogglePaused already live here — toggle.routes.js imports
+// FROM queue.js, so defining this here (not there) avoids a circular import between
+// the two files, letting runBulkJob's own loop use it directly below.
+export async function isToggleFrozen(brand) {
+  const key = `toggle_frozen_${normalizeBrandKey(brand)}`;
+  const { rows } = await pool.query(`SELECT value FROM app_settings WHERE key = $1`, [key]);
+  return rows.length > 0 && rows[0].value === 'true';
+}
+
 // The 3 real, day-to-day brands automation is allowed to act on without a human
 // explicitly starting it — imported by the Hourly Recheck cron so it can never touch a
 // brand outside this list (e.g. Ovenfresh), even if that brand happens to have a store
@@ -59,11 +79,18 @@ export async function checkAndIncrementRateLimit(brand, effectiveLimit = RATE_LI
   // fragment into separate buckets, undercounting real UrbanPiper usage.
   const brandKey = normalizeBrandKey(brand);
 
-  // Try to increment atomically if we're still in the same minute
+  // Try to increment atomically if we're still in the same minute. The BETWEEN 0 AND 60
+  // (not just "< 60") is deliberate — if minute_start_time is ever corrupted into the
+  // future (a bad clock read, a bad manual write, whatever the cause), NOW() - that
+  // timestamp is negative, and a negative number is still "< 60" — meaning the old
+  // condition would treat a corrupted row as "still the same minute" forever, permanently
+  // wedging this brand's rate limit. Requiring elapsed >= 0 means any future-corrupted
+  // timestamp falls through to the reset branch below instead, which overwrites it with
+  // a fresh NOW() — self-healing on the very next call, regardless of what caused it.
   let res = await pool.query(`
     UPDATE api_health
     SET requests_this_minute = requests_this_minute + 1
-    WHERE brand = $1 AND EXTRACT(EPOCH FROM (NOW() - minute_start_time)) < 60
+    WHERE brand = $1 AND EXTRACT(EPOCH FROM (NOW() - minute_start_time)) BETWEEN 0 AND 60
     RETURNING requests_this_minute
   `, [brandKey]);
 
@@ -104,11 +131,11 @@ export async function logProblemStore(store, action, errorMsg) {
   }
 }
 
-async function logActivity({ storeName, storeId, brand, actorEmail, action, result, errorMsg, isBulk, isAutomated, bulkJobId, source }) {
+async function logActivity({ storeName, storeId, brand, actorEmail, action, result, errorMsg, isBulk, isAutomated, bulkJobId, source, referenceIds }) {
   await pool.query(
-    `INSERT INTO toggle_activity (store_name, store_id, brand, email, action, result, error_msg, is_bulk, is_automated, bulk_job_id, source)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
-    [storeName, storeId || null, brand || null, actorEmail, action, result, errorMsg || null, !!isBulk, !!isAutomated, bulkJobId || null, source]
+    `INSERT INTO toggle_activity (store_name, store_id, brand, email, action, result, error_msg, is_bulk, is_automated, bulk_job_id, source, reference_ids)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+    [storeName, storeId || null, brand || null, actorEmail, action, result, errorMsg || null, !!isBulk, !!isAutomated, bulkJobId || null, source, referenceIds?.length ? referenceIds : null]
   );
 }
 
@@ -122,6 +149,14 @@ async function logActivity({ storeName, storeId, brand, actorEmail, action, resu
 export async function initiateBulkJob(stores, action, filterContext, actorEmail, source, performToggleAPI) {
   if (!stores || !Array.isArray(stores) || stores.length === 0 || !action) {
     throw new Error("stores array and action required");
+  }
+
+  // Single choke point for every bulk path — manual bulk clicks AND every automated
+  // cron (Hourly Recheck, EatFit Threshold Enforcer) call this directly, in-process.
+  // Checked before the paused-store lookup or overlap lock so a full pause genuinely
+  // does nothing at all, not even a DB read past this point.
+  if (await isTogglePaused()) {
+    return { jobId: null, paused: true };
   }
 
   // Paused stores are completely hands-off — excluded from every bulk and automated
@@ -145,9 +180,12 @@ export async function initiateBulkJob(stores, action, filterContext, actorEmail,
   // "still alive" — if the process that owned it crashed or restarted mid-run, its
   // heartbeat goes stale and it stops blocking anything (see the cleanup cron in
   // workers.js, which also marks it FAILED so it's not left dangling forever).
-  const brands = [...new Set(activeStores.map(s => (s.brand || 'ovenfresh').toLowerCase()))];
+  // normalizeBrandKey, not a bare .toLowerCase() — "Cake Zone" / "cake zone" / "cake_zone"
+  // must all land in the same bucket, or the overlap lock and this job's own brands[]
+  // column silently fragment into separate strings for what's really one brand.
+  const brands = [...new Set(activeStores.map(s => normalizeBrandKey(s.brand || 'ovenfresh')))];
   const conflictRes = await pool.query(`
-    SELECT id, actor_email, created_at, total_stores, pending_count, brands
+    SELECT id, actor_email, created_at, total_stores, pending_count, brands, status
     FROM bulk_toggle_jobs
     WHERE status IN ('RUNNING', 'PAUSED')
       AND last_heartbeat_at > NOW() - INTERVAL '10 minutes'
@@ -161,13 +199,34 @@ export async function initiateBulkJob(stores, action, filterContext, actorEmail,
       // Automated callers just skip quietly this cycle — they'll try again next tick.
       return { jobId: null, blocked: true, conflictingJob: job };
     }
-    const err = new Error(
-      `A bulk job is already running for ${job.brands.join(', ')} — started by ${job.actor_email} ` +
-      `${Math.round((Date.now() - new Date(job.created_at).getTime()) / 60000)} min ago ` +
-      `(${job.total_stores - job.pending_count}/${job.total_stores} done). Wait for it to finish, or cancel it, before starting another.`
-    );
-    err.conflictingJob = job;
-    throw err;
+
+    // A manual action gets priority over a RUNNING automated job (Hourly Recheck, EatFit
+    // Threshold Enforcer) for the same brand — auto-pause it, let the manual job run now,
+    // and resume it automatically once the manual job finishes (see the end of
+    // runBulkJob). Scoped narrowly on purpose: only a RUNNING automated job gets
+    // auto-paused — one an admin already PAUSED on purpose is left untouched (this
+    // shouldn't silently override a deliberate pause), and a conflicting MANUAL job still
+    // gets the existing "wait or cancel" error, since two humans colliding needs a human
+    // decision, not an automatic one.
+    const isAutomatedJob = (job.actor_email || '').startsWith('System —');
+    if (isAutomatedJob && job.status === 'RUNNING') {
+      await pool.query(`UPDATE bulk_toggle_jobs SET status = 'PAUSED', auto_paused = true WHERE id = $1`, [job.id]);
+      await logActivity({
+        storeName: `— auto-paused job #${job.id} (${job.brands.join(', ')}) —`, storeId: null,
+        brand: job.brands.join(', '), actorEmail: 'System', action: 'AUTO_PAUSE', result: 'SUCCESS',
+        errorMsg: `Paused for manual bulk action by ${actorEmail} — will resume once that finishes`,
+        isBulk: true, isAutomated: true, bulkJobId: job.id, source: 'AUTO_PAUSE_FOR_MANUAL',
+      });
+      // Fall through — the manual job below starts immediately instead of being blocked.
+    } else {
+      const err = new Error(
+        `A bulk job is already running for ${job.brands.join(', ')} — started by ${job.actor_email} ` +
+        `${Math.round((Date.now() - new Date(job.created_at).getTime()) / 60000)} min ago ` +
+        `(${job.total_stores - job.pending_count}/${job.total_stores} done). Wait for it to finish, or cancel it, before starting another.`
+      );
+      err.conflictingJob = job;
+      throw err;
+    }
   }
 
   const desiredState = action === 'enable' ? 'ONLINE' : 'OFFLINE';
@@ -197,6 +256,11 @@ export async function initiateBulkJob(stores, action, filterContext, actorEmail,
 export async function runBulkJob(jobId, stores, action, filterContext, performToggleAPI, actorEmail = 'System', source = 'MANUAL_BULK') {
   const CONCURRENCY = 10;
   const isAutomatedSource = source.startsWith('AUTO_');
+  // Computed once — freezing mid-brand-job is the common case this loop needs to
+  // notice (see the per-chunk check below); a job spanning multiple brands stops
+  // entirely if any one of them gets frozen, which matches how bulk actions are
+  // actually triggered today (always scoped to one brand at a time from the UI).
+  const jobBrands = [...new Set(stores.map(s => normalizeBrandKey(s.brand || 'ovenfresh')))];
 
   for (let i = 0; i < stores.length; i += CONCURRENCY) {
     const chunk = stores.slice(i, i + CONCURRENCY);
@@ -229,6 +293,25 @@ export async function runBulkJob(jobId, stores, action, filterContext, performTo
     }
 
     if (['CANCELLED', 'FAILED'].includes(status)) break;
+
+    // Freezing a brand mid-run doesn't stop this loop on its own — performToggleAPI
+    // already refuses every real UrbanPiper call for a frozen brand regardless (that
+    // was always true), but without this check the loop would keep grinding through
+    // every remaining store anyway, burning real rate-limit-check DB calls for
+    // nothing and sitting there as "RUNNING" until it exhausted its whole list. This
+    // stops it at the same chunk boundary as a Cancel, so a freeze mid-run actually
+    // means nothing keeps running, not just "nothing reaches UrbanPiper."
+    const anyBrandFrozen = (await Promise.all(jobBrands.map(b => isToggleFrozen(b)))).some(Boolean);
+    if (anyBrandFrozen) {
+      await pool.query('UPDATE bulk_toggle_jobs SET status = $1 WHERE id = $2 AND status IN ($3, $4)', ['CANCELLED', jobId, 'RUNNING', 'PAUSED']);
+      await logActivity({
+        storeName: `— job #${jobId} stopped — ${jobBrands.join(', ')} frozen mid-run —`, storeId: null,
+        brand: jobBrands.join(', '), actorEmail: 'System', action: 'AUTO_CANCEL', result: 'SUCCESS',
+        errorMsg: `${stores.length - i} store(s) never attempted`,
+        isBulk: true, isAutomated: true, bulkJobId: jobId, source: 'AUTO_CANCEL_FROZEN',
+      });
+      break;
+    }
 
     // Process chunk concurrently
     await Promise.all(chunk.map(async (store) => {
@@ -292,7 +375,12 @@ export async function runBulkJob(jobId, stores, action, filterContext, performTo
           const hRes = await pool.query(`SELECT minute_start_time FROM api_health WHERE brand = $1`, [brand]);
           const start = new Date(hRes.rows[0].minute_start_time);
           const elapsed = new Date() - start;
-          const sleepTime = Math.max(0, 60000 - elapsed) + 500;
+          // Clamped defensively — the self-healing fix above means -1 should now only
+          // ever come from a genuinely valid, recent window, but capping this at 65s
+          // regardless means a future timestamp anomaly degrades to "waits a bit too
+          // long" instead of overflowing setTimeout's ~24.8-day limit and firing near-
+          // instantly, which is what turned this into a busy-loop hammering the DB before.
+          const sleepTime = Math.min(Math.max(0, 60000 - elapsed) + 500, 65000);
           await new Promise(r => setTimeout(r, sleepTime));
         } else {
           break; // Allowed
@@ -327,13 +415,13 @@ export async function runBulkJob(jobId, stores, action, filterContext, performTo
 
       // Perform toggle
       try {
-        const toggleRes = await performToggleAPI(store.location_id, currentAction, brand);
+        let toggleRes = await performToggleAPI(store.location_id, currentAction, brand);
 
         if (toggleRes.status === 429) {
           // Urban Piper returned 429. Force wait 61s and retry once.
           await new Promise(r => setTimeout(r, 61000));
-          const retryRes = await performToggleAPI(store.location_id, currentAction, brand);
-          if (!retryRes.success) throw new Error(retryRes.error || "429 Retry failed");
+          toggleRes = await performToggleAPI(store.location_id, currentAction, brand);
+          if (!toggleRes.success) throw new Error(toggleRes.error || "429 Retry failed");
         } else if (!toggleRes.success) {
           throw new Error(toggleRes.error);
         }
@@ -353,6 +441,7 @@ export async function runBulkJob(jobId, stores, action, filterContext, performTo
           action: currentAction.toUpperCase(), result: 'SUCCESS',
           isBulk: !wasAutoThrottled, isAutomated: wasAutoThrottled || isAutomatedSource,
           bulkJobId: jobId, source: wasAutoThrottled ? 'AUTO_THROTTLE' : source,
+          referenceIds: toggleRes.referenceIds,
         });
       } catch (err) {
          await pool.query('UPDATE bulk_toggle_jobs SET failed_count = failed_count + 1, pending_count = pending_count - 1 WHERE id = $1', [jobId]);
@@ -370,6 +459,19 @@ export async function runBulkJob(jobId, stores, action, filterContext, performTo
   }
 
   await pool.query('UPDATE bulk_toggle_jobs SET status = $1 WHERE id = $2 AND status IN ($3, $4)', ['COMPLETED', jobId, 'RUNNING', 'PAUSED']);
+
+  // Resume whatever automated job this one auto-paused to take priority — only ever
+  // targets a job WE paused (auto_paused = true), never a job an admin paused on
+  // purpose, since that flag is only ever set by the auto-pause path above.
+  const resumedRes = await pool.query(`
+    UPDATE bulk_toggle_jobs SET status = 'RUNNING', auto_paused = false
+    WHERE status = 'PAUSED' AND auto_paused = true AND brands && $1::text[] AND id != $2
+    RETURNING id
+  `, [jobBrands, jobId]);
+  if (resumedRes.rowCount > 0) {
+    console.log(`[QUEUE] Manual job #${jobId} finished — resumed auto-paused job(s): ${resumedRes.rows.map(r => r.id).join(', ')}`);
+  }
+
   const finalJob = await pool.query('SELECT * FROM bulk_toggle_jobs WHERE id = $1', [jobId]);
   const j = finalJob.rows[0];
   const uniqueBrands = [...new Set(stores.map(s => s.brand))].filter(Boolean).join(", ");

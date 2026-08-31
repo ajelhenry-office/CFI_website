@@ -1,6 +1,6 @@
 import { pool } from '../ratings/db.js';
 import { UP_BRANDS, performToggleAPI } from './toggle.routes.js';
-import { initiateBulkJob, EATFIT_THROTTLE_THRESHOLD } from './queue.js';
+import { initiateBulkJob, EATFIT_THROTTLE_THRESHOLD, isTogglePaused, isToggleFrozen } from './queue.js';
 import { raiseAlert, resolveAlert } from '../alerts/alertService.js';
 
 // KitchenPulse's inbound webhook for active_orders (POST /toggle/update-orders) has
@@ -52,6 +52,7 @@ export async function fetchAcknowledgedOrderCounts(creds) {
 export async function syncEatfitOrderCounts() {
   const creds = UP_BRANDS.eatfit;
   if (!creds) return;
+  if (await isTogglePaused()) return;
 
   try {
     const countsByRefId = await fetchAcknowledgedOrderCounts(creds);
@@ -98,6 +99,11 @@ export function scheduleEatfitOrderSync() {
 // answer — there's nothing for them to disagree about.
 export async function enforceEatfitThreshold() {
   try {
+    if (await isTogglePaused()) return;
+    // Same reasoning as Hourly Recheck — skip before building a job, so a frozen eatfit
+    // workspace doesn't get its Problem Stores list flooded with freeze-caused "failures".
+    if (await isToggleFrozen('eatfit')) return;
+
     const candidatesRes = await pool.query(`
       SELECT ms.location_id, ms.brand, ms.name
       FROM managed_stores ms

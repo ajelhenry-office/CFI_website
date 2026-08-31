@@ -1,7 +1,7 @@
 import { pool } from '../ratings/db.js';
 import { warmUpOpsCache } from '../ops_matrix/ops.routes.js';
 import { startTimingWorker } from '../timing/timingWorker.js';
-import { initiateBulkJob, normalizeBrandKey, AUTO_MANAGED_BRANDS } from './queue.js';
+import { initiateBulkJob, normalizeBrandKey, AUTO_MANAGED_BRANDS, isTogglePaused, isToggleFrozen } from './queue.js';
 import { performToggleAPI } from './toggle.routes.js';
 import { raiseAlert, resolveAlert } from '../alerts/alertService.js';
 import { scheduleDailyHealthCheck } from '../alerts/dailyHealthCheck.js';
@@ -28,6 +28,11 @@ export function startWorkers() {
   // which this cron has, so it was silently failing every single time before this fix.
   setInterval(async () => {
     try {
+      // Full Toggle-tab pause — skip before touching anything at all, not just before
+      // the final UrbanPiper call (which initiateBulkJob/performToggleAPI also check),
+      // so a pause window means this cron does zero work, not "runs and gets blocked".
+      if (await isTogglePaused()) return;
+
       console.log("[WORKERS] Running Hourly Recheck Cron...");
 
       // Fetch all stores that should be online
@@ -64,6 +69,16 @@ export function startWorkers() {
       console.log(`[WORKERS] Hourly Recheck found ${actedOnCount} ONLINE stores across ${storesByBrand.size} auto-managed brand(s) to verify.`);
 
       for (const [brandKey, brandStores] of storesByBrand) {
+        // Skip a frozen brand entirely, before creating a job or touching the rate
+        // limit — freezing already blocks the final UrbanPiper call (see
+        // performToggleAPI), but leaving the job creation itself unguarded meant this
+        // cron kept building a full job every hour for a frozen brand, attempting every
+        // store, and flooding Problem Stores with failures that were never real —
+        // purely an artifact of the freeze, not an actual store issue.
+        if (await isToggleFrozen(brandKey)) {
+          console.log(`[WORKERS] Hourly Recheck skipped ${brandKey} this cycle — workspace is frozen.`);
+          continue;
+        }
         const result = await initiateBulkJob(brandStores, "enable", " (Hourly Recheck)", "System — Hourly Recheck", "AUTO_HOURLY_RECHECK", performToggleAPI);
         if (result.blocked) {
           console.log(`[WORKERS] Hourly Recheck skipped ${brandKey} this cycle — a job already running for it.`);
@@ -96,6 +111,8 @@ export function startWorkers() {
   // showing as "still running" in the UI. Mark it FAILED so it's honestly reported.
   setInterval(async () => {
     try {
+      if (await isTogglePaused()) return;
+
       const res = await pool.query(`
         UPDATE bulk_toggle_jobs SET status = 'FAILED'
         WHERE status IN ('RUNNING', 'PAUSED') AND last_heartbeat_at < NOW() - INTERVAL '10 minutes'
@@ -118,6 +135,8 @@ export function startWorkers() {
   // reliable schedule instead of being tied to whether anyone happens to load the sidebar.
   setInterval(async () => {
     try {
+      if (await isTogglePaused()) return;
+
       const res = await pool.query(`DELETE FROM toggle_activity WHERE created_at < NOW() - INTERVAL '48 hours'`);
       if (res.rowCount > 0) console.log(`[WORKERS] Purged ${res.rowCount} toggle_activity rows older than 48h.`);
     } catch (err) {
