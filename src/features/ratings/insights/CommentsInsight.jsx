@@ -6,9 +6,8 @@ const FIELDS = [
   ["outlet_id", "Outlet ID"],
   ["restaurant_id", "Restaurant ID"],
   ["brand_name", "Brand Name"],
-  ["business_entity", "Business Entity"],
   ["city", "City"],
-  ["area", "Area"],
+  ["kitchen", "Kitchen"],
   ["zone", "Zone"],
   ["order_id", "Order ID"],
   ["date", "Date"],
@@ -116,6 +115,13 @@ export default function CommentsInsight({ reviews = [], onClose, onRegisterDownl
                 ))}
               </tr>
             ))}
+            {pageRows.length === 0 && (
+              <tr>
+                <td colSpan={FIELDS.length} style={{ padding: 20, textAlign: "center", color: C.muted }}>
+                  No data available for the selected date/filters.
+                </td>
+              </tr>
+            )}
           </tbody>
         </table>
       </div>

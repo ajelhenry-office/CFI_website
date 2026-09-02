@@ -5,16 +5,19 @@ import { pool } from './db.js';
  */
 async function handleFilterRequest(req, res) {
   try {
-    // Fetch ALL outlets in a single query since Postgres has no 1000-row return limit
-    const outletsResult = await pool.query('SELECT brand_name, city, zone, area FROM outlet_master ORDER BY brand_name');
+    // Fetch ALL outlets in a single query since Postgres has no 1000-row return limit.
+    // sub_brand IS NULL means the outlet wasn't matched against the reference sheet —
+    // keep it out of every dropdown, same as insights.routes.js.
+    const outletsResult = await pool.query('SELECT brand_name, sub_brand, city, zone, kitchen FROM outlet_master WHERE sub_brand IS NOT NULL ORDER BY brand_name');
     const allData = outletsResult.rows;
 
     // Clean the data (spaces & trim)
     const cleanedData = allData.map(row => ({
       brand: row.brand_name ? String(row.brand_name).replace(/\s+/g, ' ').trim() : null,
+      subBrand: row.sub_brand ? String(row.sub_brand).replace(/\s+/g, ' ').trim() : null,
       city: row.city ? String(row.city).replace(/\s+/g, ' ').trim() : null,
       zone: row.zone ? String(row.zone).replace(/\s+/g, ' ').trim() : null,
-      area: row.area ? String(row.area).replace(/\s+/g, ' ').trim() : null,
+      kitchen: row.kitchen ? String(row.kitchen).replace(/\s+/g, ' ').trim() : null,
     }));
 
     // Fetch max date from order_reviews

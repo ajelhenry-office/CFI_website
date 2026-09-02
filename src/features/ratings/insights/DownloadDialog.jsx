@@ -29,14 +29,12 @@ const HEADER_STYLE = {
   alignment: { horizontal: "center" },
 };
 
-const ratingFill = (rating) => {
-  if (rating >= 4) return { patternType: "solid", fgColor: { rgb: "132664" } };
-  if (rating >= 3) return { patternType: "solid", fgColor: { rgb: "AEBBDE" } };
-  return { patternType: "solid", fgColor: { rgb: "E4E8F5" } };
-};
+// Exactly two bands — >= 4 positive (green), below 4 negative (red) — no
+// middle tier, matching the same rule applied everywhere else in the tab.
+const ratingFill = (rating) =>
+  rating >= 4 ? { patternType: "solid", fgColor: { rgb: "28A745" } } : { patternType: "solid", fgColor: { rgb: "DC3545" } };
 
-const ratingFont = (rating) =>
-  rating >= 4 ? { color: { rgb: "FFFFFF" }, bold: true } : { color: { rgb: "132664" } };
+const ratingFont = () => ({ color: { rgb: "FFFFFF" }, bold: true });
 
 function buildWorkbook(dataSheets) {
   const wb = XLSX.utils.book_new();
@@ -51,9 +49,16 @@ function buildWorkbook(dataSheets) {
       if (ws[addr]) ws[addr].s = HEADER_STYLE;
     }
 
-    // Style rating cells in body
+    // Style rating cells in body — only columns actually named rating/avg, not
+    // every numeric-looking cell. Cities/Kitchens/Above 4★/Below 4★ counts
+    // commonly land in the same 0-5 range a rating does, and without this
+    // guard they were getting colored red/green right alongside the real
+    // rating column (the HTML export already had this guard, XLSX/PDF didn't).
+    const cols = rows.length ? Object.keys(rows[0]) : [];
+    const ratingCols = new Set(cols.map((c, ci) => (/rating|avg/i.test(c) ? ci : -1)).filter((ci) => ci >= 0));
     for (let R = 1; R <= range.e.r; R++) {
       for (let C2 = range.s.c; C2 <= range.e.c; C2++) {
+        if (!ratingCols.has(C2)) continue;
         const addr = XLSX.utils.encode_cell({ r: R, c: C2 });
         if (!ws[addr]) continue;
         const rating = ratingOf(ws[addr].v);
@@ -88,7 +93,7 @@ function buildHtml(dataSheets) {
             `<tr class="${i % 2 ? "alt" : ""}">${cols
               .map((c) => {
                 const rating = /rating|avg/i.test(c) ? ratingOf(r[c]) : null;
-                const cls = rating === null ? "" : rating >= 4 ? "hi" : rating >= 3 ? "mid" : "low";
+                const cls = rating === null ? "" : rating >= 4 ? "hi" : "low";
                 return `<td class="${cls}">${r[c] ?? ""}</td>`;
               })
               .join("")}</tr>`,
@@ -104,8 +109,8 @@ table{border-collapse:collapse;width:100%;font-size:12px}
 th{position:sticky;top:0;background:#132664;color:#fff;padding:8px;text-align:left}
 td{padding:7px 8px;border-bottom:1px solid rgba(19,38,100,.1)}
 tr.alt td{background:#f9fafc}
-td.hi{background:#132664;color:#fff;font-weight:700}
-td.mid{background:#aebbde}td.low{background:#e4e8f5}
+td.hi{background:#28a745;color:#fff;font-weight:700}
+td.low{background:#dc3545;color:#fff;font-weight:700}
 </style></head><body><h1>CUREFOODS RATINGS REPORT</h1><div>${new Date().toLocaleString()}</div>${tables}</body></html>`;
 }
 
@@ -132,16 +137,12 @@ async function buildPdf(dataSheets) {
       headStyles: { fillColor: [19, 38, 100], textColor: [255, 255, 255], fontSize },
       didParseCell: (d) => {
         if (d.section !== "body") return;
+        // Same guard as the XLSX export — only color actual rating/avg columns.
+        if (!/rating|avg/i.test(cols[d.column.index] || "")) return;
         const rating = ratingOf(d.cell.raw);
         if (rating === null) return;
-        if (rating >= 4) {
-          d.cell.styles.fillColor = [19, 38, 100];
-          d.cell.styles.textColor = [255, 255, 255];
-        } else if (rating >= 3) {
-          d.cell.styles.fillColor = [174, 187, 222];
-        } else {
-          d.cell.styles.fillColor = [228, 232, 245];
-        }
+        d.cell.styles.textColor = [255, 255, 255];
+        d.cell.styles.fillColor = rating >= 4 ? [40, 167, 69] : [220, 53, 69];
       },
     });
   });

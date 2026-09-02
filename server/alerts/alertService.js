@@ -1,19 +1,22 @@
 import { pool } from '../ratings/db.js';
 import { sendAlertEmail } from '../auth/emailService.js';
 
-// These alerts are all about the Toggle tab's own health, so recipients are looked up
-// fresh from the DB every time: Super Admin (overall ownership) plus every Control
-// Tower employee (the ones actually operating the Toggle tab day to day) — so adding
-// or removing a Control Tower employee automatically updates who gets notified, no
-// config change needed. ALERT_EMAILS stays available for anyone extra beyond those
-// two roles.
-export async function getRecipients() {
+// Recipients are looked up fresh from the DB every time by role, so adding or
+// removing an employee from a role automatically updates who gets notified —
+// no config change needed. Defaults to the Toggle tab's own audience (Super
+// Admin plus every Control Tower employee, the ones actually operating that
+// tab day to day) since that's what every existing caller relies on; callers
+// alerting about something else (e.g. Ratings & Insights) pass their own
+// `roles` list instead. ALERT_EMAILS stays available for anyone extra beyond
+// whichever roles apply.
+export async function getRecipients(roles = ['super_admin', 'control_tower']) {
   // Employees can hold more than one role now, so match against the full roles
-  // array (roles && ARRAY[...] = "overlaps with"), not just the primary `role` column
+  // array (roles && $1 = "overlaps with"), not just the primary `role` column
   // — otherwise someone whose primary role is e.g. Supervisor but who also holds
   // Control Tower would silently stop getting these alerts.
   const roleRes = await pool.query(
-    `SELECT email FROM authorized_users WHERE roles && ARRAY['super_admin', 'control_tower'] AND is_locked = false`
+    `SELECT email FROM authorized_users WHERE roles && $1::text[] AND is_locked = false`,
+    [roles],
   );
   const extra = (process.env.ALERT_EMAILS || '').split(',').map(e => e.trim()).filter(Boolean);
   return [...new Set([...roleRes.rows.map(r => r.email), ...extra])];
@@ -45,14 +48,14 @@ function buildHtml({ severityKey, category, message, details, occurrenceCount, t
 </div>`;
 }
 
-async function deliver(severityKey, category, message, details, occurrenceCount) {
+async function deliver(severityKey, category, message, details, occurrenceCount, roles) {
   const s = SEVERITY_STYLE[severityKey];
   const subject = `${s.emoji} [KitchenPulse ALERT] ${category}${severityKey === 'RESOLVED' ? ' — Resolved' : ''}`;
   const html = buildHtml({
     severityKey, category, message, details, occurrenceCount,
     timestamp: new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }),
   });
-  const recipients = await getRecipients();
+  const recipients = await getRecipients(roles);
   for (const to of recipients) {
     await sendAlertEmail(to, subject, html);
   }
@@ -62,9 +65,10 @@ async function deliver(severityKey, category, message, details, occurrenceCount)
  * Raise (or bump) an alert for `category`. If an unresolved alert for the same
  * category already exists, this just increments its occurrence count and only
  * re-sends the email if the cooldown window has passed — so a sustained issue
- * doesn't produce one email per failure.
+ * doesn't produce one email per failure. `roles` (optional) overrides who gets
+ * notified for this category — see getRecipients() for the default.
  */
-export async function raiseAlert(category, severity, message, details = null) {
+export async function raiseAlert(category, severity, message, details = null, roles) {
   try {
     const existing = await pool.query(
       `SELECT id, occurrence_count, last_notified_at FROM system_alerts WHERE category = $1 AND resolved_at IS NULL`,
@@ -83,7 +87,7 @@ export async function raiseAlert(category, severity, message, details = null) {
       }
 
       await pool.query(`UPDATE system_alerts SET occurrence_count = $1, last_notified_at = NOW() WHERE id = $2`, [newCount, row.id]);
-      await deliver(severity, category, message, details, newCount);
+      await deliver(severity, category, message, details, newCount, roles);
       return;
     }
 
@@ -91,7 +95,7 @@ export async function raiseAlert(category, severity, message, details = null) {
       `INSERT INTO system_alerts (category, severity, message, details) VALUES ($1, $2, $3, $4)`,
       [category, severity, message, details]
     );
-    await deliver(severity, category, message, details, 1);
+    await deliver(severity, category, message, details, 1, roles);
   } catch (err) {
     // Alerting must never be the thing that breaks the app it's monitoring.
     console.error('[ALERTS] Failed to raise alert:', err.message);
@@ -99,7 +103,7 @@ export async function raiseAlert(category, severity, message, details = null) {
 }
 
 /** Mark an ongoing issue as resolved and send a follow-up so nobody's left wondering. */
-export async function resolveAlert(category, message = 'This issue has cleared.') {
+export async function resolveAlert(category, message = 'This issue has cleared.', roles) {
   try {
     const existing = await pool.query(
       `SELECT id, occurrence_count FROM system_alerts WHERE category = $1 AND resolved_at IS NULL`,
@@ -108,7 +112,7 @@ export async function resolveAlert(category, message = 'This issue has cleared.'
     if (existing.rows.length === 0) return; // nothing was active, nothing to resolve
 
     await pool.query(`UPDATE system_alerts SET resolved_at = NOW() WHERE id = $1`, [existing.rows[0].id]);
-    await deliver('RESOLVED', category, message, null, existing.rows[0].occurrence_count);
+    await deliver('RESOLVED', category, message, null, existing.rows[0].occurrence_count, roles);
   } catch (err) {
     console.error('[ALERTS] Failed to resolve alert:', err.message);
   }

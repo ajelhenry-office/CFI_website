@@ -145,7 +145,7 @@ export default function GenericTableInsight({
             {pageRows.length === 0 && (
               <tr>
                 <td colSpan={columns.length} style={{ padding: 20, textAlign: "center", color: C.muted }}>
-                  No records match this view.
+                  No data available for the selected date/filters.
                 </td>
               </tr>
             )}

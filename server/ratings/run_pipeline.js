@@ -50,128 +50,72 @@ function parseFile(filePath) {
   return xlsx.utils.sheet_to_json(wb.Sheets[sheetName], { defval: null });
 }
 
-// ─── ZONE DETAILS REFERENCE MAPPING ───────────────────────────
-
-let zoneMap = null;
-
-async function loadZoneMap() {
-  if (zoneMap) return zoneMap;
-  zoneMap = new Map();
-
-  const paths = [
-    new URL('../curefoods_tables_with_zone_mumbai.xlsx', import.meta.url).pathname,
-    '/Users/ajelhenry/Downloads/curefoods_tables_zone_details_mumbai.xlsx',
-    '/Users/ajelhenry/Downloads/curefoods_tables_with_zone_mumbai.xlsx',
-    new URL('downloads/curefoods_tables_zone_details_mumbai.xlsx', import.meta.url).pathname,
-    new URL('downloads/curefoods_tables_with_zone_mumbai.xlsx', import.meta.url).pathname
-  ];
-
-  let filePath = null;
-  for (const p of paths) {
-    if (fs.existsSync(p)) {
-      filePath = p;
-      break;
-    }
-  }
-
-  if (!filePath) {
-    console.log('Warning: Zone details reference file not found in Downloads. Zone mapping will be skipped.');
-    return zoneMap;
-  }
-
-  console.log(`Loading zone details from reference file: ${filePath}`);
-  try {
-    const wb = xlsx.readFile(filePath);
-    const sheetName = wb.SheetNames.find(name => 
-      name.toLowerCase().includes('zone') || 
-      name.toLowerCase().includes('outlet_master')
-    ) || wb.SheetNames[0];
-
-    const sheet = wb.Sheets[sheetName];
-    const rows = xlsx.utils.sheet_to_json(sheet, { defval: null });
-
-    const getColVal = (row, keyStr) => {
-      const foundKey = Object.keys(row).find(k => k && k.toLowerCase().replace(/_/g, ' ').includes(keyStr.toLowerCase().replace(/_/g, ' ')));
-      return foundKey ? String(row[foundKey]).trim() : null;
-    };
-
-    for (const row of rows) {
-      const city = getColVal(row, 'city');
-      const area = getColVal(row, 'area');
-      const zone = getColVal(row, 'zone');
-      if (city && area && zone) {
-        const key = `${city.toLowerCase()}_${area.toLowerCase()}`;
-        zoneMap.set(key, zone);
-      }
-    }
-    console.log(`Loaded ${zoneMap.size} zone mappings successfully from sheet "${sheetName}".`);
-  } catch (err) {
-    console.error('Failed to parse zone details reference file:', err.message);
-  }
-
-  return zoneMap;
-}
-
 // ─── STEP 2: SYNC OUTLET MASTER ───────────────────────────────
 
 async function syncOutletMaster(rows) {
-  // Load the zone mappings from the reference file
-  const zMap = await loadZoneMap();
-
-  // 1. Fetch all existing restaurant_id + area combinations from outlet_master along with city and zone
+  // 1. Fetch all existing restaurant_ids from outlet_master.
+  // Uniqueness is now on restaurant_id alone — `kitchen` comes from the
+  // reference sheet (not the daily report), so it can no longer be part of
+  // the dedupe key.
   console.log('Fetching existing outlets from database...');
   let existingOutlets = [];
   try {
-    const res = await pool.query('SELECT restaurant_id, area, city, zone FROM outlet_master');
+    const res = await pool.query('SELECT restaurant_id FROM outlet_master');
     existingOutlets = res.rows || [];
   } catch (err) {
     console.error('Error fetching existing outlets:', err.message);
   }
 
   // Create lookup maps/sets for fast checking
-  const existingSet = new Set(existingOutlets.map(o => `${o.restaurant_id}_${o.area}`));
+  const existingSet = new Set(existingOutlets.map(o => String(o.restaurant_id)));
   const uniqueNewMap = new Map();
 
   for (const row of rows) {
-    if (!row.restaurant_id || !row.area) continue;
+    if (!row.restaurant_id) continue;
     const restId = String(row.restaurant_id).trim();
-    const area = String(row.area).trim();
-    const key = `${restId}_${area}`;
 
-    if (existingSet.has(key) || uniqueNewMap.has(key)) continue;
+    if (existingSet.has(restId) || uniqueNewMap.has(restId)) continue;
 
-    const brandName = row.brand_name ? String(row.brand_name).trim() : null;
-    const businessEntity = row.business_entity ? String(row.business_entity).trim() : null;
-    const city = row.city ? String(row.city).trim() : null;
+    const rawBrandName = row.brand_name ? String(row.brand_name).trim() : null;
+    // Krispy Kreme has no real sub-brand distinction — the old North/South split was
+    // a data-entry mistake, corrected once for existing rows. Canonicalizing the
+    // brand name and sub_brand here (regardless of "Krispy Kreme" vs "Krispy_Kreme"
+    // casing in the raw report) means a brand-new Krispy Kreme outlet is never
+    // fragmented by casing or left hidden as unmatched (NULL sub_brand) again.
+    // This is the ONLY exception to the "unknown stores get nulled out" rule below,
+    // and only for brand_name/sub_brand specifically — those are a confidently-known
+    // pattern match, not a guess. city/zone/kitchen are NOT reliably knowable for a
+    // brand-new outlet (an earlier version of this tried to guess zone from a
+    // reference lookup that could never actually work for a new store — removed;
+    // guessing isn't the rule here, matching every other unknown store's fields is).
+    const isKrispyKreme = rawBrandName && /^krispy[\s_]*kreme$/i.test(rawBrandName);
 
-    let zone = null;
-    if (city) {
-      const cleanCity = city.toLowerCase();
-      // 1. Check if the reference map has it
-      if (zMap[cleanCity]) {
-        zone = zMap[cleanCity];
-      } else {
-        // 2. Fallback to common zones mapping
-        const commonZones = {
-          'bangalore': 'South', 'bengaluru': 'South', 'hyderabad': 'South', 'chennai': 'South',
-          'mumbai': 'West', 'bombay': 'West', 'pune': 'West', 'ahmedabad': 'West',
-          'delhi': 'North', 'new delhi': 'North', 'gurgaon': 'North', 'gurugram': 'North',
-          'guwahati': 'East', 'kolkata': 'East', 'calcutta': 'East', 'bhubaneswar': 'East'
-        };
-        if (commonZones[cleanCity]) {
-          zone = commonZones[cleanCity];
-        }
-      }
+    if (isKrispyKreme) {
+      uniqueNewMap.set(restId, {
+        restaurant_id: restId,
+        brand_name: 'Krispy Kreme',
+        sub_brand: 'Krispy Kreme',
+        city: null,
+        zone: null,
+        kitchen: null,
+      });
+    } else {
+      // A genuinely new/unmatched restaurant_id — nothing about it is
+      // verified until the reference sheet is updated to include it, so
+      // store nothing but the id. No guessing at brand/city/zone from the
+      // daily report (which has messy, inconsistent naming anyway) —
+      // sub_brand stays NULL, which is what already keeps it out of every
+      // insight and off the website until someone reconciles it against
+      // the sheet.
+      uniqueNewMap.set(restId, {
+        restaurant_id: restId,
+        brand_name: null,
+        sub_brand: null,
+        city: null,
+        zone: null,
+        kitchen: null,
+      });
     }
-
-    uniqueNewMap.set(key, {
-      restaurant_id: restId,
-      brand_name: brandName,
-      business_entity: businessEntity,
-      city: city,
-      area: area,
-      zone: zone
-    });
   }
 
   const outletsToInsert = Array.from(uniqueNewMap.values());
@@ -184,10 +128,10 @@ async function syncOutletMaster(rows) {
   for (const o of outletsToInsert) {
     try {
       await pool.query(`
-        INSERT INTO outlet_master (restaurant_id, brand_name, business_entity, city, area, zone)
+        INSERT INTO outlet_master (restaurant_id, brand_name, sub_brand, city, zone, kitchen)
         VALUES ($1, $2, $3, $4, $5, $6)
-        ON CONFLICT (restaurant_id, area) DO NOTHING
-      `, [o.restaurant_id, o.brand_name, o.business_entity, o.city, o.area, o.zone]);
+        ON CONFLICT (restaurant_id) DO NOTHING
+      `, [o.restaurant_id, o.brand_name, o.sub_brand, o.city, o.zone, o.kitchen]);
     } catch (err) {
       console.error(`outlet_master insert error for ID ${o.restaurant_id}:`, err.message);
     }
@@ -212,7 +156,6 @@ async function pushOrderReviews(rows) {
       uniqueMap.set(key, {
         order_id: orderId,
         restaurant_id: restId,
-        area: row.area ? String(row.area).trim() : null,
         item_name: row.item_name ? String(row.item_name).replace(/\u00A0/g, ' ').replace(/\s+/g, ' ').trim() : 'NO_ITEM',
         date: normalizeDate(row.date),
         ordered_time: normalizeTime(row.ordered_time),
@@ -254,23 +197,36 @@ async function pushOrderReviews(rows) {
 
   if (toInsert.length === 0) return console.log('Nothing new to insert.');
 
-  for (const r of toInsert) {
-    try {
-      await pool.query(`
-        INSERT INTO order_reviews (
-          order_id, restaurant_id, area, item_name, date, 
-          ordered_time, gmv_total, comments, restaurant_rating, 
-          post_status, updated_at
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-        ON CONFLICT (order_id, restaurant_id, item_name) DO NOTHING
-      `, [
-        r.order_id, r.restaurant_id, r.area, r.item_name, r.date,
+  const CHUNK_SIZE = 1000;
+  for (let i = 0; i < toInsert.length; i += CHUNK_SIZE) {
+    const chunk = toInsert.slice(i, i + CHUNK_SIZE);
+    
+    // Build query placeholders like ($1, $2, ... $10), ($11, $12, ... $20)
+    const values = [];
+    const placeholders = [];
+    let paramIndex = 1;
+
+    for (const r of chunk) {
+      placeholders.push(`($${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++})`);
+      values.push(r.order_id, r.restaurant_id, r.item_name, r.date,
         r.ordered_time, r.gmv_total, r.comments, r.restaurant_rating,
-        r.post_status, r.updated_at
-      ]);
+        r.post_status, r.updated_at);
+    }
+
+    const query = `
+      INSERT INTO order_reviews (
+        order_id, restaurant_id, item_name, date,
+        ordered_time, gmv_total, comments, restaurant_rating,
+        post_status, updated_at
+      )
+      VALUES ${placeholders.join(', ')}
+      ON CONFLICT (order_id, restaurant_id, item_name) DO NOTHING
+    `;
+    
+    try {
+      await pool.query(query, values);
     } catch (err) {
-      console.error(`Insert error for order ${r.order_id}:`, err.message);
+      console.error(`Bulk insert error at chunk ${i / CHUNK_SIZE + 1}:`, err.message);
     }
   }
   console.log('Successfully completed order_reviews sync.');
@@ -278,6 +234,14 @@ async function pushOrderReviews(rows) {
 
 // ─── MAIN PIPELINE ────────────────────────────────────────────
 
+// Returns { success: true } when this date's check genuinely completed —
+// mail found and processed, or confirmed no mail exists for that date, both
+// count as success — and { success: false, error } only when it actually
+// failed after exhausting retries, carrying the real error message so a
+// caller can report *what* broke (e.g. in an alert email), not just that
+// something did. This used to swallow a final failure silently and just log
+// it, which meant a caller had no way to tell "nothing to find" apart from
+// "broke," let alone why.
 async function runPipeline(targetDate, attempt = 1, maxRetries = 3) {
   try {
     console.log(`\n[${new Date().toISOString()}] Running pipeline (attempt ${attempt}/${maxRetries})...`);
@@ -290,7 +254,7 @@ async function runPipeline(targetDate, attempt = 1, maxRetries = 3) {
 
     if (newFiles.length === 0) {
       console.log('No new files to process.');
-      return;
+      return { success: true };
     }
 
     for (const filePath of newFiles) {
@@ -313,12 +277,14 @@ async function runPipeline(targetDate, attempt = 1, maxRetries = 3) {
         }
       }
     }
+    return { success: true };
   } catch (error) {
     console.error(`Pipeline error (attempt ${attempt}):`, error.message);
     if (attempt < maxRetries) {
-      await runPipeline(targetDate, attempt + 1, maxRetries);
+      return await runPipeline(targetDate, attempt + 1, maxRetries);
     } else {
       console.error(`Pipeline failed after ${maxRetries} attempts.`);
+      return { success: false, error: error.message };
     }
   }
 }
@@ -359,8 +325,8 @@ if (process.argv[1] === new URL(import.meta.url).pathname) {
   if (args.includes('--schedule')) {
     startScheduler();
   } else if (args.length > 0) {
-    runPipeline(args[0]);
+    runPipeline(args[0]).then(() => { process.exit(0); });
   } else {
-    runPipeline();
+    runPipeline().then(() => { process.exit(0); });
   }
 }

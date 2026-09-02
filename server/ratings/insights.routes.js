@@ -22,7 +22,13 @@ async function getOutletMap() {
   }
 
   try {
-    const res = await pool.query('SELECT * FROM outlet_master ORDER BY restaurant_id');
+    // Outlets with no sub_brand were never matched against the reference sheet
+    // (the 28 pre-existing unmatched outlets, plus any new restaurant_id
+    // syncOutletMaster() auto-inserts from a daily report going forward).
+    // Excluding them here means they're invisible to every insight and every
+    // frontend table — their rows in order_reviews are still stored normally,
+    // just never joined in.
+    const res = await pool.query('SELECT * FROM outlet_master WHERE sub_brand IS NOT NULL ORDER BY restaurant_id');
     const allData = res.rows;
     
     const map = new Map();
@@ -63,64 +69,42 @@ function splitDateRange(startDateStr, endDateStr, numChunks) {
   return chunks;
 }
 
-function getParentBrand(brandName) {
-  if (!brandName) return "Other";
-  const norm = brandName.toLowerCase().replace(/[^a-z0-9]/g, "");
+// India Standard Time is a fixed UTC+5:30 offset with no DST, so it's safe to
+// derive via a constant shift rather than Date.prototype.getHours()/getDay(),
+// which silently read whatever timezone the Node process itself happens to be
+// running in — correct only by accident on a host that's already set to IST,
+// and wrong on any other host (e.g. a UTC-default container).
+function shiftToIST(dateInput) {
+  const d = dateInput instanceof Date ? dateInput : new Date(dateInput);
+  if (isNaN(d.getTime())) return null;
+  return new Date(d.getTime() + 5.5 * 60 * 60 * 1000);
+}
 
-  const Groups = {
-    "olio": [
-      "99slicebyoliopizza",
-      "crustospizza",
-      "junospizzathethincrustpizzeria",
-      "oliothewoodfiredpizzeria",
-      "phatchickenburgers",
-      "pomppizzaonmyplate"
-    ],
-    "Eatfit": [
-      "eatfit",
-      "eatfitallthingshealthy",
-      "eatfitdesimealsburgersmore",
-      "gharkakhanabyeatfit",
-      "greatindiankhichdibyeatfit",
-      "homeplatebyeatfit",
-      "hrxbyeatfit",
-      "hrxrollsandwraps",
-      "rollsonwheelsshawarmawraps",
-      "homeplatexgharkakhana"
-    ],
-    "cakezone": [
-      "ovenfreshcakesanddesserts",
-      "ovenfreshpizzas",
-      "thedessertheaven",
-      "thedessertheavenpureveg"
-    ],
-    "Sharief Bhai Biryani": [
-      "rozshawarmabyshariefbhai",
-      "shariefbhaibiryani"
-    ],
-    "Millet Express": [
-      "madrascurdricecompany"
-    ],
-    "Krispy Kreme": [
-      "krispykreme"
-    ]
-  };
+function istHour(dateInput) {
+  const ist = shiftToIST(dateInput);
+  return ist ? ist.getUTCHours() : null;
+}
 
-  for (const [parent, children] of Object.entries(Groups)) {
-    if (children.includes(norm)) {
-      return parent;
-    }
-  }
-  return brandName.replace(/_/g, " ").replace(/\s+/g, " ").trim();
+function istDayOfWeek(dateInput) {
+  const ist = shiftToIST(dateInput);
+  return ist ? ist.getUTCDay() : null;
 }
 
 // The `date` column can come back from Postgres as a JS Date object (for
 // DATE/TIMESTAMP columns) or as a string. Extract the "YYYY-MM" month safely
-// in both cases — calling .substring() directly on a Date throws.
+// in both cases — calling .substring() directly on a Date throws. For an
+// actual Date object, the stored instant needs shifting into IST first: a
+// row that's IST-midnight-of-the-1st has a UTC instant still sitting in the
+// previous day (18:30 the day before), so reading the UTC calendar month
+// directly (the old `.toISOString()` behavior) put every 1st-of-month order
+// in the wrong, earlier month.
 function toMonth(d) {
   if (!d) return null;
   if (typeof d === "string") return d.substring(0, 7);
-  if (d instanceof Date) return d.toISOString().substring(0, 7);
+  if (d instanceof Date) {
+    const ist = shiftToIST(d);
+    return `${ist.getUTCFullYear()}-${String(ist.getUTCMonth() + 1).padStart(2, "0")}`;
+  }
   return String(d).substring(0, 7);
 }
 
@@ -134,12 +118,13 @@ async function fetchJoined(filters, limit = 200000, extraSQL = '') {
   if (filters.brand) { valid = valid.filter(r => r.brand_name && r.brand_name.toLowerCase() === filters.brand.toLowerCase()); hasOutletFilter = true; }
   if (filters.city) { valid = valid.filter(r => r.city && r.city.toLowerCase() === filters.city.toLowerCase()); hasOutletFilter = true; }
   if (filters.zone) { valid = valid.filter(r => r.zone && r.zone.toLowerCase() === filters.zone.toLowerCase()); hasOutletFilter = true; }
-  if (filters.area) { valid = valid.filter(r => r.area && r.area.toLowerCase() === filters.area.toLowerCase()); hasOutletFilter = true; }
+  if (filters.kitchen) { valid = valid.filter(r => r.kitchen && r.kitchen.toLowerCase() === filters.kitchen.toLowerCase()); hasOutletFilter = true; }
 
   if (filters.brands && filters.brands.length > 0) { valid = valid.filter(r => filters.brands.includes(r.brand_name)); hasOutletFilter = true; }
+  if (filters.subBrands && filters.subBrands.length > 0) { valid = valid.filter(r => filters.subBrands.includes(r.sub_brand)); hasOutletFilter = true; }
   if (filters.cities && filters.cities.length > 0) { valid = valid.filter(r => filters.cities.includes(r.city)); hasOutletFilter = true; }
   if (filters.zones && filters.zones.length > 0) { valid = valid.filter(r => filters.zones.includes(r.zone)); hasOutletFilter = true; }
-  if (filters.areas && filters.areas.length > 0) { valid = valid.filter(r => filters.areas.includes(r.area)); hasOutletFilter = true; }
+  if (filters.kitchens && filters.kitchens.length > 0) { valid = valid.filter(r => filters.kitchens.includes(r.kitchen)); hasOutletFilter = true; }
 
   const validIds = [...new Set(valid.map(r => r.restaurant_id).filter(Boolean))];
 
@@ -195,27 +180,97 @@ async function fetchJoined(filters, limit = 200000, extraSQL = '') {
       });
     }
 
+    // Drop any review whose outlet isn't in the (sub_brand-matched) map — this is
+    // the single point every insight funnels through, so it hides unmatched
+    // outlets everywhere at once, including the raw Comments table (case 21).
+    result = result.filter(row => map.has(row.restaurant_id));
+
     result = result.slice(0, limit);
 
-    // Attach the correct brand, city, area, zone fields to every review for Insight functions to use
+    // Attach the correct brand, city, kitchen, zone fields to every review for Insight functions to use
     for (const row of result) {
       const outlet = map.get(row.restaurant_id);
-      if (outlet) {
-        row.outlet_id = outlet.id;
-        row.brand_name = outlet.brand_name;
-        row.main_brand = getParentBrand(outlet.brand_name);
-        row.city = outlet.city;
-        row.zone = outlet.zone;
-        row.area = outlet.area || row.area;
-        row.business_entity = outlet.business_entity;
-      }
+      row.outlet_id = outlet.id;
+      row.brand_name = outlet.brand_name;
+      row.sub_brand = outlet.sub_brand;
+      row.city = outlet.city;
+      row.zone = outlet.zone;
+      row.kitchen = outlet.kitchen;
     }
-    
+
     return result;
   } catch (err) {
     console.error("Failed to query reviews from Postgres:", err.message);
     throw err;
   }
+}
+
+// order_reviews stores one row per item in an order, with restaurant_rating
+// (and every outlet/date/time field) duplicated identically across every item
+// row of that order. Averaging or counting raw rows therefore over-weights
+// multi-item orders by however many items they had — this collapses back down
+// to one row per order first, for every insight EXCEPT the item-wise ones
+// (SKU/item leaderboards), where item-level granularity is the whole point.
+// Keyed on restaurant_id+order_id rather than order_id alone, in case
+// order_id isn't guaranteed globally unique across outlets.
+function dedupeByOrder(rows) {
+  const map = new Map();
+  for (const r of rows) {
+    const key = r.order_id != null ? `${r.restaurant_id}::${r.order_id}` : r.id;
+    if (!map.has(key)) map.set(key, r);
+  }
+  return [...map.values()];
+}
+
+// Wilson score lower bound for a binomial proportion — the statistically
+// correct way to rank/compare a rate (e.g. "% of orders rated >= 4") across
+// groups with different sample sizes. Raw percentage alone overstates
+// confidence for small n: 3/3 positive (100%) looks better than 3/10 (30%),
+// but with only 3 data points that "100%" could easily be luck, while 3/10
+// with a much bigger sample is much harder to explain away. This asks "what
+// rate can I be confident this is *at least*," not "what rate was observed" —
+// small samples get pulled toward caution, large samples keep more of their
+// own number. One-sided 95% confidence (z ≈ 1.645) since only the lower bound
+// matters here, not a symmetric interval.
+// Returns null for n=0 — a group with zero data must never be scored (which
+// would risk it sorting as best or worst by accident); callers must treat
+// null as "no data," excluded from ranking, not as a comparable value.
+const WILSON_Z = 1.645;
+function wilsonLowerBound(positive, n) {
+  if (!n) return null;
+  const p = positive / n;
+  const z2 = WILSON_Z * WILSON_Z;
+  const denom = 1 + z2 / n;
+  const center = p + z2 / (2 * n);
+  const margin = WILSON_Z * Math.sqrt((p * (1 - p) + z2 / (4 * n)) / n);
+  return (center - margin) / denom;
+}
+
+// Sorts by Wilson score (confidence-adjusted "rate of ratings >= 4"),
+// descending by default, falling back to higher count as the tiebreaker so
+// the ordering is deterministic — the same rule must be used wherever this
+// data gets sorted again downstream (frontend tables, exports), never a
+// separately-reimplemented comparison.
+function byWilson(desc = true) {
+  return (a, b) => {
+    const wa = a.wilson ?? -1;
+    const wb = b.wilson ?? -1;
+    return desc ? wb - wa || b.count - a.count : wa - wb || b.count - a.count;
+  };
+}
+
+// Same {avg, count, wilson} shape as groupBy()'s per-group output, for the
+// handful of insights below that build their own groups manually instead of
+// going through groupBy() — keeps every "best/worst" pick using the same
+// confidence-adjusted comparison, not a mix of adjusted and raw.
+function statsOf(vals) {
+  const nums = vals.filter((v) => v != null && !isNaN(v));
+  const positive = nums.filter((v) => v >= 4).length;
+  return {
+    avg: nums.length ? +(nums.reduce((a, b) => a + b, 0) / nums.length).toFixed(2) : 0,
+    count: nums.length,
+    wilson: nums.length ? +wilsonLowerBound(positive, nums.length).toFixed(4) : null,
+  };
 }
 
 function groupBy(rows, keyFn, valFn) {
@@ -229,25 +284,27 @@ function groupBy(rows, keyFn, valFn) {
   const result = [];
   for (const [key, vals] of map) {
     const nums = vals.filter((v) => v != null && !isNaN(v));
+    const positive = nums.filter((v) => v >= 4).length;
     result.push({
       name: key,
       avg: nums.length ? +(nums.reduce((a, b) => a + b, 0) / nums.length).toFixed(2) : 0,
       count: vals.length,
+      wilson: nums.length ? +wilsonLowerBound(positive, nums.length).toFixed(4) : null,
     });
   }
   return result;
 }
 
-// Returns ALL active breakdown dimensions (city → zone → area → brand order).
+// Returns ALL active breakdown dimensions (city → zone → kitchen → brand order).
 // Each active multi-value filter gets its own column in the breakdown table.
 function getBreakdownDimensions(filters) {
   const dims = [];
   if (filters.cities && filters.cities.length > 1) dims.push({ field: "city", label: "City" });
   if (filters.zones && filters.zones.length > 1) dims.push({ field: "zone", label: "Zone" });
-  if (filters.areas && filters.areas.length > 1) dims.push({ field: "area", label: "Area" });
+  if (filters.kitchens && filters.kitchens.length > 1) dims.push({ field: "kitchen", label: "Kitchen" });
   if (filters.brands && filters.brands.length > 1) dims.push({ field: "brand_name", label: "Brand" });
   if (dims.length === 0) {
-    const hasFilter = (filters.brands?.length || filters.cities?.length || filters.zones?.length || filters.areas?.length);
+    const hasFilter = (filters.brands?.length || filters.cities?.length || filters.zones?.length || filters.kitchens?.length);
     if (!hasFilter) dims.push({ field: "brand_name", label: "Brand" });
   }
   return dims;
@@ -291,52 +348,72 @@ async function callGroq(prompt) {
   return completion.choices[0].message.content;
 }
 
+// Only Brand/Zone/City/Kitchen Level Rating are active right now — everything
+// else is paused, not removed, to stop spending backend CPU/DB work on
+// insights nobody's currently using; flipping this back on later is just
+// re-adding an id here. 22 isn't a real insight — it's the raw per-review
+// feed that 1-4 (and the Company Overview) fetch alongside their own primary
+// query to render their own tables/matrices, so it has to stay active or all
+// four of the "active" insights break too.
+const ACTIVE_INSIGHT_IDS = new Set([1, 2, 3, 4, 22]);
+
 router.post("/:id", async (req, res) => {
   try {
     const insightId = parseInt(req.params.id);
+    if (!ACTIVE_INSIGHT_IDS.has(insightId)) {
+      return res.status(503).json({ error: "PAUSED", message: "This insight is temporarily paused. Only Brand, Zone, City, and Kitchen Level Rating are currently active." });
+    }
     const filters = req.body || {};
     let data = null;
 
     switch (insightId) {
       case 1: {
         const rows = await fetchJoined(filters);
-        data = groupBy(rows, r => r.brand_name, r => r.restaurant_rating).sort((a, b) => b.avg - a.avg);
+        const orderRows = dedupeByOrder(rows);
+        data = groupBy(orderRows, r => r.brand_name, r => r.restaurant_rating).sort(byWilson());
         break;
       }
       case 2: {
         const rows = await fetchJoined(filters);
-        data = groupBy(rows, r => r.zone, r => r.restaurant_rating).sort((a, b) => b.avg - a.avg);
+        const orderRows = dedupeByOrder(rows);
+        data = groupBy(orderRows, r => r.zone, r => r.restaurant_rating).sort(byWilson());
         break;
       }
       case 3: {
         const rows = await fetchJoined(filters);
-        data = groupBy(rows, r => r.city, r => r.restaurant_rating).sort((a, b) => b.avg - a.avg).slice(0, 20);
+        const orderRows = dedupeByOrder(rows);
+        data = groupBy(orderRows, r => r.city, r => r.restaurant_rating).sort(byWilson()).slice(0, 20);
         break;
       }
       case 4: {
         const rows = await fetchJoined(filters);
-        const all = groupBy(rows, r => r.area, r => r.restaurant_rating).filter(r => r.count >= 5).sort((a, b) => b.avg - a.avg);
+        const orderRows = dedupeByOrder(rows);
+        // count >= 5 stays as a hard floor — Wilson score only orders what
+        // already clears it, it doesn't replace the floor itself.
+        const all = groupBy(orderRows, r => r.kitchen, r => r.restaurant_rating).filter(r => r.count >= 5).sort(byWilson());
         data = { best: all.slice(0, 10), worst: all.slice(-10).reverse() };
         break;
       }
       case 5: {
         const rows = await fetchJoined(filters);
-        const nums = rows.map(r => r.restaurant_rating).filter(v => v != null);
+        const orderRows = dedupeByOrder(rows);
+        const nums = orderRows.map(r => r.restaurant_rating).filter(v => v != null);
         const avg = nums.length ? +(nums.reduce((a, b) => a + b, 0) / nums.length).toFixed(2) : 0;
         data = [{ name: "Swiggy", avg, count: nums.length }];
         break;
       }
       case 6: {
         const rows = await fetchJoined(filters);
-        const overall6 = groupBy(rows, r => r.item_name, r => r.restaurant_rating).filter(r => r.name !== 'NO_ITEM' && r.count >= 10).sort((a, b) => b.avg - a.avg).slice(0, 20);
+        // count >= 10 stays as a hard floor; Wilson only orders what passes it.
+        const overall6 = groupBy(rows, r => r.item_name, r => r.restaurant_rating).filter(r => r.name !== 'NO_ITEM' && r.count >= 10).sort(byWilson()).slice(0, 20);
         const dims6 = getBreakdownDimensions(filters);
         if (dims6.length) {
           const dmap6 = buildDimMap(rows, dims6);
           const breakdown = [...dmap6.values()].map(({ dimVals, rows: gr }) => {
             const iMap = new Map();
             gr.forEach(r => { const item = r.item_name; const v = r.restaurant_rating; if (!item || item==='NO_ITEM' || v==null) return; if (!iMap.has(item)) iMap.set(item,[]); iMap.get(item).push(v); });
-            const items = [...iMap.entries()].map(([item,vals]) => { const n=vals.filter(v=>v!=null); return {item,avg:n.length?+(n.reduce((a,b)=>a+b,0)/n.length).toFixed(2):0,count:n.length}; }).filter(i=>i.count>=3).sort((a,b)=>b.avg-a.avg);
-            const top = items[0] || { item: '-', avg: 0, count: 0 };
+            const items = [...iMap.entries()].map(([item,vals]) => ({ item, ...statsOf(vals) })).filter(i=>i.count>=3).sort(byWilson());
+            const top = items[0] || { item: '-', avg: 0, count: 0, wilson: null };
             return { ...dimVals, topItem: top.item, topAvg: top.avg, topCount: top.count };
           }).sort((a,b)=>(a[dims6[0].field]||'').localeCompare(b[dims6[0].field]||'')||b.topAvg-a.topAvg);
           data = { overall: overall6, breakdown, breakdownDims: dims6 };
@@ -345,15 +422,15 @@ router.post("/:id", async (req, res) => {
       }
       case 7: {
         const rows = await fetchJoined(filters);
-        const overall7 = groupBy(rows, r => r.item_name, r => r.restaurant_rating).filter(r => r.name !== 'NO_ITEM' && r.count >= 10).sort((a, b) => a.avg - b.avg).slice(0, 20);
+        const overall7 = groupBy(rows, r => r.item_name, r => r.restaurant_rating).filter(r => r.name !== 'NO_ITEM' && r.count >= 10).sort(byWilson(false)).slice(0, 20);
         const dims7 = getBreakdownDimensions(filters);
         if (dims7.length) {
           const dmap7 = buildDimMap(rows, dims7);
           const breakdown = [...dmap7.values()].map(({ dimVals, rows: gr }) => {
             const iMap = new Map();
             gr.forEach(r => { const item = r.item_name; const v = r.restaurant_rating; if (!item || item==='NO_ITEM' || v==null) return; if (!iMap.has(item)) iMap.set(item,[]); iMap.get(item).push(v); });
-            const items = [...iMap.entries()].map(([item,vals]) => { const n=vals.filter(v=>v!=null); return {item,avg:n.length?+(n.reduce((a,b)=>a+b,0)/n.length).toFixed(2):0,count:n.length}; }).filter(i=>i.count>=3).sort((a,b)=>a.avg-b.avg);
-            const worst = items[0] || { item: '-', avg: 0, count: 0 };
+            const items = [...iMap.entries()].map(([item,vals]) => ({ item, ...statsOf(vals) })).filter(i=>i.count>=3).sort(byWilson(false));
+            const worst = items[0] || { item: '-', avg: 0, count: 0, wilson: null };
             return { ...dimVals, worstItem: worst.item, worstAvg: worst.avg, worstCount: worst.count };
           }).sort((a,b)=>(a[dims7[0].field]||'').localeCompare(b[dims7[0].field]||'')||a.worstAvg-b.worstAvg);
           data = { overall: overall7, breakdown, breakdownDims: dims7 };
@@ -380,8 +457,9 @@ router.post("/:id", async (req, res) => {
       case 9: {
         const BRAND_CATEGORY = { Dessert: ["Crustos", "EatFit", "CakeZone"], Pizza: ["Olio", "Pizza"], Burger: ["PHAT", "Burger"], Indian: ["Rolls", "Biryani", "Khichdi"] };
         const rows = await fetchJoined(filters);
+        const orderRows = dedupeByOrder(rows);
         const cats = { Dessert: [], Pizza: [], Burger: [], Indian: [], Other: [] };
-        rows.forEach(r => {
+        orderRows.forEach(r => {
           const brand = r.brand_name || "";
           let matched = false;
           for (const [cat, keywords] of Object.entries(BRAND_CATEGORY)) {
@@ -398,7 +476,7 @@ router.post("/:id", async (req, res) => {
         });
         const dims9 = getBreakdownDimensions(filters);
         if (dims9.length) {
-          const dmap9 = buildDimMap(rows, dims9);
+          const dmap9 = buildDimMap(orderRows, dims9);
           const breakdown = [...dmap9.values()].map(({ dimVals, rows: gr }) => {
             const nums = gr.map(r => r.restaurant_rating).filter(v => v != null);
             return { ...dimVals, avg: nums.length ? +(nums.reduce((a,b)=>a+b,0)/nums.length).toFixed(2) : 0, count: nums.length };
@@ -409,10 +487,11 @@ router.post("/:id", async (req, res) => {
       }
       case 10: {
         const rows = await fetchJoined(filters);
-        const overall10 = groupBy(rows, r => r.area, r => r.restaurant_rating).filter(r => r.count >= 50 && r.avg < 3.5).sort((a, b) => a.avg - b.avg);
-        const dims10 = getBreakdownDimensions(filters).filter(d => d.field !== "area");
+        const orderRows = dedupeByOrder(rows);
+        const overall10 = groupBy(orderRows, r => r.kitchen, r => r.restaurant_rating).filter(r => r.count >= 50 && r.avg < 3.5).sort((a, b) => a.avg - b.avg);
+        const dims10 = getBreakdownDimensions(filters).filter(d => d.field !== "kitchen");
         if (dims10.length) {
-          const dmap10 = buildDimMap(rows, dims10);
+          const dmap10 = buildDimMap(orderRows, dims10);
           const breakdown = [...dmap10.values()].map(({ dimVals, rows: gr }) => {
             const nums = gr.map(r => r.restaurant_rating).filter(v => v != null);
             return { ...dimVals, avg: nums.length ? +(nums.reduce((a,b)=>a+b,0)/nums.length).toFixed(2) : 0, count: nums.length };
@@ -423,13 +502,14 @@ router.post("/:id", async (req, res) => {
       }
       case 11: {
         const rows = await fetchJoined(filters);
+        const orderRows = dedupeByOrder(rows);
         const dist = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
-        rows.forEach(r => { if (r.restaurant_rating >= 1 && r.restaurant_rating <= 5) dist[r.restaurant_rating]++; });
+        orderRows.forEach(r => { if (r.restaurant_rating >= 1 && r.restaurant_rating <= 5) dist[r.restaurant_rating]++; });
         const total = Object.values(dist).reduce((a, b) => a + b, 0);
         const overall11 = Object.entries(dist).map(([star, count]) => ({ name: `${star}★`, star: +star, count, pct: total ? +((count / total) * 100).toFixed(1) : 0 }));
         const dims11 = getBreakdownDimensions(filters);
         if (dims11.length) {
-          const dmap11 = buildDimMap(rows, dims11);
+          const dmap11 = buildDimMap(orderRows, dims11);
           const breakdown = [...dmap11.values()].map(({ dimVals, rows: gr }) => {
             const d = { 1:0,2:0,3:0,4:0,5:0 };
             gr.forEach(r => { const v = r.restaurant_rating; if (v >= 1 && v <= 5) d[v]++; });
@@ -443,8 +523,9 @@ router.post("/:id", async (req, res) => {
       }
       case 12: {
         const rows = await fetchJoined(filters);
+        const orderRows = dedupeByOrder(rows);
         const map12 = new Map();
-        rows.forEach(r => {
+        orderRows.forEach(r => {
           if (!r.date) return;
           const month = toMonth(r.date);
           if (!map12.has(month)) map12.set(month, []);
@@ -456,7 +537,7 @@ router.post("/:id", async (req, res) => {
         });
         const dims12 = getBreakdownDimensions(filters);
         if (dims12.length) {
-          const dmap12 = buildDimMap(rows, dims12);
+          const dmap12 = buildDimMap(orderRows, dims12);
           const breakdown = [...dmap12.values()].map(({ dimVals, rows: gr }) => {
             const monthMap = new Map();
             gr.forEach(r => { if (!r.date || r.restaurant_rating == null) return; const m = toMonth(r.date); if (!monthMap.has(m)) monthMap.set(m,[]); monthMap.get(m).push(r.restaurant_rating); });
@@ -464,7 +545,13 @@ router.post("/:id", async (req, res) => {
             const avgs = months.map(([,vals]) => { const n=vals.filter(v=>v!=null); return n.length ? +(n.reduce((a,b)=>a+b,0)/n.length).toFixed(2) : 0; });
             const n = avgs.length; let slope = 0;
             if (n >= 2) { const xM=(n-1)/2, yM=avgs.reduce((a,b)=>a+b,0)/n; const num=avgs.reduce((s,y,i)=>s+(i-xM)*(y-yM),0), den=avgs.reduce((s,_,i)=>s+(i-xM)**2,0); slope=den?+(num/den).toFixed(4):0; }
-            return { ...dimVals, avgRating: avgs.length ? +(avgs.reduce((a,b)=>a+b,0)/avgs.length).toFixed(2) : 0, trend: slope > 0.005 ? "↑ Rising" : slope < -0.005 ? "↓ Falling" : "→ Stable", bestMonth: months[avgs.indexOf(Math.max(...avgs))]?.[0]||"-", worstMonth: months[avgs.indexOf(Math.min(...avgs))]?.[0]||"-" };
+            // Trend (rising/falling) stays on the raw month-to-month averages —
+            // that's a trajectory, not a best/worst pick. Which single month
+            // gets singled out as best/worst does need the confidence
+            // adjustment: a month with few orders shouldn't win or lose that
+            // label just from a lucky/unlucky small sample.
+            const monthStats = months.map(([m, vals]) => ({ month: m, ...statsOf(vals) })).sort(byWilson());
+            return { ...dimVals, avgRating: avgs.length ? +(avgs.reduce((a,b)=>a+b,0)/avgs.length).toFixed(2) : 0, trend: slope > 0.005 ? "↑ Rising" : slope < -0.005 ? "↓ Falling" : "→ Stable", bestMonth: monthStats[0]?.month||"-", worstMonth: monthStats[monthStats.length-1]?.month||"-" };
           }).sort((a, b) => b.avgRating - a.avgRating);
           data = { overall: overall12, breakdown, breakdownDims: dims12 };
         } else { data = overall12; }
@@ -472,21 +559,23 @@ router.post("/:id", async (req, res) => {
       }
       case 13: {
         const rows = await fetchJoined(filters);
-        data = groupBy(rows, r => r.area, r => r.restaurant_rating).filter(r => r.count >= 5).map(r => ({ name: r.name, volume: r.count, rating: r.avg }));
+        const orderRows = dedupeByOrder(rows);
+        data = groupBy(orderRows, r => r.kitchen, r => r.restaurant_rating).filter(r => r.count >= 5).map(r => ({ name: r.name, volume: r.count, rating: r.avg }));
         break;
       }
       case 14: {
         const rows = await fetchJoined(filters);
+        const orderRows = dedupeByOrder(rows);
         const calcAvg14 = arr => arr.length ? +(arr.filter(v => v != null).reduce((a, b) => a + b, 0) / arr.length).toFixed(2) : 0;
         const wkd14 = [], wke14 = [];
-        rows.forEach(r => { if (!r.ordered_time) return; ([0,6].includes(new Date(r.ordered_time).getDay()) ? wke14 : wkd14).push(r.restaurant_rating); });
+        orderRows.forEach(r => { if (!r.ordered_time) return; const dow = istDayOfWeek(r.ordered_time); if (dow == null) return; ([0,6].includes(dow) ? wke14 : wkd14).push(r.restaurant_rating); });
         const overall14 = [{ name: "Weekday", avg: calcAvg14(wkd14), count: wkd14.length }, { name: "Weekend", avg: calcAvg14(wke14), count: wke14.length }];
         const dims14 = getBreakdownDimensions(filters);
         if (dims14.length) {
-          const dmap14 = buildDimMap(rows, dims14);
+          const dmap14 = buildDimMap(orderRows, dims14);
           const breakdown = [...dmap14.values()].map(({ dimVals, rows: gr }) => {
             const wd = [], we = [];
-            gr.forEach(r => { if (!r.ordered_time || r.restaurant_rating == null) return; ([0,6].includes(new Date(r.ordered_time).getDay()) ? we : wd).push(r.restaurant_rating); });
+            gr.forEach(r => { if (!r.ordered_time || r.restaurant_rating == null) return; const dow = istDayOfWeek(r.ordered_time); if (dow == null) return; ([0,6].includes(dow) ? we : wd).push(r.restaurant_rating); });
             return { ...dimVals, weekdayAvg: calcAvg14(wd), weekdayCount: wd.length, weekendAvg: calcAvg14(we), weekendCount: we.length, delta: +(calcAvg14(we) - calcAvg14(wd)).toFixed(2) };
           }).sort((a, b) => (a[dims14[0].field] || '').localeCompare(b[dims14[0].field] || '') || b.weekdayAvg - a.weekdayAvg);
           data = { overall: overall14, breakdown, breakdownDims: dims14 };
@@ -495,21 +584,46 @@ router.post("/:id", async (req, res) => {
       }
       case 15: {
         const rows = await fetchJoined(filters);
-        const hourMap15 = {};
-        for (let h = 0; h < 24; h++) hourMap15[h] = 0;
-        rows.forEach(r => { if (!r.ordered_time || r.restaurant_rating > 2) return; hourMap15[new Date(r.ordered_time).getHours()]++; });
-        const arr15 = Object.entries(hourMap15).map(([h, count]) => ({ name: `${h}:00`, hour: +h, count }));
-        const max3 = [...arr15].sort((a, b) => b.count - a.count).slice(0, 3).map(r => r.hour);
+        const orderRows = dedupeByOrder(rows);
+        // Raw complaint COUNT per hour is biased toward whichever hour simply
+        // has more total orders — a busy hour with 1,000 orders and 50
+        // complaints (5%) would out-rank a quiet hour with 50 orders and 40
+        // complaints (80%), even though the quiet hour's complaint RATE is far
+        // more alarming. Track total orders per hour too, so "worst" is a
+        // confidence-adjusted complaint rate (Wilson score), not raw count.
+        const hourTotal15 = {};
+        const hourComplaints15 = {};
+        for (let h = 0; h < 24; h++) { hourTotal15[h] = 0; hourComplaints15[h] = 0; }
+        orderRows.forEach(r => {
+          if (!r.ordered_time) return;
+          const h = istHour(r.ordered_time);
+          hourTotal15[h]++;
+          if (r.restaurant_rating != null && r.restaurant_rating <= 2) hourComplaints15[h]++;
+        });
+        const arr15 = Object.entries(hourTotal15).map(([h, total]) => {
+          const complaints = hourComplaints15[h];
+          const wilson = total ? wilsonLowerBound(complaints, total) : null;
+          return { name: `${h}:00`, hour: +h, count: complaints, total, wilson: wilson != null ? +wilson.toFixed(4) : null };
+        });
+        const max3 = [...arr15].filter(r => r.total > 0).sort((a, b) => (b.wilson ?? -1) - (a.wilson ?? -1)).slice(0, 3).map(r => r.hour);
         const overall15 = arr15.sort((a, b) => a.hour - b.hour).map(r => ({ ...r, worst: max3.includes(r.hour) }));
         const dims15 = getBreakdownDimensions(filters);
         if (dims15.length) {
-          const dmap15 = buildDimMap(rows, dims15);
+          const dmap15 = buildDimMap(orderRows, dims15);
           const breakdown = [...dmap15.values()].map(({ dimVals, rows: gr }) => {
-            const hMap = {};
-            gr.forEach(r => { if (!r.ordered_time || r.restaurant_rating > 2 || r.restaurant_rating == null) return; const h = new Date(r.ordered_time).getHours(); hMap[h] = (hMap[h]||0)+1; });
-            const total = Object.values(hMap).reduce((a,b)=>a+b,0);
-            const worst = Object.entries(hMap).sort(([,a],[,b])=>b-a)[0];
-            return { ...dimVals, totalComplaints: total, peakHour: worst ? `${worst[0]}:00` : "-", peakCount: worst ? worst[1] : 0 };
+            const hTotal = {};
+            const hComplaints = {};
+            gr.forEach(r => {
+              if (!r.ordered_time) return;
+              const h = istHour(r.ordered_time);
+              hTotal[h] = (hTotal[h] || 0) + 1;
+              if (r.restaurant_rating != null && r.restaurant_rating <= 2) hComplaints[h] = (hComplaints[h] || 0) + 1;
+            });
+            const total = Object.values(hComplaints).reduce((a, b) => a + b, 0);
+            const worst = Object.keys(hTotal)
+              .map(h => ({ hour: h, complaints: hComplaints[h] || 0, wilson: wilsonLowerBound(hComplaints[h] || 0, hTotal[h]) }))
+              .sort((a, b) => (b.wilson ?? -1) - (a.wilson ?? -1))[0];
+            return { ...dimVals, totalComplaints: total, peakHour: worst ? `${worst.hour}:00` : "-", peakCount: worst ? worst.complaints : 0 };
           }).sort((a, b) => (a[dims15[0].field]||'').localeCompare(b[dims15[0].field]||'') || b.totalComplaints - a.totalComplaints);
           data = { overall: overall15, breakdown, breakdownDims: dims15 };
         } else { data = overall15; }
@@ -554,9 +668,8 @@ router.post("/:id", async (req, res) => {
           outlet_id: r.outlet_id || null,
           restaurant_id: r.restaurant_id,
           brand_name: r.brand_name || null,
-          business_entity: r.business_entity || null,
           city: r.city || null,
-          area: r.area || null,
+          kitchen: r.kitchen || null,
           zone: r.zone || null,
           order_id: r.order_id,
           date: r.date,
@@ -575,8 +688,9 @@ router.post("/:id", async (req, res) => {
         data = rows.map(r => ({
           restaurant_id: r.restaurant_id,
           brand_name: r.brand_name || null,
+          sub_brand: r.sub_brand || null,
           city: r.city || null,
-          area: r.area || null,
+          kitchen: r.kitchen || null,
           zone: r.zone || null,
           restaurant_rating: r.restaurant_rating,
           has_comment: !!(r.comments && r.comments.trim() !== ""),
@@ -586,10 +700,11 @@ router.post("/:id", async (req, res) => {
       }
       case 23: {
         const rows = await fetchJoined(filters);
+        const orderRows = dedupeByOrder(rows);
         const DAYPARTS = ["Morning (06:00 - 12:00)", "Afternoon (12:00 - 16:00)", "Evening (16:00 - 19:00)", "Night (19:00 - 06:00)"];
         const getDaypart = h => { if (h>=6&&h<12) return DAYPARTS[0]; if (h>=12&&h<16) return DAYPARTS[1]; if (h>=16&&h<19) return DAYPARTS[2]; return DAYPARTS[3]; };
         const dayparts23 = { [DAYPARTS[0]]: [], [DAYPARTS[1]]: [], [DAYPARTS[2]]: [], [DAYPARTS[3]]: [] };
-        rows.forEach(r => { if (!r.ordered_time) return; dayparts23[getDaypart(new Date(r.ordered_time).getHours())].push(r.restaurant_rating); });
+        orderRows.forEach(r => { if (!r.ordered_time) return; dayparts23[getDaypart(istHour(r.ordered_time))].push(r.restaurant_rating); });
         const overall23 = Object.entries(dayparts23).map(([name, vals]) => {
           const nums = vals.filter(v => v != null && !isNaN(v));
           return { name, avg: nums.length ? +(nums.reduce((a, b) => a + b, 0) / nums.length).toFixed(2) : 0, count: vals.length };
@@ -597,11 +712,11 @@ router.post("/:id", async (req, res) => {
         const calcAvg23 = arr => { const n=arr.filter(v=>v!=null&&!isNaN(v)); return n.length?+(n.reduce((a,b)=>a+b,0)/n.length).toFixed(2):0; };
         const dims23 = getBreakdownDimensions(filters);
         if (dims23.length) {
-          const dmap23 = buildDimMap(rows, dims23);
+          const dmap23 = buildDimMap(orderRows, dims23);
           const breakdown = [...dmap23.values()].map(({ dimVals, rows: gr }) => {
             const dps = { [DAYPARTS[0]]:[], [DAYPARTS[1]]:[], [DAYPARTS[2]]:[], [DAYPARTS[3]]:[] };
-            gr.forEach(r => { if (!r.ordered_time || r.restaurant_rating == null) return; dps[getDaypart(new Date(r.ordered_time).getHours())].push(r.restaurant_rating); });
-            const dpAvgs = DAYPARTS.map(dp => ({ dp, avg: calcAvg23(dps[dp]) })).sort((a,b)=>b.avg-a.avg);
+            gr.forEach(r => { if (!r.ordered_time || r.restaurant_rating == null) return; dps[getDaypart(istHour(r.ordered_time))].push(r.restaurant_rating); });
+            const dpAvgs = DAYPARTS.map(dp => ({ dp, ...statsOf(dps[dp]) })).sort(byWilson());
             return { ...dimVals, overallAvg: calcAvg23(DAYPARTS.flatMap(dp=>dps[dp])), bestDaypart: dpAvgs[0].dp.split(" ")[0], bestAvg: dpAvgs[0].avg, worstDaypart: dpAvgs[dpAvgs.length-1].dp.split(" ")[0], worstAvg: dpAvgs[dpAvgs.length-1].avg };
           }).sort((a, b) => (a[dims23[0].field]||'').localeCompare(b[dims23[0].field]||'') || b.overallAvg - a.overallAvg);
           data = { overall: overall23, breakdown, breakdownDims: dims23 };
@@ -610,8 +725,9 @@ router.post("/:id", async (req, res) => {
       }
       case 26: {
         const rows = await fetchJoined(filters);
+        const orderRows = dedupeByOrder(rows);
         const groupMap = new Map();
-        rows.forEach(r => {
+        orderRows.forEach(r => {
           const loc = r.city;
           const brand = r.brand_name;
           if (!loc || !brand) return;
@@ -623,17 +739,14 @@ router.post("/:id", async (req, res) => {
         for (const [_, item] of groupMap) {
           if (!locBrands[item.loc]) locBrands[item.loc] = [];
           const nums = item.ratings.filter(v => v != null && !isNaN(v));
+          // count >= 5 stays as a hard floor; Wilson only orders what passes it.
           if (nums.length >= 5) {
-            locBrands[item.loc].push({
-              brand: item.brand,
-              avg: +(nums.reduce((a, b) => a + b, 0) / nums.length).toFixed(2),
-              count: nums.length
-            });
+            locBrands[item.loc].push({ brand: item.brand, ...statsOf(nums) });
           }
         }
         data = Object.entries(locBrands).map(([city, list]) => {
           if (list.length === 0) return null;
-          const sorted = [...list].sort((a, b) => b.avg - a.avg);
+          const sorted = [...list].sort(byWilson());
           return {
             city,
             bestBrand: sorted[0].brand,
@@ -646,19 +759,20 @@ router.post("/:id", async (req, res) => {
       }
       case 27: {
         const rows = await fetchJoined(filters);
+        const orderRows = dedupeByOrder(rows);
         const areaBrandMap = new Map();
         const outletMap = new Map();
-        rows.forEach(r => {
-          const area = r.area;
+        orderRows.forEach(r => {
+          const kitchen = r.kitchen;
           const brand = r.brand_name;
           const outletId = r.restaurant_id;
           const rating = r.restaurant_rating;
-          if (!area || !brand || !outletId || rating == null) return;
-          const abKey = `${area}::${brand}`;
+          if (!kitchen || !brand || !outletId || rating == null) return;
+          const abKey = `${kitchen}::${brand}`;
           if (!areaBrandMap.has(abKey)) areaBrandMap.set(abKey, []);
           areaBrandMap.get(abKey).push(rating);
           const oKey = `${outletId}::${brand}`;
-          if (!outletMap.has(oKey)) outletMap.set(oKey, { area, outletId, brand, ratings: [] });
+          if (!outletMap.has(oKey)) outletMap.set(oKey, { kitchen, outletId, brand, ratings: [] });
           outletMap.get(oKey).ratings.push(rating);
         });
         const abAvg = {};
@@ -668,12 +782,12 @@ router.post("/:id", async (req, res) => {
         data = [];
         for (const [_, item] of outletMap) {
           const oAvg = +(item.ratings.reduce((a, b) => a + b, 0) / item.ratings.length).toFixed(2);
-          const abKey = `${item.area}::${item.brand}`;
+          const abKey = `${item.kitchen}::${item.brand}`;
           const kAvg = abAvg[abKey] || oAvg;
           const gap = +(oAvg - kAvg).toFixed(2);
           data.push({
             outletId: item.outletId,
-            area: item.area,
+            kitchen: item.kitchen,
             brand: item.brand,
             outletAvg: oAvg,
             kitchenAvg: kAvg,
@@ -698,20 +812,23 @@ router.post("/:id", async (req, res) => {
         });
         const outletBests = {};
         for (const [_, val] of outletItemMap) {
-          const avg = +(val.ratings.reduce((a, b) => a + b, 0) / val.ratings.length).toFixed(2);
-          if (!outletBests[val.outletId] || outletBests[val.outletId].avg < avg) {
-            outletBests[val.outletId] = { item: val.item, avg, count: val.ratings.length };
+          const stats = statsOf(val.ratings);
+          const current = outletBests[val.outletId];
+          if (!current || (stats.wilson ?? -1) > (current.wilson ?? -1)) {
+            outletBests[val.outletId] = { item: val.item, ...stats };
           }
         }
         const names = {};
-        rows.forEach(r => { if (r.restaurant_id) names[r.restaurant_id] = r.area || r.restaurant_id; });
-        data = Object.entries(outletBests).map(([outletId, itemObj]) => ({
-          outletId,
-          name: names[outletId] || outletId,
-          bestItem: itemObj.item,
-          rating: itemObj.avg,
-          count: itemObj.count
-        })).sort((a, b) => b.rating - a.rating);
+        rows.forEach(r => { if (r.restaurant_id) names[r.restaurant_id] = r.kitchen || r.restaurant_id; });
+        data = Object.entries(outletBests)
+          .sort(([, a], [, b]) => (b.wilson ?? -1) - (a.wilson ?? -1))
+          .map(([outletId, itemObj]) => ({
+            outletId,
+            name: names[outletId] || outletId,
+            bestItem: itemObj.item,
+            rating: itemObj.avg,
+            count: itemObj.count
+          }));
         break;
       }
       case 29: {
@@ -811,6 +928,42 @@ router.post("/:id", async (req, res) => {
   } catch (err) {
     console.error(`[INSIGHT ${req.params.id} ERROR]`, err.message);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// Exposes the mail-fetch pipeline's own health so the frontend can show a
+// warning if it's stuck — separate from anything about the data itself.
+// `daysBehind` compares the tracking marker (last received-date confirmed
+// checked) against today; more than 1 day behind means the daily automation
+// hasn't advanced normally (it's designed to always reach at least
+// yesterday every run) and something needs attention.
+router.get("/health", async (req, res) => {
+  try {
+    const marker = await pool.query(`SELECT value FROM pipeline_state WHERE key = 'last_checked_received_date'`);
+    const markerDate = marker.rows[0]?.value || null;
+
+    const maxDateRes = await pool.query(`SELECT MAX(date) AS max_date FROM order_reviews`);
+    let latestDataDate = null;
+    if (maxDateRes.rows[0]?.max_date) {
+      const ist = shiftToIST(maxDateRes.rows[0].max_date);
+      latestDataDate = `${ist.getUTCFullYear()}-${String(ist.getUTCMonth() + 1).padStart(2, "0")}-${String(ist.getUTCDate()).padStart(2, "0")}`;
+    }
+
+    const todayIstDate = shiftToIST(new Date());
+    const todayIST = `${todayIstDate.getUTCFullYear()}-${String(todayIstDate.getUTCMonth() + 1).padStart(2, "0")}-${String(todayIstDate.getUTCDate()).padStart(2, "0")}`;
+
+    const daysBehind = markerDate ? Math.round((new Date(todayIST) - new Date(markerDate)) / 86400000) : null;
+
+    res.json({
+      markerDate,
+      latestDataDate,
+      todayIST,
+      daysBehind,
+      isStale: daysBehind === null || daysBehind > 1,
+    });
+  } catch (err) {
+    console.error("Error fetching ratings health:", err.message);
+    res.status(500).json({ error: "Failed to load health status" });
   }
 });
 

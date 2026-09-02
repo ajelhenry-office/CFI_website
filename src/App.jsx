@@ -12,6 +12,7 @@ import { SettingsPage, ThemePage } from "./features/static/StaticPages";
 import LoginPage from "./features/auth/LoginPage";
 import ChatbotWidget from "./features/chat/ChatbotWidget";
 import { fetchFilters } from "./features/ratings/ratingsApi";
+import RatingsHealthBadge from "./features/ratings/RatingsHealthBadge";
 import { API_BASE, getAuthHeaders } from "./api";
 
 const iso = (offsetDays) => {
@@ -22,9 +23,10 @@ const iso = (offsetDays) => {
 
 const DEFAULT_FILTERS = {
   brands: [],
+  subBrands: [],
   cities: [],
   zones: [],
-  areas: [],
+  kitchens: [],
   dateFrom: iso(7),
   dateTo: iso(1),
   timeFrom: "",
@@ -117,6 +119,7 @@ export default function App() {
 
   return (
     <div style={{ display: "flex", minHeight: "100vh", backgroundColor: C.bg, color: C.text, fontFamily: FONT }}>
+      <RatingsHealthBadge />
       <Sidebar
         active={activeTab}
         onNavigate={(tab) => {
@@ -177,21 +180,33 @@ export default function App() {
               gap: 14,
             }}
           >
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <div>
-                <h1 style={{ fontSize: 24, fontWeight: 800, color: C.primary, margin: 0, letterSpacing: -0.3 }}>{title}</h1>
-                <div style={{ fontSize: 13, color: C.muted, marginTop: 3 }}>{subtitle}</div>
+            {activeTab === "ratings" ? (
+              // Its own full-width row so centering has something to center within —
+              // the shared title+header-actions row below is only ever as wide as its
+              // own content, so text-align:center on the h1 alone had nothing to act on.
+              <h1 style={{ fontSize: 24, fontWeight: 800, color: C.primary, margin: 0, letterSpacing: -0.3, width: "100%", textAlign: "center" }}>
+                ⭐ {title} ⭐
+              </h1>
+            ) : (
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div>
+                  <h1 style={{ fontSize: 24, fontWeight: 800, color: C.primary, margin: 0, letterSpacing: -0.3 }}>{title}</h1>
+                  <div style={{ fontSize: 13, color: C.muted, marginTop: 3 }}>{subtitle}</div>
+                </div>
+                <div id="header-actions"></div>
               </div>
-              <div id="header-actions"></div>
-            </div>
+            )}
             {activeTab !== "toggle" && activeTab !== "timing" && activeTab !== "settings" && activeTab !== "ops_matrix" && (
               <GlobalFilters
                 filters={globalFilters}
                 masterData={masterData}
                 onChange={updateFilters}
-                onClearAll={() => setGlobalFilters({ ...DEFAULT_FILTERS, dateFrom: "", dateTo: "" })}
               />
             )}
+            {/* Search / Apply / Download / Clear for the Ratings tab portal here, so it
+                sits in the same header block right below the filter row instead of as a
+                separate bar further down the page. */}
+            {activeTab === "ratings" && <div id="ratings-actions-slot" />}
           </header>
         )}
 
@@ -206,6 +221,7 @@ export default function App() {
               allBrands={allBrands}
               masterData={masterData}
               onUpdateFilters={updateFilters}
+              onClearAllFilters={() => setGlobalFilters({ ...DEFAULT_FILTERS, dateFrom: "", dateTo: "" })}
             />
           )}
 

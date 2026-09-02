@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { C, FONT, pillButton } from "./theme";
+import { C, FONT } from "./theme";
 
 const popoverStyle = {
   position: "absolute",
@@ -38,7 +38,62 @@ const inputStyle = {
   outline: "none",
 };
 
-export function CheckboxFilterPopover({ label, options, selected, onChange, searchable }) {
+// Compact "value on top, label below" trigger used by every filter column — one
+// grid cell each, so 7 columns always divide the full row width exactly evenly
+// with zero leftover space, regardless of how short their own content is.
+// (flex:1 siblings alongside separate divider elements turned out not to
+// guarantee this — grid columns do, by definition.)
+const columnTriggerStyle = {
+  background: "none",
+  border: "none",
+  borderRight: `1px solid ${C.border}`,
+  cursor: "pointer",
+  padding: "0 16px",
+  display: "flex",
+  flexDirection: "column",
+  alignItems: "flex-start",
+  justifyContent: "center",
+  gap: 3,
+  fontFamily: FONT,
+  minWidth: 0,
+  width: "100%",
+  height: 40,
+  boxSizing: "border-box",
+};
+
+const lastColumnTriggerStyle = { ...columnTriggerStyle, borderRight: "none" };
+
+function ColumnValue({ children, active, color }) {
+  return (
+    <span
+      style={{
+        fontSize: 15,
+        fontWeight: 800,
+        color: color || (active ? C.primary : C.muted),
+        whiteSpace: "nowrap",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        maxWidth: 160,
+      }}
+    >
+      {children}
+    </span>
+  );
+}
+
+function ColumnLabel({ children }) {
+  return <span style={{ fontSize: 11, fontWeight: 700, color: C.muted }}>{children}</span>;
+}
+
+// Summarizes a multi-select filter's current value the same way everywhere:
+// nothing picked → "All", one picked → its name, several → a count.
+function summarize(selected) {
+  if (selected.length === 0) return "All";
+  if (selected.length === 1) return selected[0];
+  return `${selected.length} selected`;
+}
+
+export function CheckboxFilterPopover({ label, options, selected, onChange, searchable, isLast }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const ref = useRef(null);
@@ -62,8 +117,9 @@ export function CheckboxFilterPopover({ label, options, selected, onChange, sear
 
   return (
     <div style={{ position: "relative" }} ref={ref}>
-      <button style={pillButton(selected.length > 0)} onClick={() => setOpen((o) => !o)}>
-        {selected.length > 0 ? `${label} (${selected.length})` : `${label}: All`}
+      <button style={isLast ? lastColumnTriggerStyle : columnTriggerStyle} onClick={() => setOpen((o) => !o)}>
+        <ColumnValue active={selected.length > 0}>{summarize(selected)}</ColumnValue>
+        <ColumnLabel>{label}</ColumnLabel>
       </button>
       {open && (
         <div style={popoverStyle}>
@@ -107,36 +163,21 @@ export function CheckboxFilterPopover({ label, options, selected, onChange, sear
               </label>
             ))}
           </div>
-          <button
-            onClick={() => setOpen(false)}
-            style={{
-              marginTop: 10,
-              width: "100%",
-              padding: "7px 0",
-              borderRadius: 8,
-              border: "none",
-              backgroundColor: C.primary,
-              color: "#ffffff",
-              fontSize: 12,
-              fontWeight: 700,
-              cursor: "pointer",
-              fontFamily: FONT,
-            }}
-          >
-            Apply
-          </button>
         </div>
       )}
     </div>
   );
 }
 
-function RangePopover({ label, active, fields, onApply, onClear }) {
+// No local draft here — edits write straight through to the shared filter
+// state on every change, same as the checkbox popovers. Nothing refetches
+// data on that write (RatingsPage only fetches on mount, on switching away
+// from a selected insight, or on the single global Apply click), so there's
+// no live-apply side effect to guard against; the per-field values just need
+// to be visible immediately while the popover is open.
+function RangePopover({ label, value, active, fields, onFieldChange, onClear, isLast }) {
   const [open, setOpen] = useState(false);
-  const [draft, setDraft] = useState(() => fields.map((f) => f.value));
   const ref = useRef(null);
-
-  useEffect(() => setDraft(fields.map((f) => f.value)), [fields.map((f) => f.value).join("|")]);
 
   useEffect(() => {
     if (!open) return;
@@ -149,8 +190,9 @@ function RangePopover({ label, active, fields, onApply, onClear }) {
 
   return (
     <div style={{ position: "relative" }} ref={ref}>
-      <button style={pillButton(active)} onClick={() => setOpen((o) => !o)}>
-        {label}
+      <button style={isLast ? lastColumnTriggerStyle : columnTriggerStyle} onClick={() => setOpen((o) => !o)}>
+        <ColumnValue active={active} color={active ? "#d97706" : undefined}>{value}</ColumnValue>
+        <ColumnLabel>{label}</ColumnLabel>
       </button>
       {open && (
         <div style={popoverStyle}>
@@ -162,114 +204,107 @@ function RangePopover({ label, active, fields, onApply, onClear }) {
               <input
                 type={f.type}
                 style={inputStyle}
-                value={draft[i] || ""}
-                onChange={(e) => setDraft(draft.map((d, di) => (di === i ? e.target.value : d)))}
+                value={f.value || ""}
+                onChange={(e) => onFieldChange(i, e.target.value)}
               />
             </div>
           ))}
-          <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
-            <button
-              onClick={() => {
-                onApply(draft);
-                setOpen(false);
-              }}
-              style={{ ...pillButton(true), borderRadius: 8, flex: 1 }}
-            >
-              Apply
-            </button>
-            <button
-              onClick={() => {
-                onClear();
-                setOpen(false);
-              }}
-              style={{ ...pillButton(false), borderRadius: 8, flex: 1 }}
-            >
-              Clear
-            </button>
-          </div>
+          <button
+            onClick={onClear}
+            style={{
+              marginTop: 4, width: "100%", padding: "7px 0", borderRadius: 8, border: `1.5px solid ${C.primary}`,
+              backgroundColor: "#ffffff", color: C.primary, fontSize: 12, fontWeight: 700,
+              cursor: "pointer", fontFamily: FONT,
+            }}
+          >
+            Clear
+          </button>
         </div>
       )}
     </div>
   );
 }
 
-export default function GlobalFilters({ filters, masterData, onChange, onClearAll }) {
+export default function GlobalFilters({ filters, masterData, onChange }) {
   const opts = useMemo(() => {
     const match = (row, skip) =>
       (skip === "brand" || !filters.brands.length || filters.brands.includes(row.brand)) &&
+      (skip === "subBrand" || !filters.subBrands?.length || filters.subBrands.includes(row.subBrand)) &&
       (skip === "city" || !filters.cities.length || filters.cities.includes(row.city)) &&
       (skip === "zone" || !filters.zones.length || filters.zones.includes(row.zone)) &&
-      (skip === "area" || !filters.areas.length || filters.areas.includes(row.area));
-    const uniq = (key) => [...new Set(masterData.filter((r) => match(r, key)).map((r) => r[key]))].sort();
-    return { brands: uniq("brand"), cities: uniq("city"), zones: uniq("zone"), areas: uniq("area") };
+      (skip === "kitchen" || !filters.kitchens.length || filters.kitchens.includes(row.kitchen));
+    const uniq = (key) => [...new Set(masterData.filter((r) => match(r, key)).map((r) => r[key]))].filter(Boolean).sort();
+    return {
+      brands: uniq("brand"),
+      subBrands: uniq("subBrand"),
+      cities: uniq("city"),
+      zones: uniq("zone"),
+      kitchens: uniq("kitchen"),
+    };
   }, [masterData, filters]);
 
-  const anyActive =
-    filters.brands.length ||
-    filters.cities.length ||
-    filters.zones.length ||
-    filters.areas.length ||
-    filters.dateFrom ||
-    filters.dateTo ||
-    filters.timeFrom ||
-    filters.timeTo;
-
   return (
-    <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
+    // Grid, not flex — 7 equal columns are guaranteed to divide the full row
+    // width exactly, with no leftover space at the end, regardless of how
+    // short any one column's content is. Divider lines are each column's own
+    // right border now instead of separate elements between them.
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", width: "100%" }}>
       <CheckboxFilterPopover
-        label="Brands"
+        label="Brand"
         options={opts.brands}
         selected={filters.brands}
         onChange={(v) => onChange({ brands: v })}
       />
       <CheckboxFilterPopover
-        label="Cities"
+        label="Sub brand"
+        options={opts.subBrands}
+        selected={filters.subBrands || []}
+        onChange={(v) => onChange({ subBrands: v })}
+        searchable
+      />
+      <CheckboxFilterPopover
+        label="Zone"
+        options={opts.zones}
+        selected={filters.zones}
+        onChange={(v) => onChange({ zones: v })}
+      />
+      <CheckboxFilterPopover
+        label="City"
         options={opts.cities}
         selected={filters.cities}
         onChange={(v) => onChange({ cities: v })}
         searchable
       />
       <CheckboxFilterPopover
-        label="Zones"
-        options={opts.zones}
-        selected={filters.zones}
-        onChange={(v) => onChange({ zones: v })}
-      />
-      <CheckboxFilterPopover
-        label="Areas"
-        options={opts.areas}
-        selected={filters.areas}
-        onChange={(v) => onChange({ areas: v })}
+        label="Kitchen"
+        options={opts.kitchens}
+        selected={filters.kitchens}
+        onChange={(v) => onChange({ kitchens: v })}
         searchable
       />
       <RangePopover
-        label={filters.dateFrom || filters.dateTo ? `Date: ${filters.dateFrom || "…"} → ${filters.dateTo || "…"}` : "Date Range"}
+        label="Date"
+        value={filters.dateFrom || filters.dateTo ? `${filters.dateFrom || "…"} → ${filters.dateTo || "…"}` : "All"}
         active={Boolean(filters.dateFrom || filters.dateTo)}
         fields={[
           { label: "From Date", type: "date", value: filters.dateFrom },
           { label: "To Date", type: "date", value: filters.dateTo },
         ]}
-        onApply={([dateFrom, dateTo]) => onChange({ dateFrom, dateTo })}
+        onFieldChange={(i, v) => onChange(i === 0 ? { dateFrom: v } : { dateTo: v })}
         onClear={() => onChange({ dateFrom: "", dateTo: "" })}
       />
       <RangePopover
-        label={filters.timeFrom || filters.timeTo ? `Time: ${filters.timeFrom || "…"} → ${filters.timeTo || "…"}` : "Time Range"}
+        label="Time"
+        value={filters.timeFrom || filters.timeTo ? `${filters.timeFrom || "…"} → ${filters.timeTo || "…"}` : "All"}
         active={Boolean(filters.timeFrom || filters.timeTo)}
         fields={[
           { label: "From Time", type: "time", value: filters.timeFrom },
           { label: "To Time", type: "time", value: filters.timeTo },
         ]}
-        onApply={([timeFrom, timeTo]) => onChange({ timeFrom, timeTo })}
+        onFieldChange={(i, v) => onChange(i === 0 ? { timeFrom: v } : { timeTo: v })}
         onClear={() => onChange({ timeFrom: "", timeTo: "" })}
+        isLast
       />
-      {Boolean(anyActive) && (
-        <button
-          onClick={onClearAll}
-          style={{ ...linkStyle, fontSize: 12, textDecoration: "underline", marginLeft: 2 }}
-        >
-          Clear All
-        </button>
-      )}
     </div>
   );
 }

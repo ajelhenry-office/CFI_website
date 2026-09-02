@@ -12,7 +12,7 @@ const COLS = {
   6: [{ header: "Item Name", key: "name", bold: true }, { header: "Average Rating", key: "avg" }, { header: "Total Reviews", key: "count" }],
   7: [{ header: "Item Name", key: "name", bold: true }, { header: "Average Rating", key: "avg" }, { header: "Total Reviews", key: "count" }],
   8: [{ header: "Item Name", key: "name", bold: true }, { header: "Total Reviews", key: "count" }, { header: "Average Rating", key: "avg" }],
-  10: [{ header: "Kitchen Area", key: "name", bold: true }, { header: "Average Rating", key: "avg" }, { header: "Total Reviews", key: "count" }],
+  10: [{ header: "Kitchen", key: "name", bold: true }, { header: "Average Rating", key: "avg" }, { header: "Total Reviews", key: "count" }],
   9: [{ header: "Product Category", key: "name", bold: true }, { header: "Average Rating", key: "avg" }, { header: "Total Reviews", key: "count" }],
   11: [{ header: "Star Rating", key: "name", bold: true }, { header: "Count of Reviews", key: "count" }, { header: "Percentage", key: "pct", render: (v) => `${v}%` }],
   12: [{ header: "Month", key: "name", bold: true }, { header: "Average Rating", key: "avg" }],
@@ -20,8 +20,8 @@ const COLS = {
   15: [{ header: "Hour of Day", key: "name", bold: true }, { header: "Complaint Count (≤2★)", key: "count" }, { header: "Peak Status", key: "worst", render: (v) => (v ? "🔴 Peak" : "Normal") }],
   23: [{ header: "Daypart Slot", key: "name", bold: true }, { header: "Average Rating", key: "avg" }, { header: "Total Reviews", key: "count" }],
   26: [{ header: "City", key: "city", bold: true }, { header: "Best Brand", key: "bestBrand" }, { header: "Best Avg", key: "bestAvg" }, { header: "Worst Brand", key: "worstBrand" }, { header: "Worst Avg", key: "worstAvg" }],
-  27: [{ header: "Outlet ID", key: "outletId", bold: true }, { header: "Area", key: "area" }, { header: "Brand", key: "brand" }, { header: "Outlet Avg", key: "outletAvg" }, { header: "Kitchen Avg", key: "kitchenAvg" }, { header: "Rating Gap", key: "gap" }, { header: "Status", key: "status" }],
-  28: [{ header: "Outlet ID", key: "outletId", bold: true }, { header: "Outlet Name (Area)", key: "name" }, { header: "Best Item", key: "bestItem" }, { header: "Item Rating", key: "rating" }, { header: "Reviews Count", key: "count" }],
+  27: [{ header: "Outlet ID", key: "outletId", bold: true }, { header: "Kitchen", key: "kitchen" }, { header: "Brand", key: "brand" }, { header: "Outlet Avg", key: "outletAvg" }, { header: "Kitchen Avg", key: "kitchenAvg" }, { header: "Rating Gap", key: "gap" }, { header: "Status", key: "status" }],
+  28: [{ header: "Outlet ID", key: "outletId", bold: true }, { header: "Outlet Name (Kitchen)", key: "name" }, { header: "Best Item", key: "bestItem" }, { header: "Item Rating", key: "rating" }, { header: "Reviews Count", key: "count" }],
   29: [{ header: "Item Name", key: "name", bold: true }, { header: "Average Rating", key: "avg" }, { header: "Reviews Count", key: "count" }, { header: "Std Dev (Variance)", key: "stddev" }, { header: "Consistency", key: "status" }],
   30: [{ header: "Item Name", key: "item", bold: true }, { header: "City", key: "city" }, { header: "Average Rating", key: "avg" }, { header: "Reviews Count", key: "count" }],
   31: [{ header: "Item Name", key: "item", bold: true }, { header: "Month", key: "month" }, { header: "Average Rating", key: "avg" }, { header: "Reviews Count", key: "count" }],
@@ -53,18 +53,19 @@ export default function InsightResult({ insightId, label, data, reviews, allBran
     return <TextAIInsight title={label} textContent={data?.text || data} onClose={onClose} onRegisterDownload={onRegisterDownload} />;
 
   if ([1, 2, 3, 4].includes(insightId)) {
-    const keyMap = { 2: ["zone", "Zone"], 3: ["city", "City"], 4: ["area", "Area"] };
+    const keyMap = { 2: ["zone", "Zone"], 3: ["city", "City"], 4: ["kitchen", "Kitchen"] };
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
         <InsightSummaryPanel insightId={insightId} data={data} filters={filters} />
         {insightId === 1 ? (
-          <BrandDashboard reviews={reviews} allBrands={allBrands} masterData={masterData} onClose={onClose} onRegisterDownload={onRegisterDownload} />
+          <BrandDashboard reviews={reviews} allBrands={allBrands} masterData={masterData} filters={filters} onClose={onClose} onRegisterDownload={onRegisterDownload} />
         ) : (
           <LocationMatrixAndSummary
             reviews={reviews}
             locationKey={keyMap[insightId][0]}
             locationTitle={keyMap[insightId][1]}
             masterData={masterData}
+            filters={filters}
             onClose={onClose}
             onRegisterDownload={onRegisterDownload}
           />

@@ -137,7 +137,7 @@ async function checkForNewReports(targetDateStr) {
   const downloadedFiles = [];
 
   // Search for emails containing all these words in the subject in any order
-  let query = `from:ranjith.r@swiggy.in subject:(Funnel IGCC RDC Serviceability RHI)`;
+  let query = `from:(ranjith.r@swiggy.in OR beegum.kumar_cmt@external.swiggy.in) subject:(Funnel IGCC RDC Serviceability RHI)`;
   if (!targetDateStr) {
     query += ` -label:swiggy-processed`;
   }
@@ -176,22 +176,30 @@ async function checkForNewReports(targetDateStr) {
       }
     }
 
-    // 1. Process standard file attachments
+    // 1. Process standard file attachments — wrapped per-attachment (matching
+    // the per-link handling below) so one bad attachment (a disk-full write,
+    // a transient API error) fails just that one file instead of throwing
+    // uncaught and aborting the whole date's check, taking every
+    // already-downloaded file in this run down with it.
     const attachmentParts = getAttachmentParts(msgData.data.payload);
     for (const part of attachmentParts) {
-      console.log(`Downloading attachment: ${part.filename}`);
-      const attachmentId = part.body.attachmentId;
-      
-      const attachment = await gmail.users.messages.attachments.get({
-        userId: 'me',
-        messageId: message.id,
-        id: attachmentId
-      });
+      try {
+        console.log(`Downloading attachment: ${part.filename}`);
+        const attachmentId = part.body.attachmentId;
 
-      const buffer = Buffer.from(attachment.data.data, 'base64url');
-      const filePath = path.join(DOWNLOAD_DIR, `${Date.now()}_${part.filename}`);
-      fs.writeFileSync(filePath, buffer);
-      downloadedFiles.push(filePath);
+        const attachment = await gmail.users.messages.attachments.get({
+          userId: 'me',
+          messageId: message.id,
+          id: attachmentId
+        });
+
+        const buffer = Buffer.from(attachment.data.data, 'base64url');
+        const filePath = path.join(DOWNLOAD_DIR, `${Date.now()}_${part.filename}`);
+        fs.writeFileSync(filePath, buffer);
+        downloadedFiles.push(filePath);
+      } catch (err) {
+        console.error(`Failed to download attachment ${part.filename}:`, err.message);
+      }
     }
 
     // 2. Extract and download from links in the email body
@@ -294,4 +302,32 @@ async function markEmailAsProcessed(gmail, messageId) {
   });
 }
 
-export { checkForNewReports };
+/**
+ * Finds the most recent mail-sent date among emails already labeled
+ * swiggy-processed. Used by the backfill script as one of two signals
+ * (alongside the latest report-date in the DB) to determine where to
+ * safely resume from.
+ * @returns {Promise<string|null>} date string YYYY-MM-DD (UTC calendar day
+ * of the mail's Date header), or null if no processed mail exists yet.
+ */
+async function getLastProcessedMailDate() {
+  const auth = await getAuthClient();
+  const gmail = google.gmail({ version: 'v1', auth });
+
+  const res = await gmail.users.messages.list({ userId: 'me', q: 'label:swiggy-processed', maxResults: 1 });
+  const messages = res.data.messages || [];
+  if (messages.length === 0) return null;
+
+  const msgData = await gmail.users.messages.get({ userId: 'me', id: messages[0].id });
+  const headers = msgData.data.payload.headers;
+  const dateHeader = headers.find(h => h.name === 'Date')?.value;
+  if (!dateHeader) return null;
+
+  const d = new Date(dateHeader);
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(d.getUTCDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+export { checkForNewReports, getLastProcessedMailDate };

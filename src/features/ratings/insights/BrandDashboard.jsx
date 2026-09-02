@@ -1,20 +1,37 @@
 import { useEffect, useMemo, useState } from "react";
 import { C, cardStyle } from "../../../theme";
+import { wilsonLowerBound } from "../wilson";
 
 const ZONE_ABBR = { North: "N", South: "S", East: "E", West: "W" };
 const PAGE = 100;
 
-export default function BrandDashboard({ reviews = [], onClose, allBrands = [], masterData = [], onRegisterDownload }) {
+export default function BrandDashboard({ reviews = [], onClose, allBrands = [], masterData = [], filters, onRegisterDownload }) {
   const [page, setPage] = useState(1);
 
   const rows = useMemo(() => {
+    // Scope the outlet directory to the active location/sub-brand filters
+    // before counting kitchens per brand — otherwise a brand's "Kitchens"
+    // count was always its company-wide total, ignoring e.g. an active zone
+    // filter. Brand itself is left unfiltered here since brand is the row dimension
+    // being broken out; which brands actually appear as rows is handled
+    // separately below via `candidateBrands`.
+    const scopedMaster = masterData.filter((m) =>
+      (!filters?.subBrands?.length || filters.subBrands.includes(m.subBrand)) &&
+      (!filters?.cities?.length || filters.cities.includes(m.city)) &&
+      (!filters?.zones?.length || filters.zones.includes(m.zone)) &&
+      (!filters?.kitchens?.length || filters.kitchens.includes(m.kitchen))
+    );
+
     const orderMap = new Map();
     reviews.forEach((r) => {
-      const key = `${r.order_id}::${r.brand_name}`;
+      // restaurant_id, not just brand_name, disambiguates order_id collisions
+      // across two different outlets of the same brand — matches the
+      // backend's dedupeByOrder() key.
+      const key = `${r.restaurant_id}::${r.order_id}::${r.brand_name}`;
       if (!orderMap.has(key)) orderMap.set(key, { brand: r.brand_name, ratings: [], hasComment: false });
       const g = orderMap.get(key);
       if (r.restaurant_rating) g.ratings.push(Number(r.restaurant_rating));
-      if (r.comments) g.hasComment = true;
+      if (r.has_comment) g.hasComment = true;
     });
     const brands = new Map();
     orderMap.forEach((g) => {
@@ -30,48 +47,58 @@ export default function BrandDashboard({ reviews = [], onClose, allBrands = [], 
       }
     });
     const meta = new Map();
-    masterData.forEach((m) => {
-      if (!meta.has(m.brand)) meta.set(m.brand, { zones: new Set(), cities: new Set(), areas: new Set(), outlets: 0 });
+    scopedMaster.forEach((m) => {
+      if (!meta.has(m.brand)) meta.set(m.brand, { zones: new Set(), cities: new Set(), kitchens: new Set() });
       const x = meta.get(m.brand);
       x.zones.add(m.zone);
       x.cities.add(m.city);
-      x.areas.add(m.area);
-      x.outlets++;
+      x.kitchens.add(m.kitchen);
     });
-    const names = [...new Set([...allBrands, ...brands.keys()])];
+    // allBrands is the full company-wide brand list — only fall back to it
+    // when no brand filter is active (so brands with zero reviews still show
+    // up for comparison). With a brand filter active, showing every other
+    // company brand here would be exactly the same bug as the kitchen counts:
+    // supporting data ignoring the selected scope.
+    const candidateBrands = filters?.brands?.length ? filters.brands : allBrands;
+    const names = [...new Set([...candidateBrands, ...brands.keys()])];
     const out = names.map((name) => {
       const b = brands.get(name);
-      const mt = meta.get(name) || { zones: new Set(), cities: new Set(), areas: new Set(), outlets: 0 };
+      const mt = meta.get(name) || { zones: new Set(), cities: new Set(), kitchens: new Set() };
       const avg = b && b.ratings.length ? b.ratings.reduce((x, y) => x + y, 0) / b.ratings.length : null;
       return {
         brand: name,
         avg,
+        // b.above/b.ratings.length are already the positive/total counts
+        // tracked above — Wilson score ranks brands by confidence-adjusted
+        // rate rather than raw average, so a brand with only a handful of
+        // orders can't out-rank one with a large, well-evidenced sample just
+        // because its small sample happened to land high.
+        wilson: b && b.ratings.length ? wilsonLowerBound(b.above, b.ratings.length) : null,
+        count: b?.ratings.length || 0,
         zones: [...mt.zones].map((z) => ZONE_ABBR[z] || z).join(", ") || "-",
         cities: mt.cities.size,
-        areas: mt.areas.size,
-        outlets: mt.outlets,
+        kitchens: mt.kitchens.size,
         orders: b?.ordersCount || 0,
         feedbacks: b?.feedbacksCount || 0,
         above: b?.above || 0,
         below: b?.below || 0,
       };
     });
-    const rated = out.filter((r) => r.avg !== null).sort((a, b) => b.avg - a.avg);
+    const rated = out.filter((r) => r.avg !== null).sort((a, b) => (b.wilson ?? -1) - (a.wilson ?? -1) || b.count - a.count);
     const unrated = out.filter((r) => r.avg === null).sort((a, b) => a.brand.localeCompare(b.brand));
     return [...rated, ...unrated];
-  }, [reviews, allBrands, masterData]);
+  }, [reviews, allBrands, masterData, filters]);
 
   const totals = useMemo(
     () =>
       rows.reduce(
         (a, r) => ({
-          outlets: a.outlets + r.outlets,
           orders: a.orders + r.orders,
           feedbacks: a.feedbacks + r.feedbacks,
           above: a.above + r.above,
           below: a.below + r.below,
         }),
-        { outlets: 0, orders: 0, feedbacks: 0, above: 0, below: 0 },
+        { orders: 0, feedbacks: 0, above: 0, below: 0 },
       ),
     [rows],
   );
@@ -86,8 +113,7 @@ export default function BrandDashboard({ reviews = [], onClose, allBrands = [], 
           Rating: r.avg === null ? "-" : r.avg.toFixed(2),
           Zones: r.zones,
           Cities: r.cities,
-          Areas: r.areas,
-          Outlets: r.outlets,
+          Kitchens: r.kitchens,
           Orders: r.orders,
           Feedbacks: r.feedbacks,
           "Above 4★": r.above,
@@ -123,7 +149,7 @@ export default function BrandDashboard({ reviews = [], onClose, allBrands = [], 
             </button>
           )}
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(130px, 1fr))", gap: 12 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 12 }}>
           {pageRows.map((r) => (
             <div key={r.brand} style={{ border: `1px solid ${C.border}`, borderRadius: 10, padding: 12 }}>
               <div style={{ fontSize: 12, fontWeight: 800, color: C.primary, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -144,7 +170,7 @@ export default function BrandDashboard({ reviews = [], onClose, allBrands = [], 
             <thead>
               <tr>
                 <th style={{ ...th, position: "sticky", left: 0, zIndex: 20, borderRight: `2.5px solid rgba(19,38,100,0.2)` }}>Brand</th>
-                {["Rating", "Zones", "Cities", "Areas", "Outlets", "Orders", "Feedbacks", "Above 4★", "Below 4★"].map((h) => (
+                {["Rating", "Zones", "Cities", "Kitchens", "Orders", "Feedbacks", "Above 4★", "Below 4★"].map((h) => (
                   <th key={h} style={th}>
                     {h}
                   </th>
@@ -159,7 +185,7 @@ export default function BrandDashboard({ reviews = [], onClose, allBrands = [], 
                     <td style={{ padding: "9px 12px", fontWeight: 800, color: C.primary, position: "sticky", left: 0, zIndex: 9, backgroundColor: bg, borderRight: `2.5px solid rgba(19,38,100,0.2)`, whiteSpace: "nowrap" }}>
                       {r.brand}
                     </td>
-                    {[r.avg === null ? "—" : r.avg.toFixed(2), r.zones, r.cities, r.areas, r.outlets, r.orders, r.feedbacks, r.above, r.below].map((v, vi) => (
+                    {[r.avg === null ? "—" : r.avg.toFixed(2), r.zones, r.cities, r.kitchens, r.orders, r.feedbacks, r.above, r.below].map((v, vi) => (
                       <td key={vi} style={{ padding: "9px 12px", color: C.text, borderBottom: `1px solid ${C.borderSoft}` }}>
                         {v}
                       </td>
@@ -175,7 +201,6 @@ export default function BrandDashboard({ reviews = [], onClose, allBrands = [], 
                 <td style={{ padding: "10px 12px", color: C.primary }}>—</td>
                 <td style={{ padding: "10px 12px", color: C.primary }}>—</td>
                 <td style={{ padding: "10px 12px", color: C.primary }}>—</td>
-                <td style={{ padding: "10px 12px", color: C.primary }}>{totals.outlets}</td>
                 <td style={{ padding: "10px 12px", color: C.primary }}>{totals.orders}</td>
                 <td style={{ padding: "10px 12px", color: C.primary }}>{totals.feedbacks}</td>
                 <td style={{ padding: "10px 12px", color: C.primary }}>{totals.above}</td>

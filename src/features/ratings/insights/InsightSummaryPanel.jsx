@@ -83,7 +83,7 @@ export function buildNarrative(insightId, data) {
     case 3:
       return spreadNarrative("cities");
     case 4:
-      return spreadNarrative("areas");
+      return spreadNarrative("kitchens");
     case 6:
       return {
         signal: "good",
@@ -114,7 +114,7 @@ export function buildNarrative(insightId, data) {
       return {
         signal: "warn",
         text: `${rows[0]?.[labelKey]} combines high order volume with a ${f1(rows[0]?.[valueKey])}★ rating — a systemic issue, not isolated bad luck.`,
-        action: "Trigger an immediate area-level audit covering kitchen throughput, packaging and rider handover.",
+        action: "Trigger an immediate kitchen-level audit covering throughput, packaging and rider handover.",
       };
     case 11: {
       const total = rows.reduce((a, r) => a + Number(r.count || 0), 0);
@@ -193,7 +193,7 @@ export function scopeLabel(filters) {
   const b = named(filters.brands, "brands");
   const c = named(filters.cities, "cities");
   const z = named(filters.zones, "zones");
-  const a = named(filters.areas, "areas");
+  const a = named(filters.kitchens, "kitchens");
   if (b) chunks.push(b);
   if (c) chunks.push(c);
   if (z) chunks.push(z);
@@ -267,8 +267,8 @@ export function buildStats(insightId, data) {
     case 3:
       return locationSet("City");
     case 4:
-      return locationSet("Area").slice(0, 4).concat([
-        card("Above Avg Areas", vals.filter((v) => v >= m).length, `out of ${rows.length}`),
+      return locationSet("Kitchen").slice(0, 4).concat([
+        card("Above Avg Kitchens", vals.filter((v) => v >= m).length, `out of ${rows.length}`),
         card("Total Reviews", totalReviews.toLocaleString(), "in filtered scope"),
       ]);
     case 6:
@@ -282,7 +282,7 @@ export function buildStats(insightId, data) {
             ? card("Kill Candidate", bottom?.[labelKey] ?? "-", `${f2(bottom?.[valueKey])}★`, "warn")
             : insightId === 8
               ? card("Top Volume", rows[0]?.[labelKey] ?? "-", `${rows[0]?.[countKey] ?? 0} reviews`, "accent")
-              : card("Critical Area", rows[0]?.[labelKey] ?? "-", `${f2(rows[0]?.[valueKey])}★`, "warn");
+              : card("Critical Kitchen", rows[0]?.[labelKey] ?? "-", `${f2(rows[0]?.[valueKey])}★`, "warn");
       return [
         headline,
         card("Mean Rating", f2(m), `${rows.length} records`),

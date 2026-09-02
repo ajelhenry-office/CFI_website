@@ -23,7 +23,7 @@ export const NAV_ITEMS = [
   { key: "timing", label: "Timing", subtitle: "Operational hours and slot health" },
   { key: "reviews", label: "Dine-in Reviews", subtitle: "Dine-in guest feedback stream" },
   { key: "backfilling", label: "Route Backfilling", subtitle: "Rider route gap reconciliation" },
-  { key: "ratings", label: "Ratings & Insights", subtitle: "27 analytical insights across the portfolio" },
+  { key: "ratings", label: "Ratings & Insights", subtitle: "Brand, Zone, City & Kitchen ratings across the portfolio" },
   { key: "ops_matrix", label: "Ops Matrix", subtitle: "Operations performance matrix" },
   { key: "settings", label: "Settings", subtitle: "Profile and connected platforms" },
   { key: "theme", label: "System Theme", subtitle: "Appearance configuration" },
