@@ -1,6 +1,6 @@
 import express from "express";
 import { pool } from "../ratings/db.js";
-import { checkAndIncrementRateLimit, logProblemStore, initiateBulkJob, resolveOnlineAction, RATE_LIMIT_CEILING, normalizeBrandKey, isTogglePaused, isToggleFrozen, AUTO_MANAGED_BRANDS } from "./queue.js";
+import { checkAndIncrementRateLimit, logProblemStore, initiateBulkJob, resolveOnlineAction, RATE_LIMIT_CEILING, normalizeBrandKey, isTogglePaused, isToggleFrozen, AUTO_MANAGED_BRANDS, runHourlyRecheckForBrand } from "./queue.js";
 import { raiseAlert } from "../alerts/alertService.js";
 
 const router = express.Router();
@@ -372,20 +372,26 @@ router.post("/toggle", blockIfPaused, blockIfFrozen, async (req, res) => {
     wasAutoThrottled = realAction === 'disable';
   }
 
-  // Rate Limiting check — a manual click gets one bounded wait-and-retry instead of
-  // failing outright the instant the ceiling is hit. Bulk jobs already self-throttle
-  // below the ceiling specifically so a manual action almost always finds room right
-  // away; this only actually waits in the rare case that headroom is also exhausted.
-  // One retry, not a loop — this is a synchronous HTTP request, so it shouldn't hang
-  // indefinitely the way a background bulk job's own wait loop can.
-  let rl = await checkAndIncrementRateLimit(brand);
-  if (rl === -1) {
-    const hRes = await pool.query(`SELECT minute_start_time FROM api_health WHERE brand = $1`, [brand]);
-    const start = hRes.rows[0]?.minute_start_time ? new Date(hRes.rows[0].minute_start_time) : new Date();
-    const elapsed = Date.now() - start.getTime();
-    const waitMs = Math.min(Math.max(0, 60000 - elapsed) + 500, 65000);
-    await new Promise((r) => setTimeout(r, waitMs));
+  // Rate Limiting check — keeps waiting instead of failing after one attempt. Bulk jobs
+  // are hard-capped below the ceiling specifically so a manual action almost always
+  // finds room right away; this only actually loops in the rare case that headroom is
+  // also exhausted (e.g. several manual/threshold actions landing in the same minute).
+  // A manual disable failing outright during a busy automated run is worse than making
+  // the click take a little longer — bounded to 5 tries (~5 min worst case) so this
+  // synchronous HTTP request can't hang indefinitely.
+  let rl = -1;
+  let rateLimitTries = 0;
+  const MAX_RATE_LIMIT_TRIES = 5;
+  while (rl === -1 && rateLimitTries < MAX_RATE_LIMIT_TRIES) {
     rl = await checkAndIncrementRateLimit(brand);
+    if (rl === -1) {
+      rateLimitTries++;
+      const hRes = await pool.query(`SELECT minute_start_time FROM api_health WHERE brand = $1`, [brand]);
+      const start = hRes.rows[0]?.minute_start_time ? new Date(hRes.rows[0].minute_start_time) : new Date();
+      const elapsed = Date.now() - start.getTime();
+      const waitMs = Math.min(Math.max(0, 60000 - elapsed) + 500, 65000);
+      await new Promise((r) => setTimeout(r, waitMs));
+    }
   }
   if (rl === -1) {
     await logProblemStore({ location_id, name: store_name, brand }, action, "Rate Limit Exceeded locally");
@@ -644,6 +650,11 @@ async function canControlJob(req, res, jobId) {
 router.post("/toggle/bulk/cancel", async (req, res) => {
   const { jobId } = req.body;
   if (!(await canControlJob(req, res, jobId))) return;
+  // Cancelling here is enough on its own — the Hourly Recheck chain (queue.js) re-arms
+  // itself 30 minutes from whatever the most recent activity was for a brand, and the
+  // background loop that was running this job notices CANCELLED and, on its own
+  // completion, counts this cancellation as that activity. No extra bookkeeping needed
+  // here for that to happen.
   await pool.query(`UPDATE bulk_toggle_jobs SET status = 'CANCELLED' WHERE id = $1`, [jobId]);
   res.json({ success: true });
 });
@@ -889,6 +900,18 @@ router.post("/toggle/freeze", async (req, res) => {
     );
     await pool.query(`INSERT INTO toggle_activity (store_name, store_id, brand, email, action, result, is_automated, source) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
       [`— ${brand} workspace —`, null, brand, req.user?.email || 'Unknown', frozen ? 'FREEZE' : 'UNFREEZE', 'SUCCESS', false, frozen ? 'MANUAL_FREEZE' : 'MANUAL_UNFREEZE']);
+
+    // Unfreezing immediately kicks that brand's Hourly Recheck chain (queue.js) rather
+    // than leaving it waiting for whatever its next scheduled attempt happens to be —
+    // while frozen, the chain kept ticking every 30 min and quietly finding itself
+    // blocked each time, so without this it could otherwise wait up to another 30
+    // minutes after unfreeze before actually doing anything. Fire-and-forget: the freeze
+    // toggle itself must respond immediately, not wait on a full reconciliation pass.
+    if (!frozen) {
+      runHourlyRecheckForBrand(normalizeBrandKey(brand), performToggleAPI)
+        .catch(err => console.error(`[TOGGLE] Post-unfreeze Hourly Recheck kickstart failed for ${brand}:`, err));
+    }
+
     res.json({ success: true, frozen, brand });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });

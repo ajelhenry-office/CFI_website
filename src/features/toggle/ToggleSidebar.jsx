@@ -216,7 +216,7 @@ export default function ToggleSidebar({ data, jobs, hasBrandContext, fetchData, 
 }
 
 function JobCard({ job, currentUserEmail, isAdmin, onPause, onResume, onCancel }) {
-  const { id, action, total_stores, pending_count, status, actor_email, created_at, brands } = job;
+  const { id, action, total_stores, pending_count, status, actor_email, created_at, brands, current_batch } = job;
   const done = total_stores - pending_count;
   const pct = total_stores > 0 ? Math.round((done / total_stores) * 100) : 0;
   const canControl = isAdmin || actor_email === currentUserEmail;
@@ -248,6 +248,14 @@ function JobCard({ job, currentUserEmail, isAdmin, onPause, onResume, onCancel }
       <div style={{ height: 5, borderRadius: 6, backgroundColor: `${C.primary}1a`, overflow: "hidden", marginBottom: 8 }}>
         <div style={{ height: "100%", width: `${pct}%`, backgroundColor: C.primary, borderRadius: 6, transition: "width 0.4s ease" }} />
       </div>
+
+      {/* Up to 10 stores are worked on at once (not one at a time), so this is the
+          current small batch, not a single "current store". */}
+      {status === "RUNNING" && current_batch?.length > 0 && (
+        <div style={{ fontSize: 9.5, color: C.muted, marginBottom: 8, lineHeight: 1.5 }}>
+          Currently processing ({current_batch.length}): {current_batch.join(", ")}
+        </div>
+      )}
 
       <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
         {!canControl && (

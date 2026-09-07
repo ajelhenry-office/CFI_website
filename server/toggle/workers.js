@@ -1,7 +1,7 @@
 import { pool } from '../ratings/db.js';
 import { warmUpOpsCache } from '../ops_matrix/ops.routes.js';
 import { startTimingWorker } from '../timing/timingWorker.js';
-import { initiateBulkJob, normalizeBrandKey, AUTO_MANAGED_BRANDS, isTogglePaused, isToggleFrozen } from './queue.js';
+import { AUTO_MANAGED_BRANDS, isTogglePaused, runHourlyRecheckForBrand, isChainAlive } from './queue.js';
 import { performToggleAPI } from './toggle.routes.js';
 import { raiseAlert, resolveAlert } from '../alerts/alertService.js';
 import { scheduleDailyHealthCheck } from '../alerts/dailyHealthCheck.js';
@@ -14,83 +14,45 @@ export function startWorkers() {
   scheduleEatfitOrderSync(); // every 5 min — keeps active_orders fresh
   scheduleEatfitThresholdEnforcer(); // every 10 min — throttles down/wakes up based on that data
 
-  // Hourly Recheck Cron (Runs every 60 minutes)
-  // Re-pushes "enable" to every store the user wants online (desired_state = ONLINE).
-  // This is safe to do blindly: UrbanPiper's enable/disable only controls whether a store
-  // is ALLOWED to be live within its own Swiggy/Zomato operating-hours window — it never
-  // forces a store live outside those hours, and it never touches stores the user has
-  // explicitly disabled (desired_state = OFFLINE is excluded here entirely). So this can
-  // never fight the daily schedule or a manual override — it only ever reinforces intent
-  // that's already supposed to be in effect.
-  //
-  // Runs the bulk job directly in-process via initiateBulkJob (not a self-HTTP-call to
-  // our own API) — a self-call needs a matching port and a valid auth token, neither of
-  // which this cron has, so it was silently failing every single time before this fix.
+  // Hourly Recheck — self-chaining, not a fixed clock (see queue.js). Each brand's chain
+  // is kicked off once here at startup; from then on it reschedules itself 30 minutes
+  // after whatever the latest bulk activity was for that brand (its own last run, a
+  // manual bulk job, or an interruption like a cancel), forever. Re-pushes "enable" to
+  // every store the user wants online (desired_state = ONLINE) — safe to do blindly,
+  // since UrbanPiper's enable/disable only controls whether a store is ALLOWED to be
+  // live within its own Swiggy/Zomato operating-hours window, it never forces a store
+  // live outside those hours, and it never touches stores the user has explicitly
+  // disabled (desired_state = OFFLINE is excluded entirely). So this can never fight the
+  // daily schedule or a manual override — it only ever reinforces intent that's already
+  // supposed to be in effect.
+  console.log("[WORKERS] Starting Hourly Recheck chains...");
+  for (const brandKey of AUTO_MANAGED_BRANDS) {
+    runHourlyRecheckForBrand(brandKey, performToggleAPI)
+      .then(() => resolveAlert('HOURLY_RECHECK_ERROR'))
+      .catch(err => {
+        console.error(`[WORKERS] Initial Hourly Recheck failed for ${brandKey}:`, err);
+        raiseAlert('HOURLY_RECHECK_ERROR', 'CRITICAL',
+          `The Hourly Recheck chain threw an error on startup for ${brandKey} and never got a chance to schedule its own next attempt. This is the safety net that keeps stores online for this brand.`,
+          err.message).catch(() => {});
+      });
+  }
+
+  // Safety net (runs every 60 minutes) — the self-chain above is normally what keeps
+  // Hourly Recheck alive, but if a single chain tick ever throws before it reaches the
+  // point where it reschedules itself, that one brand's chain goes silently quiet with
+  // nothing left to revive it until the server restarts. This notices and kicks it back
+  // on. Deliberately low-frequency and cheap — it's an insurance policy, not the primary
+  // mechanism, so it only acts on a brand whose chain is actually dead.
   setInterval(async () => {
     try {
-      // Full Toggle-tab pause — skip before touching anything at all, not just before
-      // the final UrbanPiper call (which initiateBulkJob/performToggleAPI also check),
-      // so a pause window means this cron does zero work, not "runs and gets blocked".
       if (await isTogglePaused()) return;
-
-      console.log("[WORKERS] Running Hourly Recheck Cron...");
-
-      // Fetch all stores that should be online
-      const storesRes = await pool.query(`SELECT location_id, brand FROM store_state WHERE desired_state = 'ONLINE'`);
-      const stores = storesRes.rows;
-
-      if (stores.length === 0) return;
-
-      // One initiateBulkJob call PER BRAND, not one call spanning every brand together.
-      // initiateBulkJob's own overlap lock only blocks a brand that's already RUNNING/
-      // PAUSED elsewhere (see queue.js) — but that lock is computed over whatever set of
-      // brands a single call touches. A single call across every brand at once meant one
-      // brand's manual bulk job (e.g. Olio) made this skip ALL brands, every hour, until
-      // it finished — even ones with no relation to it. Splitting per brand lets each
-      // brand's Hourly Recheck run independently, exactly like the eatfit threshold
-      // enforcer and manual bulk actions already do.
-      //
-      // Only ever groups brands in AUTO_MANAGED_BRANDS — this cron acts with nobody at
-      // the wheel, so it must never pick up Ovenfresh (or anything else outside the 3
-      // real brands) just because a store was left at desired_state = 'ONLINE' there
-      // from earlier testing. Uses the shared normalizeBrandKey (not a bare
-      // .toLowerCase()) so "Cake Zone" / "cake zone" / "cake_zone" all land in the same
-      // bucket instead of silently fragmenting.
-      const storesByBrand = new Map();
-      for (const store of stores) {
-        const key = normalizeBrandKey(store.brand || 'ovenfresh');
-        if (!AUTO_MANAGED_BRANDS.includes(key)) continue;
-        if (!storesByBrand.has(key)) storesByBrand.set(key, []);
-        storesByBrand.get(key).push(store);
+      for (const brandKey of AUTO_MANAGED_BRANDS) {
+        if (isChainAlive(brandKey)) continue;
+        console.warn(`[WORKERS] Hourly Recheck chain for ${brandKey} appears to have died — restarting it.`);
+        runHourlyRecheckForBrand(brandKey, performToggleAPI).catch(err => console.error(`[WORKERS] Chain restart failed for ${brandKey}:`, err));
       }
-
-      if (storesByBrand.size === 0) return;
-      const actedOnCount = [...storesByBrand.values()].reduce((sum, s) => sum + s.length, 0);
-      console.log(`[WORKERS] Hourly Recheck found ${actedOnCount} ONLINE stores across ${storesByBrand.size} auto-managed brand(s) to verify.`);
-
-      for (const [brandKey, brandStores] of storesByBrand) {
-        // Skip a frozen brand entirely, before creating a job or touching the rate
-        // limit — freezing already blocks the final UrbanPiper call (see
-        // performToggleAPI), but leaving the job creation itself unguarded meant this
-        // cron kept building a full job every hour for a frozen brand, attempting every
-        // store, and flooding Problem Stores with failures that were never real —
-        // purely an artifact of the freeze, not an actual store issue.
-        if (await isToggleFrozen(brandKey)) {
-          console.log(`[WORKERS] Hourly Recheck skipped ${brandKey} this cycle — workspace is frozen.`);
-          continue;
-        }
-        const result = await initiateBulkJob(brandStores, "enable", " (Hourly Recheck)", "System — Hourly Recheck", "AUTO_HOURLY_RECHECK", performToggleAPI);
-        if (result.blocked) {
-          console.log(`[WORKERS] Hourly Recheck skipped ${brandKey} this cycle — a job already running for it.`);
-        }
-      }
-      await resolveAlert('HOURLY_RECHECK_ERROR');
-
     } catch (err) {
-      console.error("[WORKERS] Hourly Recheck failed:", err);
-      await raiseAlert('HOURLY_RECHECK_ERROR', 'CRITICAL',
-        'The Hourly Recheck cron threw an error and did not complete its run. This is the safety net that keeps stores online — if this keeps happening, that automation may be effectively off.',
-        err.message);
+      console.error("[WORKERS] Hourly Recheck chain health check failed:", err);
     }
   }, 60 * 60 * 1000); // 60 minutes
 
@@ -143,6 +105,21 @@ export function startWorkers() {
       console.error("[WORKERS] Audit retention purge failed:", err);
     }
   }, 60 * 60 * 1000); // 60 minutes
+
+  // Problem Stores Retention (Runs every 24 hours) — only ever purges rows already
+  // marked resolved (a store gets marked resolved the moment any toggle for it
+  // succeeds, so it's already off the Problems list well before this runs) and only
+  // once they've sat resolved for a while, keeping a short-term audit trail (e.g. "this
+  // kept failing 3 times last week") without letting the table grow forever. An
+  // unresolved row is never touched here — it stays until the store is actually fixed.
+  setInterval(async () => {
+    try {
+      const res = await pool.query(`DELETE FROM problem_stores WHERE resolved = true AND last_attempt_at < NOW() - INTERVAL '14 days'`);
+      if (res.rowCount > 0) console.log(`[WORKERS] Purged ${res.rowCount} resolved problem_stores rows older than 14 days.`);
+    } catch (err) {
+      console.error("[WORKERS] Problem Stores retention purge failed:", err);
+    }
+  }, 24 * 60 * 60 * 1000); // 24 hours
 
   // Warmup Ops Cache (Runs every 1 hour)
   setInterval(() => {

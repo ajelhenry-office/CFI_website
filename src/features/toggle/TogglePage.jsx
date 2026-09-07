@@ -147,11 +147,26 @@ export default function TogglePage({ userRole, userRoles }) {
       .catch(() => {});
   }, [selectedBrand]);
 
+  // A bulk job only ever updates one store's real status at a time as it actually
+  // completes — cards are never flipped optimistically, so the only way a card flip
+  // becomes visible sooner is polling faster. At the normal 15s pace, a running bulk
+  // job (which can finish a store every couple seconds) would look like a sudden jump
+  // of many cards flipping at once every 15s instead of a smooth one-by-one — so this
+  // brand's own workspace polls much faster (2.5s) specifically while a bulk job is
+  // active for it, and drops back to the normal pace once nothing's running.
+  const hasActiveJobForBrand = useMemo(() => {
+    if (!selectedBrand) return false;
+    return (sidebarData?.activeBulkJobs || []).some(
+      (j) => ["RUNNING", "PAUSED"].includes(j.status) && j.brands?.includes(selectedBrand)
+    );
+  }, [sidebarData, selectedBrand]);
+
   useEffect(() => {
     fetchSidebar();
-    const timer = setInterval(fetchSidebar, 15000);
+    const intervalMs = hasActiveJobForBrand ? 2500 : 15000;
+    const timer = setInterval(fetchSidebar, intervalMs);
     return () => clearInterval(timer);
-  }, [fetchSidebar]);
+  }, [fetchSidebar, hasActiveJobForBrand]);
 
   const brandsList = useMemo(() => [...new Set(stores.map(s => s.brand).filter(Boolean))].sort(), [stores]);
 

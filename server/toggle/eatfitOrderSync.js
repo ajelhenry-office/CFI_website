@@ -1,6 +1,6 @@
 import { pool } from '../ratings/db.js';
 import { UP_BRANDS, performToggleAPI } from './toggle.routes.js';
-import { initiateBulkJob, EATFIT_THROTTLE_THRESHOLD, isTogglePaused, isToggleFrozen } from './queue.js';
+import { applySingleCorrections, resolveOnlineAction, EATFIT_THROTTLE_THRESHOLD, isTogglePaused, isToggleFrozen } from './queue.js';
 import { raiseAlert, resolveAlert } from '../alerts/alertService.js';
 
 // KitchenPulse's inbound webhook for active_orders (POST /toggle/update-orders) has
@@ -52,8 +52,13 @@ export async function fetchAcknowledgedOrderCounts(creds) {
 export async function syncEatfitOrderCounts() {
   const creds = UP_BRANDS.eatfit;
   if (!creds) return;
-  if (await isTogglePaused()) return;
 
+  // Deliberately does NOT check isTogglePaused/isToggleFrozen — this only reads from
+  // UrbanPiper's Orders API and writes to our own local active_orders cache, it never
+  // toggles a real store. The order count is also the live signal for whether Swiggy/
+  // Zomato have actually opened a store yet (UrbanPiper's own enable/disable can't
+  // override their independently-configured operating hours) — gating this on a pause
+  // or freeze would blind that signal at exactly the moments it matters most.
   try {
     const countsByRefId = await fetchAcknowledgedOrderCounts(creds);
 
@@ -91,16 +96,18 @@ export function scheduleEatfitOrderSync() {
 // it should be — a kitchen already in the right state is left untouched, so this
 // doesn't spam UrbanPiper with redundant calls every cycle.
 //
-// This can't conflict with Hourly Recheck: both funnel through initiateBulkJob →
-// runBulkJob, whose JIT check (queue.js) always re-derives the REAL action per store
-// from the live desired_state + active_orders at the moment it actually runs,
-// regardless of which cron kicked the job off or what top-level action was requested.
-// Whichever cron happens to touch a store first will always compute the same correct
-// answer — there's nothing for them to disagree about.
+// Deliberately does NOT go through initiateBulkJob/the bulk-job overlap lock — a
+// threshold correction is a single-store action in spirit (throttle this one kitchen up
+// or down based on its own order count), not a coordinated sweep, and it must be able
+// to run at any moment regardless of whether a real bulk job (manual, or Hourly Recheck)
+// is currently active for eatfit — same as a manual single toggle already can. Using
+// applySingleCorrections (queue.js) instead of initiateBulkJob is what makes that true;
+// it re-reads each store's live desired_state/active_orders immediately before acting,
+// so it can never fight a manual override or a bulk job's own JIT check either.
 export async function enforceEatfitThreshold() {
   try {
     if (await isTogglePaused()) return;
-    // Same reasoning as Hourly Recheck — skip before building a job, so a frozen eatfit
+    // Same reasoning as Hourly Recheck — skip before doing any work, so a frozen eatfit
     // workspace doesn't get its Problem Stores list flooded with freeze-caused "failures".
     if (await isToggleFrozen('eatfit')) return;
 
@@ -119,15 +126,12 @@ export async function enforceEatfitThreshold() {
     if (candidatesRes.rows.length === 0) return;
 
     console.log(`[EATFIT THRESHOLD] ${candidatesRes.rows.length} kitchen(s) need a state correction.`);
-    await initiateBulkJob(
-      candidatesRes.rows, 'enable', ' (EatFit Threshold Enforcer)',
+    await applySingleCorrections(
+      candidatesRes.rows,
+      (store) => resolveOnlineAction(store.brand, store.active_orders),
       'System — EatFit Threshold', 'AUTO_EATFIT_THRESHOLD', performToggleAPI
     );
 
-    // Note: if an eatfit bulk job (this enforcer, Hourly Recheck, Watchdog, or a
-    // manual bulk action) is already RUNNING/PAUSED, initiateBulkJob returns quietly
-    // with { blocked: true } for AUTO_ sources rather than throwing — this cron just
-    // tries again next cycle, same as Hourly Recheck/Watchdog already do.
     await resolveAlert('EATFIT_THRESHOLD_ENFORCER_ERROR');
   } catch (err) {
     console.error("[EATFIT THRESHOLD] Failed:", err.message);
