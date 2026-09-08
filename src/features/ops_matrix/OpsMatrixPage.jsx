@@ -296,6 +296,8 @@ export default function OpsMatrixPage() {
   const [loading, setLoading] = useState(false);
   const [rawData, setRawData] = useState([]);
   const [weekDefs, setWeekDefs] = useState([]);
+  const [loadError, setLoadError] = useState("");
+  const [partialDays, setPartialDays] = useState(false);
   
   // Draft States
   const [startDate, setStartDate] = useState(iso(8));
@@ -327,6 +329,8 @@ export default function OpsMatrixPage() {
 
   const fetchData = async () => {
     setLoading(true);
+    setLoadError("");
+    setPartialDays(false);
     try {
       const bPayload = appliedBrands.length === 1 ? appliedBrands[0] : "";
       const zPayload = appliedZones.length === 1 ? appliedZones[0] : "";
@@ -343,6 +347,7 @@ export default function OpsMatrixPage() {
       } else {
         let json = null;
         let fetchSuccess = false;
+        let lastErr = "";
 
         for (let attempt = 1; attempt <= 3; attempt++) {
           try {
@@ -371,15 +376,29 @@ export default function OpsMatrixPage() {
               break;
             } else if (response.status === 504 && attempt < 3) {
               console.warn(`[OpsMatrix] Vercel 504 Timeout on attempt ${attempt}. Waiting...`);
+              lastErr = "The data source timed out.";
               await new Promise(r => setTimeout(r, 4000));
             } else {
+              try {
+                const body = await response.json();
+                lastErr = body?.error || `Request failed (HTTP ${response.status}).`;
+              } catch {
+                lastErr = `Request failed (HTTP ${response.status}).`;
+              }
               break;
             }
           } catch (err) {
+            lastErr = err?.message || "Network error.";
             if (attempt < 3) {
               await new Promise(r => setTimeout(r, 3000));
             }
           }
+        }
+
+        if (!fetchSuccess) {
+          setLoadError(lastErr || "Could not load Ops Matrix data.");
+        } else if (json && json.partialDays) {
+          setPartialDays(true);
         }
 
         if (fetchSuccess && json && json.success && json.data && json.data.rows) {
@@ -761,6 +780,18 @@ export default function OpsMatrixPage() {
             </div>
           </div>
 
+          {/* Upstream data-source problem (Metabase not responding for this range) */}
+          {!loading && loadError && (
+            <div style={{ padding: "14px 18px", background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 12, color: "#b91c1c", fontSize: 13.5, fontWeight: 600 }}>
+              {loadError}
+            </div>
+          )}
+          {!loading && !loadError && partialDays && (
+            <div style={{ padding: "14px 18px", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 12, color: "#b45309", fontSize: 13.5, fontWeight: 600 }}>
+              Some days in this range couldn't be loaded — the numbers below are partial.
+            </div>
+          )}
+
           {/* Single Unified Table */}
           <div style={{ border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden", background: "#fff", boxShadow: "0 2px 8px rgba(0,0,0,0.04)" }}>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
@@ -777,7 +808,7 @@ export default function OpsMatrixPage() {
           </thead>
           <tbody>
             {loading && <tr><td colSpan={7} style={{ padding: 40, textAlign: "center", color: C.muted }}>Loading...</td></tr>}
-            {!loading && groupedData.length === 0 && <tr><td colSpan={7} style={{ padding: 40, textAlign: "center", color: C.muted }}>No records match your selection.</td></tr>}
+            {!loading && groupedData.length === 0 && <tr><td colSpan={7} style={{ padding: 40, textAlign: "center", color: C.muted }}>{loadError ? "Data couldn't be loaded — see the message above." : "No records match your selection."}</td></tr>}
             
             {/* If Default Mode (No filters), just show overall weeks directly */}
             {!loading && isDefault && groupedData.map(group => (

@@ -70,6 +70,99 @@ const getIsoDate = (daysAgo) => {
   return d.toISOString().slice(0, 10);
 };
 
+// Card 2523's query is flaky: for some ranges (notably when the end date runs
+// past the last day that has data) ClickHouse either times out or returns
+// HTTP 202 with `data.status === "failed"` and zero rows. Single-day queries
+// usually succeed, so a failed multi-day range is retried day-by-day. Every
+// network call is bounded so one bad range can't hang the request until
+// Vercel's proxy kills it with its own 502. The per-request budget is kept
+// to ~21s: a 9s fast probe + one 12s follow-up wave (day-split or plain retry).
+const METABASE_PROBE_TIMEOUT_MS = 9000;
+const METABASE_DAYSPLIT_TIMEOUT_MS = 12000;
+const METABASE_WARMUP_TIMEOUT_MS = 30000;
+
+function buildKitchenPayload({ startDate, endDate, brand, subBrand, zone, city, area }) {
+  const payload = {
+    parameters: [
+      { type: "date/single", target: ["variable", ["template-tag", "s"]], value: startDate || "2026-07-01" },
+      { type: "date/single", target: ["variable", ["template-tag", "e"]], value: endDate || "2026-07-19" },
+    ],
+  };
+  if (brand) payload.parameters.push({ type: "category", target: ["variable", ["template-tag", "Brand"]], value: brand });
+  if (subBrand) payload.parameters.push({ type: "category", target: ["variable", ["template-tag", "sub_brand"]], value: subBrand });
+  if (zone) payload.parameters.push({ type: "category", target: ["variable", ["template-tag", "zone"]], value: zone });
+  if (city) payload.parameters.push({ type: "category", target: ["variable", ["template-tag", "city"]], value: city });
+  if (area) payload.parameters.push({ type: "category", target: ["variable", ["template-tag", "area"]], value: area });
+  return payload;
+}
+
+// One bounded call to card 2523. Normalizes every outcome to
+// { ok, data?, httpStatus?, error?, authFailure? } — never throws.
+async function callMetabaseKitchenOnce(apiKey, payload, timeoutMs = METABASE_PROBE_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(METABASE_API_URL_KITCHEN, {
+      method: "POST",
+      headers: { "x-api-key": apiKey, "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => "");
+      return {
+        ok: false,
+        httpStatus: response.status,
+        error: errorText || `HTTP ${response.status}`,
+        authFailure: [401, 403].includes(response.status),
+      };
+    }
+
+    const json = await response.json().catch(() => null);
+    const mbStatus = json?.data?.status || json?.status;
+    if (!json || !json.data || !Array.isArray(json.data.rows) || mbStatus === "failed") {
+      return { ok: false, httpStatus: 502, error: `Metabase query ${mbStatus || "returned an unexpected shape"}`, queryFailed: true };
+    }
+    return { ok: true, data: json.data };
+  } catch (err) {
+    const aborted = err.name === "AbortError";
+    return {
+      ok: false,
+      httpStatus: aborted ? 504 : 502,
+      error: aborted ? `Metabase did not respond within ${timeoutMs / 1000}s` : err.message,
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Background-only (cache warmup): a few sequential attempts with backoff and a
+// generous per-call timeout — no HTTP request is waiting on this.
+async function callMetabaseKitchenWithRetry(apiKey, payload, attempts = 3) {
+  let last = null;
+  for (let i = 1; i <= attempts; i++) {
+    last = await callMetabaseKitchenOnce(apiKey, payload, METABASE_WARMUP_TIMEOUT_MS);
+    if (last.ok || last.authFailure) return last;
+    if (i < attempts) await new Promise((r) => setTimeout(r, 2000 * i));
+  }
+  return last;
+}
+
+// Inclusive list of YYYY-MM-DD strings between two dates (capped for safety).
+function eachDay(startDate, endDate, cap = 40) {
+  const out = [];
+  if (!startDate || !endDate) return out;
+  const d = new Date(`${startDate}T00:00:00Z`);
+  const end = new Date(`${endDate}T00:00:00Z`);
+  if (isNaN(d) || isNaN(end)) return out;
+  while (d <= end && out.length < cap) {
+    out.push(d.toISOString().slice(0, 10));
+    d.setUTCDate(d.getUTCDate() + 1);
+  }
+  return out;
+}
+
 export async function warmUpOpsCache() {
   console.log("[WORKERS] Starting Ops Matrix Cache Warmup...");
   const ranges = [
@@ -85,29 +178,19 @@ export async function warmUpOpsCache() {
 
   for (const { s, e } of ranges) {
     try {
-      const payload = {
-        parameters: [
-          { type: "date/single", target: ["variable", ["template-tag", "s"]], value: s },
-          { type: "date/single", target: ["variable", ["template-tag", "e"]], value: e }
-        ]
-      };
-      
-      const response = await fetch(METABASE_API_URL_KITCHEN, {
-        method: "POST",
-        headers: { "x-api-key": apiKey, "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-      });
-      
-      if (response.ok) {
-        const json = await response.json();
-        if (json.data && json.data.rows) {
-          json.data.rows = cleanKitchenRows(json.data.rows);
-          const cacheKey = JSON.stringify({ startDate: s, endDate: e, brand: "", zone: "", city: "", area: "" });
-          queryCache.set(cacheKey, { data: json.data, timestamp: Date.now() });
-          console.log(`[WORKERS] Successfully warmed up ops cache for ${s} to ${e}`);
-        }
+      const result = await callMetabaseKitchenWithRetry(apiKey, buildKitchenPayload({ startDate: s, endDate: e }), 3);
+
+      // Only cache a genuine, non-empty result — never a "failed"/empty one,
+      // or the tab would serve "no records" from cache for the next 24h.
+      if (result.ok && Array.isArray(result.data.rows) && result.data.rows.length > 0) {
+        const data = { ...result.data, rows: cleanKitchenRows(result.data.rows) };
+        const cacheKey = JSON.stringify({ startDate: s, endDate: e, brand: "", zone: "", city: "", area: "" });
+        queryCache.set(cacheKey, { data, timestamp: Date.now() });
+        console.log(`[WORKERS] Warmed up ops cache for ${s} to ${e} (${data.rows.length} rows)`);
+      } else {
+        console.warn(`[WORKERS] Skipped ops cache warmup for ${s} to ${e}: ${result.error || "empty result"}`);
       }
-      
+
       // Wait a bit to not overwhelm the clickhouse db
       await new Promise(r => setTimeout(r, 5000));
     } catch (err) {
@@ -236,53 +319,62 @@ router.post("/prep-time/kitchen", async (req, res) => {
       }
     }
 
-    const payload = {
-      parameters: [
-        { type: "date/single", target: ["variable", ["template-tag", "s"]], value: startDate || "2026-07-01" },
-        { type: "date/single", target: ["variable", ["template-tag", "e"]], value: endDate || "2026-07-19" },
-      ]
-    };
+    const filters = { brand, subBrand, zone, city, area };
+    const rangeDays = eachDay(startDate, endDate);
+    // Day-splitting is only worth it (and only fits inside one HTTP request)
+    // for short ranges; longer ranges rely on the warm cache.
+    const canDaySplit = rangeDays.length >= 2 && rangeDays.length <= 7;
 
-    if (brand) {
-      payload.parameters.push({ type: "category", target: ["variable", ["template-tag", "Brand"]], value: brand });
-    }
-    if (subBrand) {
-      payload.parameters.push({ type: "category", target: ["variable", ["template-tag", "sub_brand"]], value: subBrand });
-    }
-    if (zone) {
-      payload.parameters.push({ type: "category", target: ["variable", ["template-tag", "zone"]], value: zone });
-    }
-    if (city) {
-      payload.parameters.push({ type: "category", target: ["variable", ["template-tag", "city"]], value: city });
-    }
-    if (area) {
-      payload.parameters.push({ type: "category", target: ["variable", ["template-tag", "area"]], value: area });
+    let result = await callMetabaseKitchenOnce(apiKey, buildKitchenPayload({ startDate, endDate, ...filters }));
+
+    // Upstream auth failure: mask as 502 (never forward 401/403 — the SPA reads
+    // that as "your session died" and logs the user out).
+    if (!result.ok && result.authFailure) {
+      console.error("[Metabase API Error 2523]", result.error);
+      return res.status(502).json({ success: false, error: "Failed to fetch kitchen data from Metabase", details: result.error });
     }
 
-    const response = await fetch(METABASE_API_URL_KITCHEN, {
-      method: "POST",
-      headers: {
-        "x-api-key": apiKey,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify(payload)
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error("[Metabase API Error 2523]", errorText);
-      // Same reasoning as the /prep-time route above — never forward Metabase's own
-      // 401/403 as-is, or the frontend logs the user out for an unrelated upstream failure.
-      const statusToSend = [401, 403].includes(response.status) ? 502 : response.status;
-      return res.status(statusToSend).json({ success: false, error: "Failed to fetch kitchen data from Metabase", details: errorText });
+    // The multi-day query timed out or came back status:"failed". Retry the
+    // days in parallel — single-day queries succeed even when the span doesn't.
+    if (!result.ok && canDaySplit) {
+      console.warn(`[OpsMatrix] ${startDate}..${endDate} failed upstream (${result.error}) — retrying ${rangeDays.length} days in parallel`);
+      const perDay = await Promise.all(
+        rangeDays.map((day) =>
+          callMetabaseKitchenOnce(apiKey, buildKitchenPayload({ startDate: day, endDate: day, ...filters }), METABASE_DAYSPLIT_TIMEOUT_MS),
+        ),
+      );
+      const good = perDay.filter((r) => r.ok);
+      if (good.length > 0) {
+        const rows = [];
+        for (const r of good) rows.push(...(r.data.rows || []));
+        result = { ok: true, data: { ...good[0].data, rows }, partialDays: good.length < rangeDays.length };
+      }
+    } else if (!result.ok && !result.authFailure) {
+      // Not day-splittable (1 day, or a range too wide to split inside one
+      // request) — one longer retry of the whole range.
+      const retry = await callMetabaseKitchenOnce(apiKey, buildKitchenPayload({ startDate, endDate, ...filters }), METABASE_DAYSPLIT_TIMEOUT_MS);
+      if (retry.ok) result = retry;
     }
 
-    const data = await response.json();
-    
-    // Save live fetch to cache for 24h
-    queryCache.set(exactCacheKey, { data: data.data, timestamp: Date.now() });
-    
-    return res.json({ success: true, data: data.data });
+    if (!result.ok) {
+      console.error("[Metabase API Error 2523]", result.error);
+      // 504 (not 502) so the SPA's existing retry loop gets a few more tries
+      // before it gives up and shows the banner.
+      return res.status(504).json({
+        success: false,
+        upstream: true,
+        error: "The Ops Matrix data source (Metabase) isn't responding for this date range. Try a narrower range or retry in a minute.",
+        details: result.error,
+      });
+    }
+
+    // Cache only a real, non-empty result (never a failed/empty one — that would
+    // pin "no records" for 24h). Skip caching partial day-split results too.
+    if (Array.isArray(result.data.rows) && result.data.rows.length > 0 && !result.partialDays) {
+      queryCache.set(exactCacheKey, { data: result.data, timestamp: Date.now() });
+    }
+
+    return res.json({ success: true, data: result.data, partialDays: !!result.partialDays });
 
   } catch (err) {
     console.error("[Ops Matrix Kitchen Error]", err);
