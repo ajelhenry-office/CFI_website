@@ -33,6 +33,86 @@ const getAvatarColor = (initials) => {
   return { bg: colors[index], color: textColors[index] };
 };
 
+// Green/amber/red signal per task — plain traffic-light status, no
+// underlying business data, so it's safe to show every logged-in employee
+// regardless of role. Reads straight from the DB (system_alerts +
+// pipeline_state via /api/health/tasks) — no mail dependency, so it can't go
+// silent for the same reason the task it's reporting on went silent.
+const HEALTH_STYLES = {
+  healthy: { label: "Healthy", color: "#16a34a", bg: "#dcfce7", border: "#bbf7d0" },
+  medium: { label: "Medium", color: "#d97706", bg: "#fffbeb", border: "#fde68a" },
+  error: { label: "Error", color: "#dc2626", bg: "#fef2f2", border: "#fecaca" },
+};
+
+function HealthCheckPanel() {
+  const [tasks, setTasks] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  const fetchTasks = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/health/tasks`, { headers: getAuthHeaders() });
+      const data = await res.json();
+      setTasks(data.tasks || []);
+      setError("");
+    } catch (err) {
+      setError("Failed to load task health.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchTasks();
+    const interval = setInterval(fetchTasks, 5 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  if (loading) return <div style={{ fontSize: 12.5, color: C.muted }}>Loading task health…</div>;
+  if (error) return <div style={{ fontSize: 12.5, color: "#b91c1c" }}>{error}</div>;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      {tasks.map((t) => {
+        const style = HEALTH_STYLES[t.status] || HEALTH_STYLES.error;
+        return (
+          <div
+            key={t.id}
+            style={{
+              ...cardStyle,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 16,
+              borderLeft: `4px solid ${style.color}`,
+            }}
+          >
+            <div>
+              <div style={{ fontSize: 13.5, fontWeight: 800, color: C.text }}>{t.name}</div>
+              <div style={{ fontSize: 12, color: C.muted, marginTop: 4 }}>{t.detail}</div>
+            </div>
+            <div
+              style={{
+                flexShrink: 0,
+                padding: "6px 14px",
+                borderRadius: 20,
+                backgroundColor: style.bg,
+                color: style.color,
+                border: `1px solid ${style.border}`,
+                fontSize: 11.5,
+                fontWeight: 800,
+              }}
+            >
+              {style.label}
+            </div>
+          </div>
+        );
+      })}
+      {tasks.length === 0 && <div style={{ fontSize: 12.5, color: C.muted }}>No monitored tasks yet.</div>}
+    </div>
+  );
+}
+
 // Multi-select role picker — an employee can hold more than one role at once (e.g.
 // Supervisor + Control Tower). `value` is an array; clicking a role toggles it in/out.
 function RolePicker({ options, value, onChange }) {
@@ -241,22 +321,30 @@ export function SettingsPage() {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 24, width: "100%", maxWidth: activeTab === "employees" ? 1100 : 620, fontFamily: FONT }}>
 
-      {canManageEmployees && (
-        <div style={{ display: "flex", gap: 16, borderBottom: `1px solid ${C.border}`, paddingBottom: 12, marginBottom: 8 }}>
-          <button
-            onClick={() => setActiveTab("general")}
-            style={{ background: "none", border: "none", fontSize: 14, fontWeight: 800, color: activeTab === "general" ? C.primary : C.muted, cursor: "pointer", borderBottom: activeTab === "general" ? `2px solid ${C.primary}` : "none", paddingBottom: 4 }}
-          >
-            General Settings
-          </button>
+      <div style={{ display: "flex", gap: 16, borderBottom: `1px solid ${C.border}`, paddingBottom: 12, marginBottom: 8 }}>
+        <button
+          onClick={() => setActiveTab("general")}
+          style={{ background: "none", border: "none", fontSize: 14, fontWeight: 800, color: activeTab === "general" ? C.primary : C.muted, cursor: "pointer", borderBottom: activeTab === "general" ? `2px solid ${C.primary}` : "none", paddingBottom: 4 }}
+        >
+          General Settings
+        </button>
+        {/* Visible to every role, not just admins — anyone can notice and
+            flag a stuck task even if the "right" person forgets to check. */}
+        <button
+          onClick={() => setActiveTab("health")}
+          style={{ background: "none", border: "none", fontSize: 14, fontWeight: 800, color: activeTab === "health" ? C.primary : C.muted, cursor: "pointer", borderBottom: activeTab === "health" ? `2px solid ${C.primary}` : "none", paddingBottom: 4 }}
+        >
+          Health Check
+        </button>
+        {canManageEmployees && (
           <button
             onClick={() => setActiveTab("employees")}
             style={{ background: "none", border: "none", fontSize: 14, fontWeight: 800, color: activeTab === "employees" ? C.primary : C.muted, cursor: "pointer", borderBottom: activeTab === "employees" ? `2px solid ${C.primary}` : "none", paddingBottom: 4 }}
           >
             Employees
           </button>
-        </div>
-      )}
+        )}
+      </div>
 
       {activeTab === "general" && (
         <>
@@ -276,6 +364,8 @@ export function SettingsPage() {
           </div>
         </>
       )}
+
+      {activeTab === "health" && <HealthCheckPanel />}
 
       {activeTab === "employees" && canManageEmployees && (
         <div style={{ backgroundColor: "#fff", borderRadius: 12, border: `1px solid ${C.borderSoft}`, padding: "20px" }}>

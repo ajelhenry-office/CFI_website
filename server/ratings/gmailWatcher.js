@@ -136,11 +136,19 @@ async function checkForNewReports(targetDateStr) {
   const drive = google.drive({ version: 'v3', auth });
   const downloadedFiles = [];
 
-  // Search for emails containing all these words in the subject in any order
-  let query = `from:(ranjith.r@swiggy.in OR beegum.kumar_cmt@external.swiggy.in) subject:(Funnel IGCC RDC Serviceability RHI)`;
-  if (!targetDateStr) {
-    query += ` -label:swiggy-processed`;
-  }
+  // Search for emails: sender, then subject, then exclude anything already
+  // labeled processed — applied on EVERY call, specific-date or not. This
+  // used to be skipped whenever a date was given (to "allow re-runs"), but
+  // daily_automation.js always calls with a specific date, so that exception
+  // was actually the normal path — every nightly check was re-listing and
+  // re-fetching the full details of every historical matching email (100+)
+  // just to read each one's Date header, instead of only the handful of
+  // messages it hadn't already seen. That unbounded, ever-growing per-run
+  // cost is what tipped over Gmail's per-minute quota. Every date still gets
+  // its own dedicated check as the catch-up loop walks forward day by day,
+  // so a message's date-specific check still labels it exactly once —
+  // nothing is silently skipped, it's just never re-fetched after that.
+  let query = `from:(ranjith.r@swiggy.in OR beegum.kumar_cmt@external.swiggy.in) subject:(Funnel IGCC RDC Serviceability RHI) -label:swiggy-processed`;
 
   console.log(`Checking Gmail for Swiggy reports...`);
   
@@ -271,11 +279,12 @@ async function checkForNewReports(targetDateStr) {
       }
     }
 
-    if (!targetDateStr) {
-      await markEmailAsProcessed(gmail, message.id);
-    } else {
-      console.log(`Running for a specific date, skipping 'processed' label to allow re-runs.`);
-    }
+    // Always label once handled — this is what makes the query filter above
+    // actually shrink the candidate set instead of re-scanning it forever.
+    // DB inserts are already deduped on top of this (ON CONFLICT DO NOTHING),
+    // so there's no data-integrity reason to ever re-fetch an already-seen
+    // message; this label is purely an API-cost optimization.
+    await markEmailAsProcessed(gmail, message.id);
   }
 
   return downloadedFiles;

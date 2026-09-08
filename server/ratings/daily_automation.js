@@ -1,17 +1,40 @@
 import pipeline from './run_pipeline.js';
 import { pool } from './db.js';
-import { raiseAlert, resolveAlert } from '../alerts/alertService.js';
 
-// Same category string every time this alert is raised or resolved — the
-// alert system dedupes/cools-down and later sends a "resolved" follow-up
-// based on matching this exact string, so it must stay consistent.
+// Same category string every time this is written — the Settings → Health
+// Check page (server/health.routes.js) looks up the latest unresolved row
+// for this exact string to compute the task's status.
 const ALERT_CATEGORY = 'Ratings & Insights Mail Fetch';
 
-// Whoever actually has access to the Ratings & Insights tab (per Sidebar.jsx's
-// own role->tab mapping) plus explicitly super_admin/admin — not the Toggle
-// tab's default alert audience (super_admin + control_tower), which is a
-// different set of people entirely.
-const ALERT_ROLES = ['super_admin', 'admin', 'dark_kitchen', 'supervisor'];
+// Writes directly to system_alerts — deliberately NOT going through
+// server/alerts/alertService.js, which sends an email. That email used the
+// same Gmail account as the report fetcher itself, so when Gmail broke, both
+// the fetch AND the alert-about-the-fetch-failing broke together — nobody
+// got notified for 5 days despite the alert firing correctly in the DB. The
+// Settings health page reads this table directly instead, with no mail
+// dependency at all, so it can't go silent the same way. Toggle's alerting
+// still uses alertService.js/email unchanged — this is Ratings-only.
+async function markAlert(category, severity, message, details) {
+  const existing = await pool.query(
+    `SELECT id FROM system_alerts WHERE category = $1 AND resolved_at IS NULL`,
+    [category],
+  );
+  if (existing.rows.length > 0) {
+    await pool.query(
+      `UPDATE system_alerts SET occurrence_count = occurrence_count + 1, severity = $2, message = $3, details = $4 WHERE id = $1`,
+      [existing.rows[0].id, severity, message, details],
+    );
+  } else {
+    await pool.query(
+      `INSERT INTO system_alerts (category, severity, message, details) VALUES ($1, $2, $3, $4)`,
+      [category, severity, message, details],
+    );
+  }
+}
+
+async function clearAlert(category) {
+  await pool.query(`UPDATE system_alerts SET resolved_at = NOW() WHERE category = $1 AND resolved_at IS NULL`, [category]);
+}
 
 // Computes a calendar date string (YYYY-MM-DD) in IST regardless of the host's
 // own timezone, by adding the fixed UTC+5:30 offset and reading back the UTC
@@ -86,7 +109,7 @@ async function releaseLock() {
 // true when the check genuinely completed (mail found and processed, or
 // confirmed no mail exists for that date — both count), false only when it
 // actually failed after exhausting retries, with `error` carrying the real
-// message for the alert email.
+// message for the recorded alert.
 async function checkReceivedDate(dateStr) {
   console.log(`[DAILY AUTOMATION] Checking mail received on ${dateStr}...`);
   return pipeline.runPipeline(dateStr);
@@ -113,12 +136,11 @@ async function runDailyAutomation() {
     if (!yesterdayResult.success) {
       hadFailure = true;
       console.error(`[DAILY AUTOMATION] Yesterday's recheck failed: ${yesterdayResult.error}`);
-      await raiseAlert(
+      await markAlert(
         ALERT_CATEGORY,
         'WARNING',
         `The Ratings & Insights daily mail check failed while rechecking yesterday's mail (${getISTDateString(-1)}).`,
         yesterdayResult.error,
-        ALERT_ROLES,
       );
     }
 
@@ -141,12 +163,11 @@ async function runDailyAutomation() {
       if (!result.success) {
         hadFailure = true;
         console.error(`[DAILY AUTOMATION] Failed checking ${cursor} — stopping catch-up here; will retry from this date on the next run.`);
-        await raiseAlert(
+        await markAlert(
           ALERT_CATEGORY,
           'WARNING',
           `The Ratings & Insights daily mail check failed on ${cursor} and stopped there — every date after it is also on hold until this is fixed. It will retry automatically from this date on the next run.`,
           result.error,
-          ALERT_ROLES,
         );
         break;
       }
@@ -155,7 +176,7 @@ async function runDailyAutomation() {
     }
 
     if (!hadFailure) {
-      await resolveAlert(ALERT_CATEGORY, 'The Ratings & Insights daily mail check is running normally again.', ALERT_ROLES);
+      await clearAlert(ALERT_CATEGORY);
     }
 
     console.log('[DAILY AUTOMATION] Done.');
@@ -175,15 +196,14 @@ runDailyAutomation()
     // rather than only ever showing up in the log file.
     console.error('[DAILY AUTOMATION] Fatal error:', err.message);
     try {
-      await raiseAlert(
+      await markAlert(
         ALERT_CATEGORY,
         'CRITICAL',
         'The Ratings & Insights daily mail automation crashed unexpectedly and did not complete.',
         err.message,
-        ALERT_ROLES,
       );
     } catch (alertErr) {
-      console.error('[DAILY AUTOMATION] Also failed to send the crash alert:', alertErr.message);
+      console.error('[DAILY AUTOMATION] Also failed to record the crash alert:', alertErr.message);
     }
     process.exit(1);
   });
