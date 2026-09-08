@@ -400,6 +400,25 @@ router.post("/toggle", blockIfPaused, blockIfFrozen, async (req, res) => {
     return res.status(429).json({ error: `Rate limit exceeded (${RATE_LIMIT_CEILING}/min). Try again later.` });
   }
 
+  // Re-check right before acting — the wait above can now run for several minutes
+  // under real contention (up to 5 tries), long enough for a more recent click (this
+  // store, another tab/user) or a real order-count change to land in between. Without
+  // this, a held-back enable decided at the top of this request could still fire after
+  // someone else has since disabled the store, or apply a stale threshold decision.
+  try {
+    const recheckRes = await pool.query(`SELECT desired_state, active_orders FROM store_state WHERE location_id = $1`, [location_id]);
+    const recheck = recheckRes.rows[0];
+    if (recheck && recheck.desired_state !== desiredState) {
+      return res.json({ success: true, resolvedAction: recheck.desired_state === 'ONLINE' ? 'enable' : 'disable', message: 'Superseded by a more recent change — no action taken.' });
+    }
+    if (action === 'enable') {
+      realAction = resolveOnlineAction(brand, recheck?.active_orders);
+      wasAutoThrottled = realAction === 'disable';
+    }
+  } catch (err) {
+    console.error("[Post-wait recheck error]", err);
+  }
+
   try {
     const apiRes = await performToggleAPI(location_id, realAction, brand);
 

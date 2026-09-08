@@ -307,7 +307,7 @@ export async function applySingleCorrections(stores, resolveAction, actorEmail, 
     const fresh = freshRes.rows[0];
     if (!fresh || fresh.desired_state !== 'ONLINE') continue; // manually taken offline since the candidate list was built — leave it alone
 
-    const action = resolveAction({ ...store, active_orders: fresh.active_orders });
+    let action = resolveAction({ ...store, active_orders: fresh.active_orders });
     const storeLabel = `${store.name || store.store_name || store.location_id} (${store.location_id})`;
 
     while (true) {
@@ -321,6 +321,21 @@ export async function applySingleCorrections(stores, resolveAction, actorEmail, 
       } else {
         break;
       }
+    }
+
+    // Re-read fresh state again right before acting — the rate-limit wait above can now
+    // run for tens of seconds to a few minutes under real contention, long enough for a
+    // manual override or a real change in order count to land in between. Deciding once
+    // before the wait and blindly executing it after would otherwise be able to
+    // re-enable a store the user just manually disabled, or apply a throttle decision
+    // that's no longer correct now that the order count has moved.
+    try {
+      const recheckRes = await pool.query(`SELECT desired_state, active_orders FROM store_state WHERE location_id = $1`, [store.location_id]);
+      const recheck = recheckRes.rows[0];
+      if (!recheck || recheck.desired_state !== 'ONLINE') continue; // manually taken offline during the wait — leave it alone
+      action = resolveAction({ ...store, active_orders: recheck.active_orders });
+    } catch (err) {
+      console.error("[Post-wait recheck error]", err);
     }
 
     try {
