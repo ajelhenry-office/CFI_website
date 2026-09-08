@@ -349,7 +349,9 @@ export default function OpsMatrixPage() {
         let fetchSuccess = false;
         let lastErr = "";
 
-        for (let attempt = 1; attempt <= 3; attempt++) {
+        // The first (cold) request for a range can take ~30s and may hit the
+        // proxy's timeout — but it warms Metabase's cache, so a retry lands fast.
+        for (let attempt = 1; attempt <= 4; attempt++) {
           try {
             const payloadParams = {
               startDate: appliedStartDate,
@@ -374,10 +376,10 @@ export default function OpsMatrixPage() {
               json = await response.json();
               fetchSuccess = true;
               break;
-            } else if (response.status === 504 && attempt < 3) {
-              console.warn(`[OpsMatrix] Vercel 504 Timeout on attempt ${attempt}. Waiting...`);
+            } else if (response.status === 504 && attempt < 4) {
+              console.warn(`[OpsMatrix] 504 on attempt ${attempt} — cold query warming, retrying...`);
               lastErr = "The data source timed out.";
-              await new Promise(r => setTimeout(r, 4000));
+              await new Promise(r => setTimeout(r, 7000));
             } else {
               try {
                 const body = await response.json();
@@ -389,7 +391,7 @@ export default function OpsMatrixPage() {
             }
           } catch (err) {
             lastErr = err?.message || "Network error.";
-            if (attempt < 3) {
+            if (attempt < 4) {
               await new Promise(r => setTimeout(r, 3000));
             }
           }

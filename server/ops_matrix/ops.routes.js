@@ -70,16 +70,20 @@ const getIsoDate = (daysAgo) => {
   return d.toISOString().slice(0, 10);
 };
 
-// Card 2523's query is flaky: for some ranges (notably when the end date runs
-// past the last day that has data) ClickHouse either times out or returns
-// HTTP 202 with `data.status === "failed"` and zero rows. Single-day queries
-// usually succeed, so a failed multi-day range is retried day-by-day. Every
-// network call is bounded so one bad range can't hang the request until
-// Vercel's proxy kills it with its own 502. The per-request budget is kept
-// to ~21s: a 9s fast probe + one 12s follow-up wave (day-split or plain retry).
-const METABASE_PROBE_TIMEOUT_MS = 9000;
-const METABASE_DAYSPLIT_TIMEOUT_MS = 12000;
-const METABASE_WARMUP_TIMEOUT_MS = 30000;
+// Card 2523's ClickHouse query is SLOW: a cold run takes ~28s, after which
+// Metabase caches the result and repeat calls return in <1s. So the timeout
+// MUST comfortably exceed the cold runtime — abort it early and the query is
+// cancelled, Metabase never caches it, and every future call is slow too.
+// If Vercel's proxy gives up on the first (cold) request, that request has
+// still warmed Metabase's cache, so the SPA's automatic retry lands fast.
+// Overridable per-env in case the query gets slower/faster.
+const asMs = (v, d) => {
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? n : d;
+};
+const METABASE_PROBE_TIMEOUT_MS = asMs(process.env.METABASE_PROBE_TIMEOUT_MS, 40000);
+const METABASE_DAYSPLIT_TIMEOUT_MS = asMs(process.env.METABASE_DAYSPLIT_TIMEOUT_MS, 40000);
+const METABASE_WARMUP_TIMEOUT_MS = asMs(process.env.METABASE_WARMUP_TIMEOUT_MS, 50000);
 
 function buildKitchenPayload({ startDate, endDate, brand, subBrand, zone, city, area }) {
   const payload = {
