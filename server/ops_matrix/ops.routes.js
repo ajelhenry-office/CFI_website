@@ -21,6 +21,14 @@ const BRAND_ZONES = {
 
 const queryCache = new Map();
 
+// Some deploy environments (EC2 systemd/PM2 env, older dotenv) hand us the key
+// with its surrounding quotes still attached -> Metabase replies "Unauthenticated"
+// -> we rewrite that to 502 -> the tab shows no data. Strip quotes/whitespace defensively.
+export const getMetabaseApiKey = () =>
+  (process.env.METABASE_API || "").trim().replace(/^["']+|["']+$/g, "");
+
+export const METABASE_CARD_KITCHEN_URL = METABASE_API_URL_KITCHEN;
+
 const ALLOWED_BRANDS = new Set([
   "99SLICE",
   "Arambam - Start with Millet by Urbanpiper",
@@ -72,7 +80,7 @@ export async function warmUpOpsCache() {
     { s: getIsoDate(182), e: getIsoDate(1) }  // 6 months
   ];
 
-  const apiKey = process.env.METABASE_API;
+  const apiKey = getMetabaseApiKey();
   if (!apiKey) return;
 
   for (const { s, e } of ranges) {
@@ -114,7 +122,7 @@ router.post("/prep-time", async (req, res) => {
     const { startDate, endDate, brand, subBrand, zone, city, area } = req.body;
     
     // Ensure the API Key is loaded
-    const apiKey = process.env.METABASE_API;
+    const apiKey = getMetabaseApiKey();
     if (!apiKey) {
       return res.status(500).json({ success: false, error: "Metabase API Key not configured in .env" });
     }
@@ -187,7 +195,7 @@ router.post("/prep-time/kitchen", async (req, res) => {
   try {
     const { startDate, endDate, brand, subBrand, zone, city, area } = req.body;
     
-    const apiKey = process.env.METABASE_API;
+    const apiKey = getMetabaseApiKey();
     if (!apiKey) {
       return res.status(500).json({ success: false, error: "Metabase API Key not configured in .env" });
     }

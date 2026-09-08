@@ -1,5 +1,6 @@
 import express from "express";
 import { pool } from "./ratings/db.js";
+import { getMetabaseApiKey, METABASE_CARD_KITCHEN_URL } from "./ops_matrix/ops.routes.js";
 
 const router = express.Router();
 
@@ -48,11 +49,73 @@ async function ratingsMailFetchHealth() {
   }
 }
 
+// Live probe of the Metabase path the Ops Matrix tab depends on. The tab goes
+// blank whenever card 2523 stops answering — most often because METABASE_API is
+// missing, revoked, or (see ops.routes.js) arrives quote-wrapped and reads as
+// "Unauthenticated". A 401/403 from Metabase is surfaced by /prep-time/kitchen
+// as a 502, so this card is the only place that failure is legible before a
+// user notices an empty table.
+async function opsMatrixMetabaseHealth() {
+  const base = { id: "ops_matrix_metabase", name: "Ops Matrix (Metabase)" };
+
+  const apiKey = getMetabaseApiKey();
+  if (!apiKey) {
+    return { ...base, status: "error", detail: "METABASE_API is not configured on the server" };
+  }
+
+  // 1-day window keeps the probe cheap; it exercises auth + connectivity, not volume.
+  const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+  const y = new Date(Date.now() + IST_OFFSET_MS - 86400000);
+  const day = `${y.getUTCFullYear()}-${String(y.getUTCMonth() + 1).padStart(2, "0")}-${String(y.getUTCDate()).padStart(2, "0")}`;
+  const payload = {
+    parameters: [
+      { type: "date/single", target: ["variable", ["template-tag", "s"]], value: day },
+      { type: "date/single", target: ["variable", ["template-tag", "e"]], value: day },
+    ],
+  };
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15000);
+  try {
+    const t0 = Date.now();
+    const resp = await fetch(METABASE_CARD_KITCHEN_URL, {
+      method: "POST",
+      headers: { "x-api-key": apiKey, "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+    const ms = Date.now() - t0;
+
+    if (resp.status === 401 || resp.status === 403) {
+      return { ...base, status: "error", detail: `Metabase rejected the API key (HTTP ${resp.status}) — Ops Matrix will show no data. Check METABASE_API on the server.` };
+    }
+    if (!resp.ok) {
+      return { ...base, status: "error", detail: `Metabase card 2523 returned HTTP ${resp.status}` };
+    }
+
+    const json = await resp.json().catch(() => null);
+    if (!json || !json.data || !Array.isArray(json.data.rows)) {
+      return { ...base, status: "medium", detail: `Metabase responded (HTTP ${resp.status}) but the payload shape was unexpected` };
+    }
+    if (ms > 10000) {
+      return { ...base, status: "medium", detail: `Responding slowly — ${(ms / 1000).toFixed(1)}s for a 1-day query` };
+    }
+    return { ...base, status: "healthy", detail: `Metabase API responding (HTTP ${resp.status}, ${(ms / 1000).toFixed(1)}s)` };
+  } catch (err) {
+    if (err.name === "AbortError") {
+      return { ...base, status: "error", detail: "Metabase did not respond within 15s" };
+    }
+    return { ...base, status: "error", detail: `Metabase unreachable: ${err.message}` };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // One card per monitored task. Adding a future task (a different tab's
 // automation) is just adding another entry to this array — the frontend
 // renders whatever comes back, no changes needed there.
 router.get("/tasks", async (req, res) => {
-  const tasks = await Promise.all([ratingsMailFetchHealth()]);
+  const tasks = await Promise.all([ratingsMailFetchHealth(), opsMatrixMetabaseHealth()]);
   res.json({ tasks });
 });
 

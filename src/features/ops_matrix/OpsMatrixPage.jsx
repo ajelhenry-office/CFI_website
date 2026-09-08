@@ -383,7 +383,37 @@ export default function OpsMatrixPage() {
         }
 
         if (fetchSuccess && json && json.success && json.data && json.data.rows) {
-          rowsToProcess = json.data.rows;
+          const ALLOWED_BRANDS = new Set([
+            "99SLICE",
+            "Arambam - Start with Millet by Urbanpiper",
+            "CakeZone ++",
+            "Eatfit - MOC",
+            "Krispy Kreme",
+            "Nomad Pizza",
+            "Olio ++",
+            "Rolls On Wheels",
+            "Roz Shawarma by Sharief Bhai",
+            "Sharief Bhai"
+          ]);
+
+          const cleanedRows = [];
+          for (const r of json.data.rows) {
+            let bName = r[0];
+            let sbName = r[1];
+
+            if (!bName || !ALLOWED_BRANDS.has(bName)) continue;
+            if (sbName === "Home Plate - EatFit" || sbName === "Madras Curd Rice Company") continue;
+
+            if (bName === "Krispy Kreme") {
+              sbName = null;
+            }
+
+            const newRow = [...r];
+            newRow[1] = sbName;
+            cleanedRows.push(newRow);
+          }
+          
+          rowsToProcess = cleanedRows;
         }
       }
 
