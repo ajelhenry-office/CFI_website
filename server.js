@@ -37,7 +37,13 @@ if (missingEnvVars.length > 0) {
 }
 
 const app = express();
-app.use(cors());
+// exposedHeaders: custom response headers aren't readable by browser JS on a
+// cross-origin request unless explicitly listed — X-Session-Invalid (used by
+// handleApiError in src/api.js to tell "your session is dead" apart from the
+// many other legitimate 403s in this app) would silently never be visible to
+// fetch() in local dev (a genuine cross-origin request) without this, even
+// though it works by accident in production (Vercel proxies /api same-origin).
+app.use(cors({ exposedHeaders: ["X-Session-Invalid"] }));
 app.use(express.json());
 app.use((req, res, next) => {
   console.log(`[HTTP] ${req.method} ${req.url} - Body:`, JSON.stringify(req.body));

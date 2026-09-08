@@ -14,7 +14,12 @@ export function getAuthHeaders() {
 }
 
 export function handleApiError(res) {
-  if (res.status === 401) {
+  // 401 is the token-missing case; 403 is shared by many legitimate
+  // "you're logged in fine, just not allowed to do THIS" responses (e.g.
+  // "Admin access required") that must NOT force a logout — only a 403
+  // carrying X-Session-Invalid (an expired/invalid token, or a now-locked
+  // account) means the session itself is dead and needs a fresh login.
+  if (res.status === 401 || (res.status === 403 && res.headers.get('X-Session-Invalid'))) {
     localStorage.removeItem('token');
     localStorage.removeItem('user');
     window.location.href = '/';

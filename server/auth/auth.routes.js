@@ -70,6 +70,12 @@ export const authMiddleware = async (req, res, next) => {
     // a role change takes effect on the very next request, not at next login.
     const { rows } = await pool.query('SELECT is_locked, role, roles FROM authorized_users WHERE id = $1', [decoded.id]);
     if (rows.length === 0 || rows[0].is_locked) {
+      // X-Session-Invalid marks this as "your session itself is dead" (vs. the
+      // many other 403s in this app — "not allowed to do THIS action" — which
+      // must never force a logout). handleApiError (src/api.js) reads this
+      // header, not the JSON body, since it must check synchronously without
+      // consuming the response stream out from under the caller's own res.json().
+      res.set('X-Session-Invalid', '1');
       return res.status(403).json({ success: false, error: 'Account has been locked by admin' });
     }
 
@@ -82,6 +88,7 @@ export const authMiddleware = async (req, res, next) => {
   } catch (err) {
     console.error("Auth Middleware Error:", err);
     if (err.name === 'JsonWebTokenError' || err.name === 'TokenExpiredError') {
+      res.set('X-Session-Invalid', '1');
       return res.status(403).json({ success: false, error: 'Forbidden: Invalid or expired token', details: err.message });
     }
     return res.status(500).json({ success: false, error: 'Internal server error during authentication', details: err.message });
