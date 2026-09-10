@@ -6,9 +6,16 @@ const connectionString = process.env.DATABASE_URL || "postgresql://new_user:Stro
 
 export const pool = new pg.Pool({
   connectionString,
-  max: 20, // Max clients in the pool
+  // 20 was too small: a bulk toggle job runs 10 stores concurrently at ~5 queries each,
+  // and with the dashboard polling several endpoints every few seconds plus the toggle
+  // crons, the pool would starve — a query then times out waiting for a connection and
+  // throws, which used to silently kill the whole bulk job. 35 gives real headroom and
+  // is well under Postgres' default 100-connection ceiling (this app is the only client).
+  max: 35,
   idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 5000,
+  // A little more patience before a query gives up on getting a connection, so a brief
+  // spike degrades into "slightly slower" instead of "throws".
+  connectionTimeoutMillis: 10000,
 });
 
 // Deliberately NOT using alertService here — it tracks alert cooldowns via the same

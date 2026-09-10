@@ -1,7 +1,7 @@
 import { pool } from '../ratings/db.js';
 import { warmUpOpsCache } from '../ops_matrix/ops.routes.js';
 import { startTimingWorker } from '../timing/timingWorker.js';
-import { AUTO_MANAGED_BRANDS, isTogglePaused, runHourlyRecheckForBrand, isChainAlive } from './queue.js';
+import { AUTO_MANAGED_BRANDS, isTogglePaused, runHourlyRecheckForBrand, isChainAlive, normalizeBrandKey, touchBulkActivity, scheduleNextAttempt } from './queue.js';
 import { performToggleAPI } from './toggle.routes.js';
 import { raiseAlert, resolveAlert } from '../alerts/alertService.js';
 import { scheduleDailyHealthCheck } from '../alerts/dailyHealthCheck.js';
@@ -86,6 +86,15 @@ export function startWorkers() {
           await raiseAlert('BULK_JOB_STUCK', 'WARNING',
             `A bulk job (started by ${job.actor_email} for ${job.brands?.join(', ')}) stopped sending a heartbeat and was marked FAILED — likely the server restarted or crashed mid-run.`,
             `Job #${job.id} — ${job.total_stores - job.pending_count}/${job.total_stores} stores had completed before it stopped.`);
+          // Its own runBulkJob completion never ran, so re-arm each brand's Hourly
+          // Recheck chain here — otherwise a stale auto job could leave that brand
+          // with no next attempt scheduled until a server restart.
+          for (const b of (job.brands || [])) {
+            const key = normalizeBrandKey(b);
+            if (AUTO_MANAGED_BRANDS.includes(key)) {
+              try { touchBulkActivity(key); scheduleNextAttempt(key, performToggleAPI); } catch { /* keep going */ }
+            }
+          }
         }
       }
     } catch (err) {

@@ -59,6 +59,19 @@ async function blockIfFrozen(req, res, next) {
 
 // ─── URBANPIPER CONFIG ───────────────────────────────────────
 const UP_LOCATION_URL = "https://api.urbanpiper.com/hub/api/v1/location/";
+
+// Node's fetch has no default timeout — a hung UrbanPiper connection would otherwise
+// stall a whole bulk-job chunk indefinitely (nothing ever resolves, the job freezes).
+// This aborts after 20s so a hang fails fast and is handled like any other error.
+async function fetchWithTimeout(url, opts = {}, ms = 20000) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), ms);
+  try {
+    return await fetch(url, { ...opts, signal: ctrl.signal });
+  } finally {
+    clearTimeout(t);
+  }
+}
 // Matches the platform list used by CakeZone's own working Apps Script tool, which
 // confirms real stores exist on more than just swiggy/zomato — the narrower list here
 // meant KitchenPulse could never toggle a store's listing on any of the others. Safe
@@ -146,7 +159,7 @@ export async function performToggleAPI(location_id, action, brand) {
         platforms: currentPlatforms,
       };
 
-      const response = await fetch(UP_LOCATION_URL, {
+      const response = await fetchWithTimeout(UP_LOCATION_URL, {
         method: "POST",
         headers: {
           "Authorization": `apikey ${creds.username}:${creds.apikey}`,
@@ -270,7 +283,7 @@ async function tryVerifyAction(ids, creds, brandKey) {
   for (const id of ids) {
     await waitForRateLimitRoom(brandKey);
     try {
-      let response = await fetch(UP_LOCATION_URL, {
+      let response = await fetchWithTimeout(UP_LOCATION_URL, {
         method: "POST",
         headers: {
           "Authorization": `apikey ${creds.username}:${creds.apikey}`,
@@ -284,7 +297,7 @@ async function tryVerifyAction(ids, creds, brandKey) {
       // just busy. One wait-and-retry, same pattern performToggleAPI already uses.
       if (response.status === 429) {
         await new Promise(r => setTimeout(r, 61000));
-        response = await fetch(UP_LOCATION_URL, {
+        response = await fetchWithTimeout(UP_LOCATION_URL, {
           method: "POST",
           headers: {
             "Authorization": `apikey ${creds.username}:${creds.apikey}`,
@@ -326,7 +339,7 @@ async function tryStatusAction(ids, creds, currentStatus, brandKey) {
   for (const id of ids) {
     await waitForRateLimitRoom(brandKey);
     try {
-      let response = await fetch(UP_LOCATION_URL, {
+      let response = await fetchWithTimeout(UP_LOCATION_URL, {
         method: "POST",
         headers: {
           "Authorization": `apikey ${creds.username}:${creds.apikey}`,
@@ -337,7 +350,7 @@ async function tryStatusAction(ids, creds, currentStatus, brandKey) {
       });
       if (response.status === 429) {
         await new Promise(r => setTimeout(r, 61000));
-        response = await fetch(UP_LOCATION_URL, {
+        response = await fetchWithTimeout(UP_LOCATION_URL, {
           method: "POST",
           headers: {
             "Authorization": `apikey ${creds.username}:${creds.apikey}`,

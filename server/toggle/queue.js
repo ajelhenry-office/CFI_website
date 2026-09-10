@@ -278,7 +278,25 @@ export async function initiateBulkJob(stores, action, filterContext, actorEmail,
   // exactly when a job it started actually finishes (not just when it was created) to
   // correctly measure the 30-minute gap from real completion.
   const completionPromise = runBulkJob(jobId, activeStores, action, filterContext, performToggleAPI, actorEmail, source)
-    .catch(err => console.error("Bulk job error:", err));
+    .catch(async (err) => {
+      // runBulkJob threw before it could set its own terminal status — the job would
+      // otherwise sit "RUNNING" forever with a frozen heartbeat. Mark it FAILED, clear
+      // the in-progress batch, re-arm the brand's chain, and alert. Everything here is
+      // best-effort so a still-starved pool can't re-throw out of the handler.
+      console.error(`[initiateBulkJob] job #${jobId} crashed:`, err);
+      await pool.query(`UPDATE bulk_toggle_jobs SET status = 'FAILED', current_batch = NULL WHERE id = $1 AND status IN ('RUNNING','PAUSED')`, [jobId]).catch(() => {});
+      await logActivity({
+        storeName: `— job #${jobId} failed unexpectedly — ${err.message} —`, storeId: null,
+        brand: brands.join(', '), actorEmail: 'System', action: action.toUpperCase(), result: 'FAILED',
+        errorMsg: err.message, isBulk: true, isAutomated: source.startsWith('AUTO_'), bulkJobId: jobId, source: 'JOB_CRASH',
+      }).catch(() => {});
+      for (const b of brands) {
+        try { touchBulkActivity(b); scheduleNextAttempt(b, performToggleAPI); } catch { /* keep going */ }
+      }
+      await raiseAlert(`BULK_JOB_CRASH:${brands.join(',')}`, 'CRITICAL',
+        `Bulk job #${jobId} (${source}) threw and was marked FAILED: ${err.message}. Usually a DB connection-pool timeout under load.`,
+        `Started by ${actorEmail}`).catch(() => {});
+    });
 
   return { jobId, skippedPaused: pausedIds.size, completionPromise };
 }
@@ -645,6 +663,11 @@ export async function runBulkJob(jobId, stores, action, filterContext, performTo
       const brand = store.brand || "ovenfresh";
       const storeLabel = `${store.store_name || store.name || store.location_id} (${store.location_id})`;
 
+     // Outer guard: whatever throws in here — a DB pool timeout under load being the
+     // usual culprit — must never escape and reject Promise.all, which is how a job
+     // used to freeze at "0/699, still RUNNING" forever. Anything unhandled below is
+     // counted as one failed store and the job keeps going.
+     try {
       // ─── JUST-IN-TIME VALIDATION & THRESHOLD CHECK ───
       try {
         const stateRes = await pool.query(`SELECT desired_state, active_orders FROM store_state WHERE location_id = $1`, [store.location_id]);
@@ -769,14 +792,25 @@ export async function runBulkJob(jobId, stores, action, filterContext, performTo
           referenceIds: toggleRes.referenceIds,
         });
       } catch (err) {
-         await pool.query('UPDATE bulk_toggle_jobs SET failed_count = failed_count + 1, pending_count = pending_count - 1 WHERE id = $1', [jobId]);
-         await logProblemStore(store, currentAction, err.message);
+         await pool.query('UPDATE bulk_toggle_jobs SET failed_count = failed_count + 1, pending_count = pending_count - 1 WHERE id = $1', [jobId]).catch(() => {});
+         await logProblemStore(store, currentAction, err.message).catch(() => {});
          await logActivity({
            storeName: storeLabel, storeId: store.location_id, brand,
            actorEmail, action: currentAction.toUpperCase(), result: 'FAILED', errorMsg: err.message,
            isBulk: true, isAutomated: isAutomatedSource, bulkJobId: jobId, source,
-         });
+         }).catch(() => {});
       }
+     } catch (outerErr) {
+       // Escaped every inner handler — count it once as a failed store and move on.
+       // Best-effort cleanup: if the pool is still starved these just no-op.
+       console.error(`[runBulkJob] store ${store.location_id} crashed:`, outerErr);
+       await pool.query('UPDATE bulk_toggle_jobs SET failed_count = failed_count + 1, pending_count = pending_count - 1 WHERE id = $1', [jobId]).catch(() => {});
+       await logActivity({
+         storeName: storeLabel, storeId: store.location_id, brand,
+         actorEmail, action: currentAction.toUpperCase(), result: 'FAILED', errorMsg: `Unexpected: ${outerErr.message}`,
+         isBulk: true, isAutomated: isAutomatedSource, bulkJobId: jobId, source,
+       }).catch(() => {});
+     }
     }));
 
     // Delay 2s between chunks for UP strictness

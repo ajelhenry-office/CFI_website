@@ -183,7 +183,10 @@ export default function TogglePage({ userRole, userRoles }) {
 
   useEffect(() => {
     fetchSidebar();
-    const intervalMs = hasActiveJobForBrand ? 2500 : 15000;
+    // 4s (not 2.5s) while a job runs — still feels live for the card flips, but every
+    // poll hits several endpoints and, multiplied across open tabs, that was real
+    // pressure on the DB connection pool during big bulk jobs.
+    const intervalMs = hasActiveJobForBrand ? 4000 : 15000;
     const timer = setInterval(fetchSidebar, intervalMs);
     return () => clearInterval(timer);
   }, [fetchSidebar, hasActiveJobForBrand]);
