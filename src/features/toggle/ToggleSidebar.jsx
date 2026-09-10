@@ -23,12 +23,28 @@ function timeAgo(iso) {
   return `${Math.round(mins / 60)}h ago`;
 }
 
+function sidebarActionStyle(color, bg, borderColor, disabled = false) {
+  return {
+    flex: 1,
+    padding: "7px 0",
+    borderRadius: 8,
+    border: `1.5px solid ${borderColor}`,
+    backgroundColor: bg,
+    color,
+    fontSize: 11,
+    fontWeight: 800,
+    fontFamily: FONT,
+    cursor: disabled ? "not-allowed" : "pointer",
+    opacity: disabled ? 0.5 : 1,
+  };
+}
+
 // data/jobs come from separate fetches (see TogglePage): `data` is the (possibly
 // brand-scoped) sidebar-data response driving Health/Recent/Problems, `jobs` is always
 // every brand's active bulk jobs regardless of which workspace is open — this is the
 // replacement for what used to be a floating popup. Staff now check status here on
 // their own, on login, instead of it interrupting them automatically.
-export default function ToggleSidebar({ data, jobs, hasBrandContext, brandKey, nextAutoRunAt, fetchData, currentUserEmail, isAdmin }) {
+export default function ToggleSidebar({ data, jobs, hasBrandContext, brandKey, nextAutoRunAt, fetchData, currentUserEmail, isAdmin, onOpenAudit, onOpenManage, onSync, actionsBusy }) {
   const [isOpen, setIsOpen] = useState(false);
   const [activeTab, setActiveTab] = useState("Jobs");
   const [skipBusy, setSkipBusy] = useState(false);
@@ -113,6 +129,29 @@ export default function ToggleSidebar({ data, jobs, hasBrandContext, brandKey, n
           <div style={{ fontSize: 14, fontWeight: 800, color: C.primary }}>System Status</div>
           <button onClick={() => setIsOpen(false)} style={{ background: "none", border: "none", fontSize: 20, color: C.muted, cursor: "pointer", lineHeight: 1 }}>×</button>
         </div>
+
+        {/* Workspace actions — only meaningful inside a brand workspace. Manage Stores /
+            Audit Log open their modals; Sync On/Off mark the currently-shown cards to
+            match UrbanPiper without making any API call. */}
+        {hasBrandContext && (
+          <div style={{ padding: "12px 20px 0", display: "flex", flexDirection: "column", gap: 8 }}>
+            <div style={{ display: "flex", gap: 6 }}>
+              {onOpenManage && (
+                <button onClick={onOpenManage} style={sidebarActionStyle("#2563eb", "#eff6ff", "#bfdbfe")}>Manage Stores</button>
+              )}
+              <button onClick={onOpenAudit} style={sidebarActionStyle("#9333ea", "#faf5ff", "#e9d5ff")}>Audit Log</button>
+            </div>
+            {onSync && (
+              <>
+                <div style={{ fontSize: 9.5, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: 0.5 }}>Sync cards to UrbanPiper — no API call</div>
+                <div style={{ display: "flex", gap: 6 }}>
+                  <button disabled={actionsBusy} onClick={() => onSync("online")} style={sidebarActionStyle("#b45309", "#fffbeb", "#fde68a", actionsBusy)}>Sync On</button>
+                  <button disabled={actionsBusy} onClick={() => onSync("offline")} style={sidebarActionStyle("#b45309", "#fffbeb", "#fde68a", actionsBusy)}>Sync Off</button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
 
         {/* Tabs */}
         <div style={{ display: "flex", gap: 4, padding: "12px 20px", borderBottom: `1px solid ${C.border}` }}>

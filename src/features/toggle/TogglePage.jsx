@@ -516,72 +516,27 @@ export default function TogglePage({ userRole, userRoles }) {
             </div>
           </div>
         ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 16 }}>
-            <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
-              <ActionButton
-                icon={<IconPower />}
-                label="Bulk On"
-                color="#16a34a"
-                bg="#f0fdf4"
-                borderColor="#bbf7d0"
-                onClick={() => handleBulk("enable")}
-                disabled={isBulking || (!!conflictingJob && !isTargetedBulk)}
-                title={conflictingJob && !isTargetedBulk ? `A bulk job for ${conflictingJob.brands.join(", ")} is already running (started by ${conflictingJob.actor_email}) — filter to a smaller area (${TARGETED_MAX} stores or fewer) to run alongside it` : "Turns the shown stores ON in UrbanPiper"}
-              />
-              <ActionButton
-                icon={<IconPower />}
-                label="Bulk Off"
-                color="#ef4444"
-                bg="#fef2f2"
-                borderColor="#fecaca"
-                onClick={() => handleBulk("disable")}
-                disabled={isBulking || (!!conflictingJob && !isTargetedBulk)}
-                title={conflictingJob && !isTargetedBulk ? `A bulk job for ${conflictingJob.brands.join(", ")} is already running (started by ${conflictingJob.actor_email}) — filter to a smaller area (${TARGETED_MAX} stores or fewer) to run alongside it` : "Turns the shown stores OFF in UrbanPiper"}
-              />
-              {canManageStores && (
-                <ActionButton
-                  icon={<IconStore />}
-                  label="Manage Stores"
-                  color="#2563eb"
-                  bg="#eff6ff"
-                  borderColor="#bfdbfe"
-                  onClick={() => setShowManage(true)}
-                />
-              )}
-              <ActionButton
-                icon={<IconFile />}
-                label="Audit Log"
-                color="#9333ea"
-                bg="#faf5ff"
-                borderColor="#e9d5ff"
-                onClick={() => setShowAudit(true)}
-              />
-            </div>
-            {canManageStores && (
-              <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center" }}>
-                <span style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: 0.5 }}>Dashboard only — no UrbanPiper call:</span>
-                <ActionButton
-                  icon={<IconSync />}
-                  label="Sync On"
-                  color="#b45309"
-                  bg="#fffbeb"
-                  borderColor="#fde68a"
-                  onClick={() => handleSync("online")}
-                  disabled={isBulking}
-                  title="Marks the shown cards ONLINE to match what you already set in UrbanPiper — makes no API call"
-                />
-                <ActionButton
-                  icon={<IconSync />}
-                  label="Sync Off"
-                  color="#b45309"
-                  bg="#fffbeb"
-                  borderColor="#fde68a"
-                  onClick={() => handleSync("offline")}
-                  disabled={isBulking}
-                  title="Marks the shown cards OFFLINE to match UrbanPiper — makes no API call. Note: won't self-correct if the store is actually still on."
-                />
-              </div>
-            )}
+          <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginTop: 16 }}>
+            <ActionButton
+              icon={<IconPower />}
+              label="Bulk On"
+              color="#16a34a"
+              bg="#f0fdf4"
+              borderColor="#bbf7d0"
+              onClick={() => handleBulk("enable")}
+              disabled={isBulking || (!!conflictingJob && !isTargetedBulk)}
+              title={conflictingJob && !isTargetedBulk ? `A bulk job for ${conflictingJob.brands.join(", ")} is already running (started by ${conflictingJob.actor_email}) — filter to a smaller area (${TARGETED_MAX} stores or fewer) to run alongside it` : "Turns the shown stores ON in UrbanPiper"}
+            />
+            <ActionButton
+              icon={<IconPower />}
+              label="Bulk Off"
+              color="#ef4444"
+              bg="#fef2f2"
+              borderColor="#fecaca"
+              onClick={() => handleBulk("disable")}
+              disabled={isBulking || (!!conflictingJob && !isTargetedBulk)}
+              title={conflictingJob && !isTargetedBulk ? `A bulk job for ${conflictingJob.brands.join(", ")} is already running (started by ${conflictingJob.actor_email}) — filter to a smaller area (${TARGETED_MAX} stores or fewer) to run alongside it` : "Turns the shown stores OFF in UrbanPiper"}
+            />
           </div>
         )}
 
@@ -620,6 +575,10 @@ export default function TogglePage({ userRole, userRoles }) {
         fetchData={fetchSidebar}
         currentUserEmail={JSON.parse(localStorage.getItem("user") || "{}").email}
         isAdmin={isAdmin}
+        onOpenAudit={() => setShowAudit(true)}
+        onOpenManage={canManageStores ? () => setShowManage(true) : null}
+        onSync={canManageStores ? handleSync : null}
+        actionsBusy={isBulking || filtered.length === 0}
       />
       {showAudit && <AuditModal onClose={() => setShowAudit(false)} stores={stores} selectedBrands={selectedBrand ? [brandLabel] : activeFilters.brand} />}
       {showManage && <ManageStoresModal onClose={() => setShowManage(false)} refreshStores={fetchSidebar} stores={scopedStores} lockedBrand={brandLabel} />}
@@ -765,7 +724,4 @@ function IconStore() {
 }
 function IconFile() {
   return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>;
-}
-function IconSync() {
-  return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>;
 }
