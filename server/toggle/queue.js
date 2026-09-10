@@ -245,8 +245,10 @@ export async function initiateBulkJob(stores, action, filterContext, actorEmail,
     }
 
     const jobRes = await client.query(
-      `INSERT INTO bulk_toggle_jobs (action, total_stores, pending_count, brands, actor_email, last_heartbeat_at) VALUES ($1, $2, $3, $4, $5, NOW()) RETURNING id`,
-      [action, activeStores.length, activeStores.length, brands, actorEmail]
+      `INSERT INTO bulk_toggle_jobs (action, total_stores, pending_count, brands, actor_email, last_heartbeat_at, store_ids, store_brands)
+       VALUES ($1, $2, $3, $4, $5, NOW(), $6, $7) RETURNING id`,
+      [action, activeStores.length, activeStores.length, brands, actorEmail,
+       activeStores.map(s => s.location_id), activeStores.map(s => s.brand || 'ovenfresh')]
     );
     jobId = jobRes.rows[0].id;
 
@@ -488,7 +490,10 @@ export async function applyTargetedBulk(stores, action, actorEmail, performToggl
 //     doesn't act this instant — it doesn't need its own timer for this, because that
 //     manual job's own completion (see runBulkJob's tail) re-touches this brand and
 //     re-arms the chain anyway.
-const HOURLY_RECHECK_GAP_MS = 30 * 60 * 1000;
+// 10 minutes (was 30). Every derived time — the countdown the UI shows, the wait
+// before the next attempt, the "not due yet" guard, the retry after a blocked
+// attempt, and the auto-resume delay for a job left paused — is this one value.
+const HOURLY_RECHECK_GAP_MS = 10 * 60 * 1000;
 const lastBulkActivityAt = new Map(); // brand -> timestamp (ms)
 const chainTimers = new Map(); // brand -> Timeout handle, always at most one live per brand
 const recheckInFlight = new Set(); // brands whose runHourlyRecheckForBrand is mid-run right now
@@ -583,6 +588,35 @@ export async function runHourlyRecheckForBrand(brandKey, performToggleAPI) {
       return scheduleNextAttempt(brandKey, performToggleAPI);
     }
 
+    // A job left PAUSED for this brand — auto or manual — is handled here, not by
+    // starting a fresh job alongside it. If it's been paused for the full gap the user
+    // has "forgotten" to resume it: flip it back to RUNNING (its own runBulkJob loop, or
+    // the one relaunched at startup, picks up from where it stopped) and re-arm the
+    // chain. If it was paused more recently, just wait until it's due.
+    const pausedRes = await pool.query(`
+      SELECT id, paused_at, actor_email, total_stores, pending_count
+      FROM bulk_toggle_jobs
+      WHERE $1 = ANY(brands) AND status = 'PAUSED'
+        AND last_heartbeat_at > NOW() - INTERVAL '10 minutes'
+      ORDER BY id DESC LIMIT 1
+    `, [brandKey]);
+    if (pausedRes.rows.length > 0) {
+      const pj = pausedRes.rows[0];
+      const pausedMs = pj.paused_at ? new Date(pj.paused_at).getTime() : 0;
+      const dueIn = Math.max(0, pausedMs + HOURLY_RECHECK_GAP_MS - Date.now());
+      if (dueIn > 0) {
+        return scheduleNextAttempt(brandKey, performToggleAPI, dueIn);
+      }
+      await pool.query(`UPDATE bulk_toggle_jobs SET status = 'RUNNING', paused_at = NULL WHERE id = $1 AND status = 'PAUSED'`, [pj.id]);
+      await logActivity({
+        storeName: `— job #${pj.id} auto-resumed after ${Math.round(HOURLY_RECHECK_GAP_MS / 60000)} min paused (${pj.total_stores - pj.pending_count}/${pj.total_stores} done) —`,
+        storeId: null, brand: brandKey, actorEmail: 'System', action: 'RESUME', result: 'SUCCESS',
+        isBulk: true, isAutomated: true, bulkJobId: pj.id, source: 'AUTO_RESUME_PAUSED',
+      }).catch(() => {});
+      touchBulkActivity(brandKey);
+      return scheduleNextAttempt(brandKey, performToggleAPI);
+    }
+
     const storesRes = await pool.query(`SELECT location_id, brand FROM store_state WHERE desired_state = 'ONLINE'`);
     const brandStores = storesRes.rows.filter(s => normalizeBrandKey(s.brand || 'ovenfresh') === brandKey);
     if (brandStores.length === 0) {
@@ -592,14 +626,12 @@ export async function runHourlyRecheckForBrand(brandKey, performToggleAPI) {
 
     const result = await initiateBulkJob(brandStores, "enable", " (Hourly Recheck)", "System — Hourly Recheck", "AUTO_HOURLY_RECHECK", performToggleAPI);
     if (result.blocked) {
-      // Normally a real manual job is running and its own completion (runBulkJob's tail)
-      // will re-arm this chain the moment it finishes. But that assumes the blocking job
-      // is actually alive — a job whose owning process died (e.g. left RUNNING across a
-      // deploy, heartbeat not yet stale enough for the cleanup cron) blocks us with no
-      // completion ever coming, and the chain would sit dormant until a server restart.
-      // So schedule a short retry instead of nothing: a live manual job still re-arms us
-      // sooner via its tail; a dead one gets retried until the stale-job cleanup clears it.
-      return scheduleNextAttempt(brandKey, performToggleAPI, 5 * 60 * 1000);
+      // A real manual job is running for this brand. Its own completion (runBulkJob's
+      // tail) re-arms this chain when it finishes — but if that job's process died and
+      // left a stale row, nothing would. So also schedule our own retry one gap out: a
+      // live job re-arms sooner via its tail, a dead one gets retried until the
+      // stale-job cleanup (or startup relaunch) clears it.
+      return scheduleNextAttempt(brandKey, performToggleAPI, HOURLY_RECHECK_GAP_MS);
     }
     // A job was created — wait for it to actually finish. Its own completion, inside
     // runBulkJob's tail below, is what calls touchBulkActivity + scheduleNextAttempt for
@@ -703,7 +735,7 @@ export async function runBulkJob(jobId, stores, action, filterContext, performTo
           // manual enable beats a disable-direction job.
           if (desired_state === 'OFFLINE' && currentAction === 'enable') {
             console.log(`[JIT] Skipping ${store.location_id} - user set to OFFLINE manually.`);
-            await pool.query('UPDATE bulk_toggle_jobs SET success_count = success_count + 1, pending_count = pending_count - 1 WHERE id = $1', [jobId]);
+            await pool.query('UPDATE bulk_toggle_jobs SET success_count = success_count + 1, pending_count = pending_count - 1, completed_store_ids = array_append(completed_store_ids, $1) WHERE id = $2', [store.location_id, jobId]);
             await logActivity({
               storeName: storeLabel, storeId: store.location_id, brand,
               actorEmail, action: 'ENABLE', result: 'SUCCESS',
@@ -714,7 +746,7 @@ export async function runBulkJob(jobId, stores, action, filterContext, performTo
           }
           if (desired_state === 'ONLINE' && currentAction === 'disable') {
             console.log(`[JIT] Skipping ${store.location_id} - user set to ONLINE manually.`);
-            await pool.query('UPDATE bulk_toggle_jobs SET success_count = success_count + 1, pending_count = pending_count - 1 WHERE id = $1', [jobId]);
+            await pool.query('UPDATE bulk_toggle_jobs SET success_count = success_count + 1, pending_count = pending_count - 1, completed_store_ids = array_append(completed_store_ids, $1) WHERE id = $2', [store.location_id, jobId]);
             await logActivity({
               storeName: storeLabel, storeId: store.location_id, brand,
               actorEmail, action: 'DISABLE', result: 'SUCCESS',
@@ -769,7 +801,7 @@ export async function runBulkJob(jobId, stores, action, filterContext, performTo
         const overriddenOnline = freshDesired === 'ONLINE' && currentAction === 'disable';
         if (overriddenOffline || overriddenOnline) {
           console.log(`[JIT] Skipping ${store.location_id} - user set to ${freshDesired} manually during the rate-limit wait.`);
-          await pool.query('UPDATE bulk_toggle_jobs SET success_count = success_count + 1, pending_count = pending_count - 1 WHERE id = $1', [jobId]);
+          await pool.query('UPDATE bulk_toggle_jobs SET success_count = success_count + 1, pending_count = pending_count - 1, completed_store_ids = array_append(completed_store_ids, $1) WHERE id = $2', [store.location_id, jobId]);
           await logActivity({
             storeName: storeLabel, storeId: store.location_id, brand,
             actorEmail, action: currentAction.toUpperCase(), result: 'SUCCESS',
@@ -814,7 +846,7 @@ export async function runBulkJob(jobId, stores, action, filterContext, performTo
           referenceIds: toggleRes.referenceIds,
         });
       } catch (err) {
-         await pool.query('UPDATE bulk_toggle_jobs SET failed_count = failed_count + 1, pending_count = pending_count - 1 WHERE id = $1', [jobId]).catch(() => {});
+         await pool.query('UPDATE bulk_toggle_jobs SET failed_count = failed_count + 1, pending_count = pending_count - 1, completed_store_ids = array_append(completed_store_ids, $1) WHERE id = $2', [store.location_id, jobId]).catch(() => {});
          await logProblemStore(store, currentAction, err.message).catch(() => {});
          await logActivity({
            storeName: storeLabel, storeId: store.location_id, brand,
@@ -826,7 +858,7 @@ export async function runBulkJob(jobId, stores, action, filterContext, performTo
        // Escaped every inner handler — count it once as a failed store and move on.
        // Best-effort cleanup: if the pool is still starved these just no-op.
        console.error(`[runBulkJob] store ${store.location_id} crashed:`, outerErr);
-       await pool.query('UPDATE bulk_toggle_jobs SET failed_count = failed_count + 1, pending_count = pending_count - 1 WHERE id = $1', [jobId]).catch(() => {});
+       await pool.query('UPDATE bulk_toggle_jobs SET failed_count = failed_count + 1, pending_count = pending_count - 1, completed_store_ids = array_append(completed_store_ids, $1) WHERE id = $2', [store.location_id, jobId]).catch(() => {});
        await logActivity({
          storeName: storeLabel, storeId: store.location_id, brand,
          actorEmail, action: currentAction.toUpperCase(), result: 'FAILED', errorMsg: `Unexpected: ${outerErr.message}`,
@@ -882,5 +914,125 @@ export async function runBulkJob(jobId, stores, action, filterContext, performTo
     await raiseAlert(`HIGH_BULK_FAILURE_RATE:${uniqueBrands}`, 'CRITICAL',
       `Job #${jobId} (${uniqueBrands}, ${source}) failed on ${j.failed_count} of ${attempted} stores attempted — ${Math.round((j.failed_count / attempted) * 100)}%. This usually means UrbanPiper itself is having an issue for this brand, not that individual stores are broken.`,
       `Started by ${actorEmail}${filterContext}`);
+  }
+}
+
+// Idempotent — safe to run on every boot. Adds the columns this file's newer code
+// relies on to an existing bulk_toggle_jobs table (the base schema.sql predates them).
+// Same ADD COLUMN IF NOT EXISTS pattern auth/init_db.js already uses.
+export async function ensureToggleJobColumns() {
+  await pool.query(`ALTER TABLE bulk_toggle_jobs ADD COLUMN IF NOT EXISTS paused_at TIMESTAMP`);
+  await pool.query(`ALTER TABLE bulk_toggle_jobs ADD COLUMN IF NOT EXISTS store_ids TEXT[]`);
+  await pool.query(`ALTER TABLE bulk_toggle_jobs ADD COLUMN IF NOT EXISTS store_brands TEXT[]`);
+}
+
+// Called once at startup, before the Hourly Recheck chains are kicked. A freshly
+// started process has no runBulkJob loop behind any of the RUNNING/PAUSED rows left by
+// the previous process — so instead of marking them all FAILED (the old behaviour,
+// which is what made a paused/interrupted job un-resumable across a deploy), re-drive
+// each one from where it stopped:
+//   - status is kept as-is: a RUNNING job resumes immediately, a PAUSED job's loop
+//     parks in its wait loop until someone (or the 10-min auto-resume) sets it RUNNING.
+//   - the remaining store list is store_ids minus completed_store_ids. For an auto
+//     re-enable that predates store_ids, it's reconstructed from store_state instead.
+//   - a manual job with no store_ids (predates this deploy) can't be reconstructed, so
+//     it's marked FAILED and its brand's chain re-armed — same as the old behaviour,
+//     but only for that one un-recoverable case.
+//   - if two non-terminal rows somehow exist for the same brand, only the newest is
+//     re-driven; the older is marked FAILED as superseded.
+export async function resumeInterruptedJobs(performToggleAPI) {
+  let rows;
+  try {
+    rows = (await pool.query(`
+      SELECT id, action, brands, actor_email, status, pending_count, total_stores,
+             store_ids, store_brands, completed_store_ids
+      FROM bulk_toggle_jobs
+      WHERE status IN ('RUNNING', 'PAUSED')
+      ORDER BY id DESC
+    `)).rows;
+  } catch (err) {
+    console.error('[resumeInterruptedJobs] could not read jobs:', err.message);
+    return;
+  }
+  if (rows.length === 0) return;
+
+  const handledBrands = new Set();
+  for (const job of rows) {
+    const jobBrandKeys = (job.brands || []).map(normalizeBrandKey);
+    const isAuto = (job.actor_email || '').startsWith('System —');
+    const source = isAuto ? 'AUTO_HOURLY_RECHECK' : 'MANUAL_BULK';
+    const reArmChain = () => {
+      for (const b of jobBrandKeys) {
+        if (AUTO_MANAGED_BRANDS.includes(b)) {
+          try { touchBulkActivity(b); scheduleNextAttempt(b, performToggleAPI); } catch { /* keep going */ }
+        }
+      }
+    };
+
+    const failJob = async (why) => {
+      await pool.query(`UPDATE bulk_toggle_jobs SET status = 'FAILED', current_batch = NULL WHERE id = $1 AND status IN ('RUNNING','PAUSED')`, [job.id]).catch(() => {});
+      await logActivity({
+        storeName: `— job #${job.id} could not be resumed after restart — ${why} —`, storeId: null,
+        brand: (job.brands || []).join(', '), actorEmail: 'System', action: (job.action || 'ENABLE').toUpperCase(),
+        result: 'FAILED', errorMsg: why, isBulk: true, isAutomated: isAuto, bulkJobId: job.id, source: 'JOB_CRASH',
+      }).catch(() => {});
+      reArmChain();
+    };
+
+    if (jobBrandKeys.some(b => handledBrands.has(b))) {
+      await failJob('superseded by a newer job for the same brand');
+      continue;
+    }
+    jobBrandKeys.forEach(b => handledBrands.add(b));
+
+    if ((job.pending_count ?? 0) <= 0) {
+      await pool.query(`UPDATE bulk_toggle_jobs SET status = 'COMPLETED', current_batch = NULL WHERE id = $1 AND status IN ('RUNNING','PAUSED')`, [job.id]).catch(() => {});
+      reArmChain();
+      continue;
+    }
+
+    const done = new Set(job.completed_store_ids || []);
+    let remaining = [];
+    if (Array.isArray(job.store_ids) && job.store_ids.length > 0) {
+      remaining = job.store_ids
+        .map((id, i) => ({ location_id: id, brand: (job.store_brands || [])[i] || 'ovenfresh' }))
+        .filter(s => !done.has(s.location_id));
+    } else if (isAuto) {
+      const all = (await pool.query(`SELECT location_id, brand FROM store_state WHERE desired_state = 'ONLINE'`)).rows;
+      remaining = all
+        .filter(s => jobBrandKeys.includes(normalizeBrandKey(s.brand || 'ovenfresh')))
+        .filter(s => !done.has(s.location_id));
+    } else {
+      await failJob('manual job predates store-list tracking');
+      continue;
+    }
+
+    if (remaining.length === 0) {
+      await pool.query(`UPDATE bulk_toggle_jobs SET status = 'COMPLETED', current_batch = NULL WHERE id = $1 AND status IN ('RUNNING','PAUSED')`, [job.id]).catch(() => {});
+      reArmChain();
+      continue;
+    }
+
+    // Bump the heartbeat now, synchronously, before the fire-and-forget relaunch below
+    // and before the chains get kicked — otherwise the chain's own overlap check could
+    // see a pre-restart heartbeat older than 10 min, not count this job as alive, and
+    // start a second job for the same brand alongside the one we're re-driving.
+    await pool.query(`UPDATE bulk_toggle_jobs SET last_heartbeat_at = NOW() WHERE id = $1`, [job.id]).catch(() => {});
+
+    console.log(`[resumeInterruptedJobs] re-driving job #${job.id} (${job.status}, ${isAuto ? 'auto' : 'manual'}) — ${remaining.length} of ${job.total_stores} stores remaining`);
+    await logActivity({
+      storeName: `— job #${job.id} resumed after restart — ${remaining.length} store(s) remaining —`, storeId: null,
+      brand: (job.brands || []).join(', '), actorEmail: 'System', action: (job.action || 'ENABLE').toUpperCase(),
+      result: 'SUCCESS', isBulk: true, isAutomated: isAuto, bulkJobId: job.id, source: 'JOB_RESUME',
+    }).catch(() => {});
+
+    runBulkJob(job.id, remaining, job.action, ' (resumed after restart)', performToggleAPI, job.actor_email, source)
+      .catch(async (err) => {
+        console.error(`[resumeInterruptedJobs] re-driven job #${job.id} crashed:`, err);
+        await pool.query(`UPDATE bulk_toggle_jobs SET status = 'FAILED', current_batch = NULL WHERE id = $1 AND status IN ('RUNNING','PAUSED')`, [job.id]).catch(() => {});
+        reArmChain();
+        await raiseAlert(`BULK_JOB_CRASH:${jobBrandKeys.join(',')}`, 'CRITICAL',
+          `Re-driven bulk job #${job.id} threw and was marked FAILED: ${err.message}.`, `Resumed at startup`).catch(() => {});
+      });
   }
 }

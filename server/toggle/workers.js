@@ -1,7 +1,7 @@
 import { pool } from '../ratings/db.js';
 import { warmUpOpsCache } from '../ops_matrix/ops.routes.js';
 import { startTimingWorker } from '../timing/timingWorker.js';
-import { AUTO_MANAGED_BRANDS, isTogglePaused, runHourlyRecheckForBrand, isChainAlive, normalizeBrandKey, touchBulkActivity, scheduleNextAttempt } from './queue.js';
+import { AUTO_MANAGED_BRANDS, isTogglePaused, runHourlyRecheckForBrand, isChainAlive, normalizeBrandKey, touchBulkActivity, scheduleNextAttempt, ensureToggleJobColumns, resumeInterruptedJobs } from './queue.js';
 import { performToggleAPI } from './toggle.routes.js';
 import { raiseAlert, resolveAlert } from '../alerts/alertService.js';
 import { scheduleDailyHealthCheck } from '../alerts/dailyHealthCheck.js';
@@ -15,7 +15,7 @@ export function startWorkers() {
   scheduleEatfitThresholdEnforcer(); // every 10 min — throttles down/wakes up based on that data
 
   // Hourly Recheck — self-chaining, not a fixed clock (see queue.js). Each brand's chain
-  // is kicked off once here at startup; from then on it reschedules itself 30 minutes
+  // is kicked off once here at startup; from then on it reschedules itself 10 minutes
   // after whatever the latest bulk activity was for that brand (its own last run, a
   // manual bulk job, or an interruption like a cancel), forever. Re-pushes "enable" to
   // every store the user wants online (desired_state = ONLINE) — safe to do blindly,
@@ -25,27 +25,22 @@ export function startWorkers() {
   // disabled (desired_state = OFFLINE is excluded entirely). So this can never fight the
   // daily schedule or a manual override — it only ever reinforces intent that's already
   // supposed to be in effect.
-  // Clear orphaned jobs BEFORE kicking the chains, then kick the chains — strictly in
-  // that order, which is why both live in one async block. A freshly started process
-  // owns zero in-flight bulk jobs by definition, so any job still at RUNNING/PAUSED is a
-  // zombie left behind by the previous process (a deploy or crash). If the chains start
-  // first, the startup Hourly Recheck sees the zombie as a live conflict, stands down
-  // waiting for a completion that will never come, and that brand's chain stays dormant
-  // until the next restart. No heartbeat-age check on the sweep on purpose — at t=0
-  // there is no such thing as a legitimately-running job.
+  //
+  // Order matters, which is why it's all one async block: make sure the newer job
+  // columns exist → re-drive any RUNNING/PAUSED job the previous process left behind
+  // (from where it stopped, not from scratch — see resumeInterruptedJobs) → only then
+  // kick the chains. If the chains started first they'd see a not-yet-resumed row as a
+  // live conflict and stand down.
   (async () => {
     try {
-      const res = await pool.query(
-        `UPDATE bulk_toggle_jobs SET status = 'FAILED', current_batch = NULL
-         WHERE status IN ('RUNNING', 'PAUSED')
-         RETURNING id, brands, total_stores, pending_count`
-      );
-      if (res.rowCount > 0) {
-        console.log(`[WORKERS] Startup: marked ${res.rowCount} orphaned bulk job(s) FAILED (owning process is gone).`);
-        for (const job of res.rows) console.log(`[WORKERS]   job #${job.id} (${(job.brands || []).join(', ')}) — ${job.total_stores - job.pending_count}/${job.total_stores} done`);
-      }
+      await ensureToggleJobColumns();
     } catch (err) {
-      console.error("[WORKERS] Startup orphaned-job sweep failed:", err);
+      console.error("[WORKERS] ensureToggleJobColumns failed:", err);
+    }
+    try {
+      await resumeInterruptedJobs(performToggleAPI);
+    } catch (err) {
+      console.error("[WORKERS] resumeInterruptedJobs failed:", err);
     }
 
     console.log("[WORKERS] Starting Hourly Recheck chains...");

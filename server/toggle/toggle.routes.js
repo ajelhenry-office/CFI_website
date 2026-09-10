@@ -704,8 +704,24 @@ router.post("/toggle/auto-run/skip", canManageStores, async (req, res) => {
   touchBulkActivity(brand);
   scheduleNextAttempt(brand, performToggleAPI);
   await pool.query(`INSERT INTO toggle_activity (store_name, brand, email, action, result, is_bulk, is_automated, source) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-    [`— Next auto run for ${brand} postponed 30 min —`, brand, req.user?.email || 'Unknown', 'SKIP_AUTO_RUN', 'SUCCESS', true, false, 'MANUAL_SKIP_AUTO_RUN']);
+    [`— Next auto run for ${brand} postponed 10 min —`, brand, req.user?.email || 'Unknown', 'SKIP_AUTO_RUN', 'SUCCESS', true, false, 'MANUAL_SKIP_AUTO_RUN']);
   res.json({ success: true, nextAutoRunAt: getNextAutoRunAt(brand) });
+});
+
+// "Start auto re-enable now" — the counterpart to skip. Shown after a job is cancelled
+// (or any time the brand has no active job) so the user doesn't have to wait out the
+// 10-minute timer. Fire-and-forget: runHourlyRecheckForBrand will start a fresh job, or
+// quietly re-schedule if a manual bulk job is currently running for the brand.
+router.post("/toggle/auto-run/now", canManageStores, async (req, res) => {
+  const brand = normalizeBrandKey(req.body.brand || "");
+  if (!AUTO_MANAGED_BRANDS.includes(brand)) {
+    return res.status(400).json({ success: false, error: "Not an auto-managed brand." });
+  }
+  runHourlyRecheckForBrand(brand, performToggleAPI).catch(err =>
+    console.error(`[auto-run/now] ${brand} failed:`, err));
+  await pool.query(`INSERT INTO toggle_activity (store_name, brand, email, action, result, is_bulk, is_automated, source) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+    [`— Auto re-enable for ${brand} started manually —`, brand, req.user?.email || 'Unknown', 'START_AUTO_RUN', 'SUCCESS', true, false, 'MANUAL_START_AUTO_RUN']);
+  res.json({ success: true });
 });
 
 // ─── RESOLVE PROBLEM ENDPOINTS ────────────────────────────────
@@ -785,33 +801,20 @@ router.post("/toggle/problem/force-sync", blockIfPaused, async (req, res) => {
   }
 });
 
-// Only the job's own owner, or an Admin/Super Admin, can pause/resume/cancel it —
-// previously anyone with the tab open could stop someone else's job.
+// Anyone with toggle-management access (Admin / Super Admin / Control Tower) can
+// pause / resume / cancel any job — manual or automated, their own or not. The person
+// running a brand day-to-day needs to be able to stop or steer whatever is touching
+// their stores, regardless of who or what started it.
 async function canControlJob(req, res, jobId) {
   const jobRes = await pool.query(`SELECT actor_email FROM bulk_toggle_jobs WHERE id = $1`, [jobId]);
   if (jobRes.rows.length === 0) {
     res.status(404).json({ success: false, error: "Job not found" });
     return false;
   }
-  const actor = jobRes.rows[0].actor_email || '';
   const roles = req.user?.roles || (req.user?.role ? [req.user.role] : []);
-  const isAdmin = roles.some(r => ['admin', 'super_admin'].includes(r));
   const canManageToggle = roles.some(r => ['admin', 'super_admin', 'control_tower'].includes(r));
-  const isOwner = actor === req.user?.email;
-  const isAutomatedJob = actor.startsWith('System —');
-
-  // An automated job (Hourly Recheck) has no human owner — anyone with toggle access
-  // (including the Control Tower person actually running that brand) can stop it. A
-  // manual job stays owner-or-admin: two people colliding on the same manual action
-  // needs a deliberate human call, not a free-for-all.
-  const allowed = isAutomatedJob ? canManageToggle : (isOwner || isAdmin);
-  if (!allowed) {
-    res.status(403).json({
-      success: false,
-      error: isAutomatedJob
-        ? "You need toggle access to stop an automated job."
-        : "Only the job's owner or an Admin can control it.",
-    });
+  if (!canManageToggle) {
+    res.status(403).json({ success: false, error: "You need toggle access to control a bulk job." });
     return false;
   }
   return true;
@@ -847,12 +850,15 @@ router.post("/toggle/bulk/cancel", async (req, res) => {
 router.post("/toggle/bulk/pause", async (req, res) => {
   const { jobId } = req.body;
   if (!(await canControlJob(req, res, jobId))) return;
-  const jobRes = await pool.query(`UPDATE bulk_toggle_jobs SET status = 'PAUSED' WHERE id = $1 RETURNING brands`, [jobId]);
+  // paused_at stamps when the pause happened — the chain uses it to auto-resume a job
+  // that's been left paused for a full gap (10 min), so a forgotten resume can't strand
+  // a job forever.
+  const jobRes = await pool.query(`UPDATE bulk_toggle_jobs SET status = 'PAUSED', paused_at = NOW() WHERE id = $1 RETURNING brands`, [jobId]);
   // Pausing (unlike cancelling or finishing) doesn't reach runBulkJob's own completion —
   // the job just sits waiting — so nothing would otherwise mark this brand's Hourly
   // Recheck chain as due again. Touching it here means "pause or cancel anything, auto
-  // or manual, and the next auto attempt is 30 minutes out" holds uniformly, not just
-  // for the cancel case.
+  // or manual, and the next auto attempt is one gap out" holds uniformly, not just for
+  // the cancel case.
   for (const b of jobRes.rows[0]?.brands || []) {
     touchBulkActivity(b);
     scheduleNextAttempt(b, performToggleAPI);
@@ -873,7 +879,7 @@ router.post("/toggle/bulk/resume", async (req, res) => {
     }
   }
 
-  await pool.query(`UPDATE bulk_toggle_jobs SET status = 'RUNNING' WHERE id = $1`, [jobId]);
+  await pool.query(`UPDATE bulk_toggle_jobs SET status = 'RUNNING', paused_at = NULL WHERE id = $1`, [jobId]);
   res.json({ success: true });
 });
 

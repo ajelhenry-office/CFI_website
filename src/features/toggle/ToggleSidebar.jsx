@@ -51,14 +51,22 @@ export default function ToggleSidebar({ data, jobs, hasBrandContext, brandKey, n
   const [isOpen, setIsOpen] = useState(false);
   const [activeTab, setActiveTab] = useState("Jobs");
   const [skipBusy, setSkipBusy] = useState(false);
+  const [startBusy, setStartBusy] = useState(false);
 
   const nextRunMins = nextAutoRunAt ? Math.max(0, Math.round((nextAutoRunAt - Date.now()) / 60000)) : null;
   const handleSkipAutoRun = async () => {
     if (!brandKey) return;
-    if (!confirm("Postpone the next auto run for this brand by 30 minutes?")) return;
+    if (!confirm("Postpone the next auto run for this brand by 10 minutes?")) return;
     setSkipBusy(true);
     await post("/api/toggle/auto-run/skip", { brand: brandKey }).then(fetchData).catch(() => {});
     setSkipBusy(false);
+  };
+  const handleStartAutoRun = async () => {
+    if (!brandKey) return;
+    if (!confirm("Start the auto re-enable for this brand now?")) return;
+    setStartBusy(true);
+    await post("/api/toggle/auto-run/now", { brand: brandKey }).then(fetchData).catch(() => {});
+    setStartBusy(false);
   };
 
   // Health/Recent/Problems only mean something once a specific brand's workspace is
@@ -186,21 +194,32 @@ export default function ToggleSidebar({ data, jobs, hasBrandContext, brandKey, n
               automated. This is the replacement for the old floating popup. */}
           {effectiveTab === "Jobs" && (
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              {hasBrandContext && nextRunMins != null && (
+              {hasBrandContext && canManageToggle && (
                 <div style={{ border: `1px solid ${C.border}`, borderRadius: 10, padding: "10px 12px", backgroundColor: "rgba(19,38,100,0.03)" }}>
                   <div style={{ fontSize: 11.5, fontWeight: 800, color: C.primary }}>
-                    Next auto run {nextRunMins === 0 ? "any moment now" : `in ~${nextRunMins} min`}
+                    {nextRunMins == null
+                      ? "Auto re-enable"
+                      : `Next auto run ${nextRunMins === 0 ? "any moment now" : `in ~${nextRunMins} min`}`}
                   </div>
                   <div style={{ fontSize: 10, color: C.muted, marginTop: 2 }}>
-                    Automatic re-check for this brand. Skip it if you want to work in UrbanPiper directly for a bit.
+                    Automatic re-check for this brand. Skip it to work in UrbanPiper directly for a bit, or start it now.
                   </div>
-                  <button
-                    onClick={handleSkipAutoRun}
-                    disabled={skipBusy}
-                    style={{ marginTop: 8, ...pillButton(false), fontSize: 10, padding: "5px 12px" }}
-                  >
-                    {skipBusy ? "…" : "Skip — postpone 30 min"}
-                  </button>
+                  <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
+                    <button
+                      onClick={handleSkipAutoRun}
+                      disabled={skipBusy || nextRunMins == null}
+                      style={{ ...pillButton(false), fontSize: 10, padding: "5px 12px" }}
+                    >
+                      {skipBusy ? "…" : "Skip — postpone 10 min"}
+                    </button>
+                    <button
+                      onClick={handleStartAutoRun}
+                      disabled={startBusy}
+                      style={{ ...pillButton(true), fontSize: 10, padding: "5px 12px" }}
+                    >
+                      {startBusy ? "…" : "Start auto run now"}
+                    </button>
+                  </div>
                 </div>
               )}
               {activeJobs.length === 0 ? (
@@ -288,12 +307,11 @@ export default function ToggleSidebar({ data, jobs, hasBrandContext, brandKey, n
 
 function JobCard({ job, currentUserEmail, isAdmin, canManageToggle, onPause, onResume, onCancel }) {
   const { id, action, total_stores, pending_count, status, actor_email, created_at, brands, current_batch } = job;
-  const isAutomatedJob = (actor_email || "").startsWith("System —");
   const done = total_stores - pending_count;
   const pct = total_stores > 0 ? Math.round((done / total_stores) * 100) : 0;
-  // An automated job (Hourly Recheck) can be stopped by anyone with toggle access —
-  // the Control Tower person running that brand included, not just admins.
-  const canControl = isAdmin || actor_email === currentUserEmail || (isAutomatedJob && canManageToggle);
+  // Anyone with toggle-management access can pause / resume / cancel any job — manual or
+  // automated, their own or not.
+  const canControl = canManageToggle;
 
   // Rough ETA from observed throughput so far — an estimate, not a promise.
   const elapsedMin = (Date.now() - new Date(created_at).getTime()) / 60000;
@@ -334,7 +352,7 @@ function JobCard({ job, currentUserEmail, isAdmin, canManageToggle, onPause, onR
       <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
         {!canControl && (
           <span style={{ fontSize: 9.5, color: C.muted, fontStyle: "italic" }}>
-            {isAutomatedJob ? "You need toggle access to control this job" : `Only ${actor_email || "the owner"} or an Admin can control this job`}
+            You need toggle access to control this job
           </span>
         )}
         {canControl && status === "RUNNING" && (
