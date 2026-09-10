@@ -2,6 +2,7 @@ import { useState } from "react";
 import { getAuthHeaders } from "../../api";
 import { C, FONT, pillButton } from "../../theme";
 import ActivityLog from "./ActivityLog";
+import useIsMobile from "../../useIsMobile";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || (import.meta.env.PROD ? "" : "http://localhost:3001");
 
@@ -45,6 +46,8 @@ function sidebarActionStyle(color, bg, borderColor, disabled = false) {
 // replacement for what used to be a floating popup. Staff now check status here on
 // their own, on login, instead of it interrupting them automatically.
 export default function ToggleSidebar({ data, jobs, hasBrandContext, brandKey, nextAutoRunAt, fetchData, currentUserEmail, isAdmin, onOpenAudit, onOpenManage, onSync, actionsBusy }) {
+  const isMobile = useIsMobile();
+  const panelWidth = isMobile ? Math.min(340, Math.round(typeof window !== "undefined" ? window.innerWidth * 0.9 : 320)) : 320;
   const [isOpen, setIsOpen] = useState(false);
   const [activeTab, setActiveTab] = useState("Jobs");
   const [skipBusy, setSkipBusy] = useState(false);
@@ -110,8 +113,9 @@ export default function ToggleSidebar({ data, jobs, hasBrandContext, brandKey, n
         style={{
           position: "fixed",
           top: 0,
-          right: isOpen ? 0 : -340,
-          width: 320,
+          right: isOpen ? 0 : -(panelWidth + 20),
+          width: panelWidth,
+          maxWidth: "92vw",
           height: "100vh",
           backgroundColor: "#ffffff",
           borderLeft: `2px solid ${C.border}`,

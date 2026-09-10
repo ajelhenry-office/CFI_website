@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Sidebar, { NAV_ITEMS, tabsForRoles } from "./Sidebar";
 import GlobalFilters from "./GlobalFilters";
+import useIsMobile from "./useIsMobile";
 import { C, FONT } from "./theme";
 import TogglePage from "./features/toggle/TogglePage";
 import TimingPage from "./features/timing/TimingPage";
@@ -54,9 +55,17 @@ export default function App() {
 
     return initialTab;
   });
-  const [collapsed, setCollapsed] = useState(false);
+  const isMobile = useIsMobile();
+  // On a phone the fixed 260px sidebar would leave almost nothing for the page, so it
+  // starts hidden there and opens as an overlay drawer instead of squeezing `main`.
+  const [collapsed, setCollapsed] = useState(() => (typeof window !== "undefined" ? window.innerWidth < 820 : false));
   const [globalFilters, setGlobalFilters] = useState(DEFAULT_FILTERS);
   const [masterData, setMasterData] = useState([]);
+
+  // Collapse when crossing into mobile width; leave desktop state alone on the way back.
+  useEffect(() => {
+    if (isMobile) setCollapsed(true);
+  }, [isMobile]);
 
   useEffect(() => {
     if (!user) return;
@@ -120,9 +129,19 @@ export default function App() {
   return (
     <div style={{ display: "flex", minHeight: "100vh", backgroundColor: C.bg, color: C.text, fontFamily: FONT }}>
       <RatingsHealthBadge />
+      {/* On mobile the open sidebar floats over the page with a tap-to-close backdrop,
+          instead of taking a column and crushing `main`. */}
+      {isMobile && !collapsed && (
+        <div
+          onClick={() => setCollapsed(true)}
+          style={{ position: "fixed", inset: 0, backgroundColor: "rgba(19,38,100,0.35)", zIndex: 490 }}
+        />
+      )}
       <Sidebar
         active={activeTab}
+        overlay={isMobile}
         onNavigate={(tab) => {
+          if (isMobile) setCollapsed(true);
           if (tab === "logout") {
             localStorage.removeItem("token");
             localStorage.removeItem("user");
@@ -173,11 +192,13 @@ export default function App() {
         {activeTab !== "reviews" && (
           <header
             style={{
-              padding: collapsed ? "20px 28px 16px 58px" : "20px 28px 16px",
+              padding: isMobile
+                ? "16px 14px 12px 54px"
+                : (collapsed ? "20px 28px 16px 58px" : "20px 28px 16px"),
               borderBottom: `1px solid ${C.border}`,
               display: "flex",
               flexDirection: "column",
-              gap: 14,
+              gap: isMobile ? 10 : 14,
             }}
           >
             {activeTab === "ratings" ? (
@@ -188,10 +209,10 @@ export default function App() {
                 ⭐ {title} ⭐
               </h1>
             ) : (
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <div>
-                  <h1 style={{ fontSize: 24, fontWeight: 800, color: C.primary, margin: 0, letterSpacing: -0.3 }}>{title}</h1>
-                  <div style={{ fontSize: 13, color: C.muted, marginTop: 3 }}>{subtitle}</div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                <div style={{ minWidth: 0 }}>
+                  <h1 style={{ fontSize: isMobile ? 19 : 24, fontWeight: 800, color: C.primary, margin: 0, letterSpacing: -0.3 }}>{title}</h1>
+                  <div style={{ fontSize: isMobile ? 12 : 13, color: C.muted, marginTop: 3 }}>{subtitle}</div>
                 </div>
                 <div id="header-actions"></div>
               </div>
@@ -210,7 +231,7 @@ export default function App() {
           </header>
         )}
 
-        <div style={{ flex: 1, overflowY: "auto", padding: activeTab === "reviews" ? 0 : "22px 28px 60px" }}>
+        <div style={{ flex: 1, overflowY: "auto", padding: activeTab === "reviews" ? 0 : (isMobile ? "14px 12px 48px" : "22px 28px 60px") }}>
           {activeTab === "toggle" && <TogglePage userRole={user.role} userRoles={user.roles || [user.role]} />}
           {activeTab === "timing" && <TimingPage globalFilters={globalFilters} />}
           {activeTab === "reviews" && <ReviewsPage globalFilters={globalFilters} />}

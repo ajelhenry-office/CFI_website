@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { C, FONT } from "./theme";
+import useIsMobile from "./useIsMobile";
 
 const popoverStyle = {
   position: "absolute",
@@ -226,6 +227,7 @@ function RangePopover({ label, value, active, fields, onFieldChange, onClear, is
 }
 
 export default function GlobalFilters({ filters, masterData, onChange }) {
+  const isMobile = useIsMobile();
   const opts = useMemo(() => {
     const match = (row, skip) =>
       (skip === "brand" || !filters.brands.length || filters.brands.includes(row.brand)) &&
@@ -248,7 +250,7 @@ export default function GlobalFilters({ filters, masterData, onChange }) {
     // width exactly, with no leftover space at the end, regardless of how
     // short any one column's content is. Divider lines are each column's own
     // right border now instead of separate elements between them.
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", width: "100%" }}>
+    <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(2, 1fr)" : "repeat(7, 1fr)", rowGap: isMobile ? 8 : 0, width: "100%", border: isMobile ? `1px solid ${C.border}` : "none", borderRadius: isMobile ? 10 : 0, overflow: "hidden" }}>
       <CheckboxFilterPopover
         label="Brand"
         options={opts.brands}

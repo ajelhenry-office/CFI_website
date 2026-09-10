@@ -7,6 +7,7 @@ import ToggleSidebar from "./ToggleSidebar";
 import MultiSearchableSelect from "./MultiSearchableSelect";
 import AuditModal from "./AuditModal";
 import ManageStoresModal from "./ManageStoresModal";
+import useIsMobile from "../../useIsMobile";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || (import.meta.env.PROD ? "" : "http://localhost:3001");
 
@@ -49,6 +50,7 @@ async function post(path, body) {
 const selectStyle = { padding: "7px 12px", borderRadius: 10, border: `1.5px solid ${C.primary}`, color: C.primary, fontSize: 12, fontWeight: 700, fontFamily: FONT, cursor: "pointer", outline: "none" };
 
 export default function TogglePage({ userRole, userRoles }) {
+  const isMobile = useIsMobile();
   const [stores, setStores] = useState([]);
 
   // null = Home (all-brands, view-only). Otherwise one of REAL_BRANDS[].key, or a
@@ -416,10 +418,10 @@ export default function TogglePage({ userRole, userRoles }) {
       <div style={{ display: "flex", flexDirection: "column", gap: 24, marginBottom: 24 }}>
 
         {selectedBrand && (
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0, flexWrap: "wrap" }}>
               <button onClick={goHome} style={selectStyle}>← All Brands</button>
-              <div style={{ fontSize: 18, fontWeight: 800, color: C.primary }}>{brandLabel} Workspace</div>
+              <div style={{ fontSize: isMobile ? 16 : 18, fontWeight: 800, color: C.primary }}>{brandLabel} Workspace</div>
             </div>
             {isAdmin && (
               <button
@@ -436,38 +438,39 @@ export default function TogglePage({ userRole, userRoles }) {
         {/* Filter Bar */}
         <div style={{
           display: "flex",
-          alignItems: "center",
+          alignItems: isMobile ? "stretch" : "center",
+          flexDirection: isMobile ? "column" : "row",
           background: "#fff",
           border: "1px solid #e2e8f0",
           borderRadius: 8,
-          padding: "12px 20px",
+          padding: isMobile ? "10px 12px" : "12px 20px",
           boxShadow: "0 2px 8px rgba(0,0,0,0.02)",
           flexWrap: "wrap",
-          gap: 16
+          gap: isMobile ? 8 : 16
         }}>
 
-          <div style={{ display: "flex", flex: 1, minWidth: selectedBrand ? 300 : 400 }}>
+          <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", flex: 1, minWidth: 0, width: isMobile ? "100%" : undefined, gap: isMobile ? 6 : 0 }}>
             {!selectedBrand && (
               <>
                 <MultiSearchableSelect options={brandsList} selectedValues={brand} onChange={handleBrandChange} placeholder="Brand"
                   customTrigger={(label) => <FilterItem icon={<IconBrand />} label="Brand" value={label === "Brand" ? "All" : label} />} width="100%" />
-                <Divider />
+                {!isMobile && <Divider />}
               </>
             )}
             <MultiSearchableSelect options={zonesList} selectedValues={zone} onChange={handleZoneChange} placeholder="Zone"
               customTrigger={(label) => <FilterItem icon={<IconZone />} label="Zone" value={label === "Zone" ? "All" : label} />} width="100%" />
-            <Divider />
+            {!isMobile && <Divider />}
             <MultiSearchableSelect options={citiesList} selectedValues={city} onChange={handleCityChange} placeholder="City"
               customTrigger={(label) => <FilterItem icon={<IconCity />} label="City" value={label === "City" ? "All" : label} />} width="100%" />
-            <Divider />
+            {!isMobile && <Divider />}
             <MultiSearchableSelect options={areasList} selectedValues={area} onChange={setArea} placeholder="Area"
               customTrigger={(label) => <FilterItem icon={<IconArea />} label="Area" value={label === "Area" ? "All" : label} />} width="100%" />
           </div>
 
-          <Divider />
+          {!isMobile && <Divider />}
 
           {/* Search & Action Buttons */}
-          <div style={{ display: "flex", alignItems: "center", gap: 16, paddingLeft: 16 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: isMobile ? 8 : 16, paddingLeft: isMobile ? 0 : 16, width: isMobile ? "100%" : undefined, flexWrap: "wrap" }}>
             <div style={{ position: "relative" }}>
               <span style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: "#94a3b8" }}>
                 <IconSearch />
@@ -548,7 +551,7 @@ export default function TogglePage({ userRole, userRoles }) {
           <div style={{ fontSize: 13, color: C.muted }}>No stores match the current filters.</div>
         </div>
       ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 14 }}>
+        <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fill, minmax(${isMobile ? 150 : 200}px, 1fr))`, gap: isMobile ? 10 : 14 }}>
           {filtered.map((store) => (
             <StoreCard
               key={store.id}

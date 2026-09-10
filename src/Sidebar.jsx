@@ -58,7 +58,7 @@ export function tabsForRoles(roles) {
   return [...tabs];
 }
 
-export default function Sidebar({ active, onNavigate, collapsed, onToggleCollapse, roles }) {
+export default function Sidebar({ active, onNavigate, collapsed, onToggleCollapse, roles, overlay = false }) {
   const allowedTabs = tabsForRoles(roles);
   const visibleNavItems = NAV_ITEMS.filter(item => allowedTabs.includes(item.key));
   return (
@@ -73,6 +73,8 @@ export default function Sidebar({ active, onNavigate, collapsed, onToggleCollaps
         flexDirection: "column",
         flexShrink: 0,
         fontFamily: FONT,
+        // On mobile it floats over the page instead of taking a layout column.
+        ...(overlay ? { position: "fixed", top: 0, left: 0, height: "100vh", zIndex: 500, boxShadow: collapsed ? "none" : "4px 0 24px rgba(19,38,100,0.25)" } : {}),
       }}
     >
       <div style={{ padding: "22px 18px 16px", display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>

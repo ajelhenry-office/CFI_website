@@ -2,6 +2,7 @@ import { useState, useMemo } from "react";
 import { C, FONT, pillButton } from "../../theme";
 import SearchableSelect from "./SearchableSelect";
 import { getAuthHeaders } from "../../api";
+import useIsMobile from "../../useIsMobile";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || (import.meta.env.PROD ? "" : "http://localhost:3001");
 
@@ -15,6 +16,7 @@ async function post(path, body) {
 }
 
 export default function ManageStoresModal({ onClose, refreshStores, stores = [], lockedBrand = null }) {
+  const isMobile = useIsMobile();
   const [loading, setLoading] = useState(false);
   const [addForm, setAddForm] = useState({ name: "", brand: lockedBrand || "", city: "", zone: "", location_id: "", status: "offline" });
   const [addError, setAddError] = useState("");
@@ -104,7 +106,7 @@ export default function ManageStoresModal({ onClose, refreshStores, stores = [],
       style={{ position: "fixed", inset: 0, backgroundColor: "rgba(19,38,100,0.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 2000, fontFamily: FONT }}
       onClick={onClose}
     >
-      <div style={{ backgroundColor: "#ffffff", borderRadius: 16, boxShadow: "0 16px 48px rgba(19,38,100,0.22)", width: 860, padding: 30, display: "flex", flexDirection: "column", gap: 24, height: '82vh' }} onClick={e => e.stopPropagation()}>
+      <div style={{ backgroundColor: "#ffffff", borderRadius: 16, boxShadow: "0 16px 48px rgba(19,38,100,0.22)", width: "min(860px, 95vw)", padding: isMobile ? 16 : 30, display: "flex", flexDirection: "column", gap: isMobile ? 14 : 24, height: isMobile ? "90vh" : "82vh" }} onClick={e => e.stopPropagation()}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: `1px solid ${C.border}`, paddingBottom: 16 }}>
           <div>
             <h2 style={{ fontSize: 22, fontWeight: 800, margin: 0, color: C.text }}>Manage Stores</h2>
@@ -113,10 +115,10 @@ export default function ManageStoresModal({ onClose, refreshStores, stores = [],
           <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: C.muted, fontSize: 24 }}>&times;</button>
         </div>
 
-        <div style={{ display: "flex", gap: 24, flex: 1, overflow: "hidden" }}>
+        <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", gap: isMobile ? 16 : 24, flex: 1, overflow: isMobile ? "auto" : "hidden" }}>
 
           {/* Add Store Form */}
-          <div style={{ flex: "0 0 320px", display: "flex", flexDirection: "column", gap: 16, borderRight: `1px solid ${C.border}`, paddingRight: 24, overflowY: "auto" }}>
+          <div style={{ flex: isMobile ? "0 0 auto" : "0 0 320px", display: "flex", flexDirection: "column", gap: 16, borderRight: isMobile ? "none" : `1px solid ${C.border}`, borderBottom: isMobile ? `1px solid ${C.border}` : "none", paddingRight: isMobile ? 0 : 24, paddingBottom: isMobile ? 16 : 0, overflowY: isMobile ? "visible" : "auto" }}>
             <div>
               <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0, color: C.primary }}>Add New Store</h3>
               <div style={{ fontSize: 11.5, color: C.muted, marginTop: 4, lineHeight: 1.5 }}>

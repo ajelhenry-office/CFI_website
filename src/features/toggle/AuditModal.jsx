@@ -133,20 +133,20 @@ export default function AuditModal({ onClose, stores = [], selectedBrands = [] }
       onMouseDown={(e) => e.target === e.currentTarget && onClose()}
     >
       <div style={{ width: "min(1080px, 96vw)", maxHeight: "82vh", backgroundColor: "#ffffff", borderRadius: 16, display: "flex", flexDirection: "column", overflow: "hidden", boxShadow: "0 16px 48px rgba(19,38,100,0.22)" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "18px 24px", borderBottom: `1px solid ${C.border}` }}>
-          <div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", padding: "14px 16px", borderBottom: `1px solid ${C.border}` }}>
+          <div style={{ minWidth: 0 }}>
             <div style={{ fontSize: 15, fontWeight: 800, color: C.primary }}>
               Toggle Audit Log{selectedBrands && selectedBrands.length > 0 ? ` (${selectedBrands.join(", ")})` : ""}
             </div>
             <div style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>Who changed what, whether it worked, and why — last 48 hours</div>
           </div>
-          <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+          <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
             <input
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search store name or ID…"
-              style={{ fontSize: 12, padding: "6px 12px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontFamily: FONT, outline: "none", width: 180 }}
+              style={{ fontSize: 12, padding: "6px 12px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontFamily: FONT, outline: "none", width: 160, maxWidth: "45vw" }}
             />
             <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 700, color: C.muted, cursor: "pointer", userSelect: "none" }}>
               <input
@@ -167,7 +167,7 @@ export default function AuditModal({ onClose, stores = [], selectedBrands = [] }
           </div>
         </div>
 
-        <div style={{ overflowY: "auto", flex: 1 }}>
+        <div style={{ overflowY: "auto", overflowX: "auto", flex: 1 }}>
           {loading ? (
             <div style={{ padding: 32, textAlign: "center", color: C.muted, fontSize: 13 }}>Loading…</div>
           ) : groupedRows.length === 0 ? (
@@ -175,7 +175,7 @@ export default function AuditModal({ onClose, stores = [], selectedBrands = [] }
               No recent activity for {selectedBrands && selectedBrands.length > 0 ? selectedBrands.join(", ") : "all brands"}.
             </div>
           ) : (
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+            <table style={{ width: "100%", minWidth: 620, borderCollapse: "collapse", fontSize: 12 }}>
               <thead style={{ position: "sticky", top: 0 }}>
                 <tr style={{ backgroundColor: C.primary, color: "#fff" }}>
                   {["Store / Batch", "Store ID", "Brand", "By", "Type", "Action", "Result", "Time"].map((h) => (

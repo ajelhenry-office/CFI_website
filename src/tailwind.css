@@ -1,1 +1,34 @@
 @import "tailwindcss";
+
+/* ── Global mobile safety net ──────────────────────────────────────────────
+   The app is almost entirely inline-styled with fixed pixel widths, so on a
+   phone things overflow their containers. These rules catch the common cases
+   app-wide without touching every component: no horizontal page scroll, long
+   unbroken strings wrap, media never overflows, and the base type shrinks a
+   touch on small screens. Per-screen layout (sidebar, filter bars, modals) is
+   handled in the components via the useIsMobile hook. */
+
+html,
+body {
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+img,
+video,
+canvas {
+  max-width: 100%;
+  height: auto;
+}
+
+@media (max-width: 820px) {
+  html {
+    font-size: 15px;
+  }
+}
+
+@media (max-width: 520px) {
+  html {
+    font-size: 14px;
+  }
+}
