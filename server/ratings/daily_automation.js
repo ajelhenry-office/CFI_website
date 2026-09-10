@@ -158,6 +158,7 @@ async function runDailyAutomation() {
     }
 
     let cursor = addDays(marker, 1);
+    let todayChecked = false;
     while (cursor <= today) {
       const result = await checkReceivedDate(cursor);
       if (!result.success) {
@@ -172,7 +173,32 @@ async function runDailyAutomation() {
         break;
       }
       await setState(MARKER_KEY, cursor);
+      if (cursor === today) todayChecked = true;
       cursor = addDays(cursor, 1);
+    }
+
+    // Always check the current date itself, every run — even if the catch-up
+    // loop above didn't reach it. Two cases where it wouldn't have:
+    //   1. The marker was already at/past today (e.g. a manual run earlier
+    //      the same day marked today "checked" before the report had actually
+    //      arrived — the exact bug that caused Sep 8 to be silently skipped).
+    //   2. The catch-up loop broke on an earlier failed backlog date.
+    // This is deliberately independent of both the marker and the backlog:
+    // a stuck backlog must not stop today's own mail from being fetched.
+    // It doesn't advance the marker (the marker is already at/past today) —
+    // it's a re-verification of the current date, not part of the forward walk.
+    if (!todayChecked) {
+      const todayResult = await checkReceivedDate(today);
+      if (!todayResult.success) {
+        hadFailure = true;
+        console.error(`[DAILY AUTOMATION] Current-date check for ${today} failed: ${todayResult.error}`);
+        await markAlert(
+          ALERT_CATEGORY,
+          'WARNING',
+          `The Ratings & Insights daily mail check failed on the current date (${today}).`,
+          todayResult.error,
+        );
+      }
     }
 
     if (!hadFailure) {
