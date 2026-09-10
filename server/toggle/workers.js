@@ -25,25 +25,51 @@ export function startWorkers() {
   // disabled (desired_state = OFFLINE is excluded entirely). So this can never fight the
   // daily schedule or a manual override — it only ever reinforces intent that's already
   // supposed to be in effect.
-  console.log("[WORKERS] Starting Hourly Recheck chains...");
-  for (const brandKey of AUTO_MANAGED_BRANDS) {
-    runHourlyRecheckForBrand(brandKey, performToggleAPI)
-      .then(() => resolveAlert('HOURLY_RECHECK_ERROR'))
-      .catch(err => {
-        console.error(`[WORKERS] Initial Hourly Recheck failed for ${brandKey}:`, err);
-        raiseAlert('HOURLY_RECHECK_ERROR', 'CRITICAL',
-          `The Hourly Recheck chain threw an error on startup for ${brandKey} and never got a chance to schedule its own next attempt. This is the safety net that keeps stores online for this brand.`,
-          err.message).catch(() => {});
-      });
-  }
+  // Clear orphaned jobs BEFORE kicking the chains, then kick the chains — strictly in
+  // that order, which is why both live in one async block. A freshly started process
+  // owns zero in-flight bulk jobs by definition, so any job still at RUNNING/PAUSED is a
+  // zombie left behind by the previous process (a deploy or crash). If the chains start
+  // first, the startup Hourly Recheck sees the zombie as a live conflict, stands down
+  // waiting for a completion that will never come, and that brand's chain stays dormant
+  // until the next restart. No heartbeat-age check on the sweep on purpose — at t=0
+  // there is no such thing as a legitimately-running job.
+  (async () => {
+    try {
+      const res = await pool.query(
+        `UPDATE bulk_toggle_jobs SET status = 'FAILED', current_batch = NULL
+         WHERE status IN ('RUNNING', 'PAUSED')
+         RETURNING id, brands, total_stores, pending_count`
+      );
+      if (res.rowCount > 0) {
+        console.log(`[WORKERS] Startup: marked ${res.rowCount} orphaned bulk job(s) FAILED (owning process is gone).`);
+        for (const job of res.rows) console.log(`[WORKERS]   job #${job.id} (${(job.brands || []).join(', ')}) — ${job.total_stores - job.pending_count}/${job.total_stores} done`);
+      }
+    } catch (err) {
+      console.error("[WORKERS] Startup orphaned-job sweep failed:", err);
+    }
 
-  // Safety net (runs every 60 minutes) — the self-chain above is normally what keeps
-  // Hourly Recheck alive, but if a single chain tick ever throws before it reaches the
-  // point where it reschedules itself, that one brand's chain goes silently quiet with
-  // nothing left to revive it until the server restarts. This notices and kicks it back
-  // on. Deliberately low-frequency and cheap — it's an insurance policy, not the primary
-  // mechanism, so it only acts on a brand whose chain is actually dead.
-  setInterval(async () => {
+    console.log("[WORKERS] Starting Hourly Recheck chains...");
+    for (const brandKey of AUTO_MANAGED_BRANDS) {
+      runHourlyRecheckForBrand(brandKey, performToggleAPI)
+        .then(() => resolveAlert('HOURLY_RECHECK_ERROR'))
+        .catch(err => {
+          console.error(`[WORKERS] Initial Hourly Recheck failed for ${brandKey}:`, err);
+          raiseAlert('HOURLY_RECHECK_ERROR', 'CRITICAL',
+            `The Hourly Recheck chain threw an error on startup for ${brandKey} and never got a chance to schedule its own next attempt. This is the safety net that keeps stores online for this brand.`,
+            err.message).catch(() => {});
+        });
+    }
+  })();
+
+  // Safety net — the self-chain above is normally what keeps Hourly Recheck alive, but a
+  // chain can still end up with no pending timer: a tick that throws before it reaches
+  // its own reschedule, or a startup attempt that was blocked by a job which then got
+  // cleared. Either way that brand goes silently quiet with nothing to revive it. This
+  // notices a chain with no live timer and kicks it back on. Runs every 10 minutes (was
+  // 60 — an hour of a dead safety net for the brand that keeps stores online was too
+  // long) with a first pass 2 minutes after boot, so a chain that failed to arm during
+  // startup recovers quickly instead of waiting a full interval.
+  const chainHealthCheck = async () => {
     try {
       if (await isTogglePaused()) return;
       for (const brandKey of AUTO_MANAGED_BRANDS) {
@@ -54,7 +80,9 @@ export function startWorkers() {
     } catch (err) {
       console.error("[WORKERS] Hourly Recheck chain health check failed:", err);
     }
-  }, 60 * 60 * 1000); // 60 minutes
+  };
+  setTimeout(chainHealthCheck, 2 * 60 * 1000); // first pass 2 min after boot
+  setInterval(chainHealthCheck, 10 * 60 * 1000); // every 10 minutes thereafter
 
 
   // Watchdog Cron — removed. Its entire job (waking up eatfit stores once their order

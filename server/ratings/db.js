@@ -16,6 +16,18 @@ export const pool = new pg.Pool({
   // A little more patience before a query gives up on getting a connection, so a brief
   // spike degrades into "slightly slower" instead of "throws".
   connectionTimeoutMillis: 10000,
+  // Hard ceilings so a query can NEVER hang forever. connectionTimeoutMillis above only
+  // bounds opening a NEW socket — it does nothing for a query sitting in the hot loop of
+  // a bulk job waiting on a pooled client that's checked out and not coming back. That
+  // wait is otherwise unbounded: the query never returns and never throws, and the whole
+  // bulk job freezes at "0/N RUNNING" with no error to catch. statement_timeout makes
+  // Postgres kill any statement still running after 60s (releasing its connection back to
+  // the pool); query_timeout is node-pg's client-side backstop for a query that finished
+  // server-side but whose result never arrived (dead socket). A timed-out query THROWS,
+  // which the per-store try/catch in runBulkJob already turns into one failed store while
+  // the job keeps going. No legitimate query in this app runs anywhere near 60s.
+  statement_timeout: 60000,
+  query_timeout: 65000,
 });
 
 // Deliberately NOT using alertService here — it tracks alert cooldowns via the same

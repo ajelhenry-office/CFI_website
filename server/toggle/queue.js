@@ -491,6 +491,7 @@ export async function applyTargetedBulk(stores, action, actorEmail, performToggl
 const HOURLY_RECHECK_GAP_MS = 30 * 60 * 1000;
 const lastBulkActivityAt = new Map(); // brand -> timestamp (ms)
 const chainTimers = new Map(); // brand -> Timeout handle, always at most one live per brand
+const recheckInFlight = new Set(); // brands whose runHourlyRecheckForBrand is mid-run right now
 
 // Called by runBulkJob's completion (below) for EVERY job that finishes — auto or
 // manual, completed, cancelled, or failed — by the pause route the moment a job is
@@ -506,7 +507,12 @@ export function touchBulkActivity(brand) {
 // silently goes quiet with nothing left to revive it until the server restarts. This
 // lets that check notice and kick it back on.
 export function isChainAlive(brand) {
-  return chainTimers.has(normalizeBrandKey(brand));
+  const key = normalizeBrandKey(brand);
+  // A pending timer OR an attempt currently executing (which has no timer set until it
+  // finishes — a long bulk job can run for many minutes) both count as alive. Without
+  // the second check the workers.js safety net would repeatedly declare a healthy chain
+  // "dead" for the whole duration of every real run and pointlessly re-invoke it.
+  return chainTimers.has(key) || recheckInFlight.has(key);
 }
 
 // The timestamp (ms) the next Hourly Recheck attempt for this brand is scheduled for,
@@ -523,13 +529,19 @@ export function getNextAutoRunAt(brand) {
 // known activity — safe to call redundantly from multiple places (it always clears any
 // existing timer first), which is what lets touchBulkActivity + scheduleNextAttempt be
 // called liberally without ever double-scheduling a brand.
-export function scheduleNextAttempt(brand, performToggleAPI) {
+export function scheduleNextAttempt(brand, performToggleAPI, forceDelayMs = null) {
   const brandKey = normalizeBrandKey(brand);
   const existing = chainTimers.get(brandKey);
   if (existing) clearTimeout(existing);
 
   const last = lastBulkActivityAt.get(brandKey) || 0;
-  const waitMs = Math.max(0, (last + HOURLY_RECHECK_GAP_MS) - Date.now());
+  // forceDelayMs overrides the normal "30 min after last activity" math — used for the
+  // short self-heal retry when an attempt was blocked by another job (see
+  // runHourlyRecheckForBrand). Without it, a block would leave `last` untouched and far
+  // in the past, so the normal math yields ~0 and we'd hot-loop.
+  const waitMs = forceDelayMs != null
+    ? forceDelayMs
+    : Math.max(0, (last + HOURLY_RECHECK_GAP_MS) - Date.now());
   const handle = setTimeout(() => {
     chainTimers.delete(brandKey);
     attemptChainTick(brandKey, performToggleAPI).catch(err => console.error(`[QUEUE] Hourly Recheck chain tick failed for ${brandKey}:`, err));
@@ -553,39 +565,49 @@ async function attemptChainTick(brandKey, performToggleAPI) {
 // its next scheduled attempt just because it was frozen when the timer fired).
 export async function runHourlyRecheckForBrand(brandKey, performToggleAPI) {
   if (!AUTO_MANAGED_BRANDS.includes(brandKey)) return;
+  // Mark the brand as having an attempt in progress so isChainAlive() doesn't read a
+  // long-running job (no timer set until it completes) as a dead chain. Always cleared
+  // in the finally, even if this throws — a stuck flag would permanently hide a truly
+  // dead chain from the safety net.
+  recheckInFlight.add(brandKey);
+  try {
+    // Paused/frozen/nothing-to-check all still count as "checked" — the chain must keep
+    // ticking every 30 minutes regardless, or a brand that's quiet for a while (or was
+    // frozen) goes permanently silent instead of resuming once conditions change.
+    if (await isTogglePaused()) {
+      touchBulkActivity(brandKey);
+      return scheduleNextAttempt(brandKey, performToggleAPI);
+    }
+    if (await isToggleFrozen(brandKey)) {
+      touchBulkActivity(brandKey);
+      return scheduleNextAttempt(brandKey, performToggleAPI);
+    }
 
-  // Paused/frozen/nothing-to-check all still count as "checked" — the chain must keep
-  // ticking every 30 minutes regardless, or a brand that's quiet for a while (or was
-  // frozen) goes permanently silent instead of resuming once conditions change.
-  if (await isTogglePaused()) {
-    touchBulkActivity(brandKey);
-    return scheduleNextAttempt(brandKey, performToggleAPI);
-  }
-  if (await isToggleFrozen(brandKey)) {
-    touchBulkActivity(brandKey);
-    return scheduleNextAttempt(brandKey, performToggleAPI);
-  }
+    const storesRes = await pool.query(`SELECT location_id, brand FROM store_state WHERE desired_state = 'ONLINE'`);
+    const brandStores = storesRes.rows.filter(s => normalizeBrandKey(s.brand || 'ovenfresh') === brandKey);
+    if (brandStores.length === 0) {
+      touchBulkActivity(brandKey);
+      return scheduleNextAttempt(brandKey, performToggleAPI);
+    }
 
-  const storesRes = await pool.query(`SELECT location_id, brand FROM store_state WHERE desired_state = 'ONLINE'`);
-  const brandStores = storesRes.rows.filter(s => normalizeBrandKey(s.brand || 'ovenfresh') === brandKey);
-  if (brandStores.length === 0) {
-    touchBulkActivity(brandKey);
-    return scheduleNextAttempt(brandKey, performToggleAPI);
+    const result = await initiateBulkJob(brandStores, "enable", " (Hourly Recheck)", "System — Hourly Recheck", "AUTO_HOURLY_RECHECK", performToggleAPI);
+    if (result.blocked) {
+      // Normally a real manual job is running and its own completion (runBulkJob's tail)
+      // will re-arm this chain the moment it finishes. But that assumes the blocking job
+      // is actually alive — a job whose owning process died (e.g. left RUNNING across a
+      // deploy, heartbeat not yet stale enough for the cleanup cron) blocks us with no
+      // completion ever coming, and the chain would sit dormant until a server restart.
+      // So schedule a short retry instead of nothing: a live manual job still re-arms us
+      // sooner via its tail; a dead one gets retried until the stale-job cleanup clears it.
+      return scheduleNextAttempt(brandKey, performToggleAPI, 5 * 60 * 1000);
+    }
+    // A job was created — wait for it to actually finish. Its own completion, inside
+    // runBulkJob's tail below, is what calls touchBulkActivity + scheduleNextAttempt for
+    // this brand; nothing further needed here.
+    if (result.completionPromise) await result.completionPromise;
+  } finally {
+    recheckInFlight.delete(brandKey);
   }
-
-  const result = await initiateBulkJob(brandStores, "enable", " (Hourly Recheck)", "System — Hourly Recheck", "AUTO_HOURLY_RECHECK", performToggleAPI);
-  if (result.blocked) {
-    // A manual job is currently running for this brand — deliberately do NOT touch or
-    // reschedule here. That manual job's own completion (runBulkJob's tail) will touch
-    // this brand and re-arm the chain the moment it actually finishes, which is exactly
-    // "30 minutes after the manual job finishes," not 30 minutes after this blocked
-    // attempt.
-    return;
-  }
-  // A job was created — wait for it to actually finish. Its own completion, inside
-  // runBulkJob's tail below, is what calls touchBulkActivity + scheduleNextAttempt for
-  // this brand; nothing further needed here.
-  if (result.completionPromise) await result.completionPromise;
 }
 
 export async function runBulkJob(jobId, stores, action, filterContext, performToggleAPI, actorEmail = 'System', source = 'MANUAL_BULK') {

@@ -820,16 +820,18 @@ async function canControlJob(req, res, jobId) {
 router.post("/toggle/bulk/cancel", async (req, res) => {
   const { jobId } = req.body;
   if (!(await canControlJob(req, res, jobId))) return;
-  // The 30-minute chain re-arm itself (queue.js) happens on its own once the background
-  // loop that was running this job notices CANCELLED and reaches its own completion —
-  // no extra bookkeeping needed here for that. This is purely the audit trail: without
-  // it, a cancellation was invisible in the log — the job's own closing summary row
-  // (written later, by runBulkJob) now says CANCELLED too, but that can be minutes away
-  // still, so this gives an immediate, clear "who cancelled what and when" the moment
-  // the button is actually clicked.
   const jobRes = await pool.query(`UPDATE bulk_toggle_jobs SET status = 'CANCELLED' WHERE id = $1 RETURNING brands, actor_email, action`, [jobId]);
   const job = jobRes.rows[0];
   if (job) {
+    // Re-arm each brand's Hourly Recheck chain right here, same as the pause route does.
+    // We used to rely on the job's own runBulkJob loop noticing CANCELLED and re-arming
+    // in its tail — but if that loop's process is already dead (e.g. the job was left
+    // RUNNING across a deploy and someone cancels the zombie row), the tail never runs
+    // and the chain stays dormant. Doing it here makes "cancel anything → next auto
+    // attempt is 30 min out" hold even for a job with no live process behind it.
+    for (const b of job.brands || []) {
+      try { touchBulkActivity(b); scheduleNextAttempt(b, performToggleAPI); } catch { /* keep going */ }
+    }
     const isAutomatedJob = (job.actor_email || '').startsWith('System —');
     await pool.query(`INSERT INTO toggle_activity (store_name, brand, email, action, result, is_bulk, is_automated, bulk_job_id, source) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
       [
