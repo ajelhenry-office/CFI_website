@@ -780,10 +780,25 @@ async function canControlJob(req, res, jobId) {
     res.status(404).json({ success: false, error: "Job not found" });
     return false;
   }
-  const isOwner = jobRes.rows[0].actor_email === req.user?.email;
-  const isAdmin = ['admin', 'super_admin'].includes(req.user?.role);
-  if (!isOwner && !isAdmin) {
-    res.status(403).json({ success: false, error: "Only the job's owner or an Admin can control it." });
+  const actor = jobRes.rows[0].actor_email || '';
+  const roles = req.user?.roles || (req.user?.role ? [req.user.role] : []);
+  const isAdmin = roles.some(r => ['admin', 'super_admin'].includes(r));
+  const canManageToggle = roles.some(r => ['admin', 'super_admin', 'control_tower'].includes(r));
+  const isOwner = actor === req.user?.email;
+  const isAutomatedJob = actor.startsWith('System —');
+
+  // An automated job (Hourly Recheck) has no human owner — anyone with toggle access
+  // (including the Control Tower person actually running that brand) can stop it. A
+  // manual job stays owner-or-admin: two people colliding on the same manual action
+  // needs a deliberate human call, not a free-for-all.
+  const allowed = isAutomatedJob ? canManageToggle : (isOwner || isAdmin);
+  if (!allowed) {
+    res.status(403).json({
+      success: false,
+      error: isAutomatedJob
+        ? "You need toggle access to stop an automated job."
+        : "Only the job's owner or an Admin can control it.",
+    });
     return false;
   }
   return true;

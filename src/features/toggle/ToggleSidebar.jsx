@@ -45,7 +45,7 @@ function sidebarActionStyle(color, bg, borderColor, disabled = false) {
 // every brand's active bulk jobs regardless of which workspace is open — this is the
 // replacement for what used to be a floating popup. Staff now check status here on
 // their own, on login, instead of it interrupting them automatically.
-export default function ToggleSidebar({ data, jobs, hasBrandContext, brandKey, nextAutoRunAt, fetchData, currentUserEmail, isAdmin, onOpenAudit, onOpenManage, onSync, actionsBusy }) {
+export default function ToggleSidebar({ data, jobs, hasBrandContext, brandKey, nextAutoRunAt, fetchData, currentUserEmail, isAdmin, canManageToggle, onOpenAudit, onOpenManage, onSync, actionsBusy }) {
   const isMobile = useIsMobile();
   const panelWidth = isMobile ? Math.min(340, Math.round(typeof window !== "undefined" ? window.innerWidth * 0.9 : 320)) : 320;
   const [isOpen, setIsOpen] = useState(false);
@@ -212,6 +212,7 @@ export default function ToggleSidebar({ data, jobs, hasBrandContext, brandKey, n
                     job={job}
                     currentUserEmail={currentUserEmail}
                     isAdmin={isAdmin}
+                    canManageToggle={canManageToggle}
                     onPause={() => handlePauseJob(job.id)}
                     onResume={() => handleResumeJob(job.id)}
                     onCancel={() => handleCancelJob(job.id)}
@@ -285,11 +286,14 @@ export default function ToggleSidebar({ data, jobs, hasBrandContext, brandKey, n
   );
 }
 
-function JobCard({ job, currentUserEmail, isAdmin, onPause, onResume, onCancel }) {
+function JobCard({ job, currentUserEmail, isAdmin, canManageToggle, onPause, onResume, onCancel }) {
   const { id, action, total_stores, pending_count, status, actor_email, created_at, brands, current_batch } = job;
+  const isAutomatedJob = (actor_email || "").startsWith("System —");
   const done = total_stores - pending_count;
   const pct = total_stores > 0 ? Math.round((done / total_stores) * 100) : 0;
-  const canControl = isAdmin || actor_email === currentUserEmail;
+  // An automated job (Hourly Recheck) can be stopped by anyone with toggle access —
+  // the Control Tower person running that brand included, not just admins.
+  const canControl = isAdmin || actor_email === currentUserEmail || (isAutomatedJob && canManageToggle);
 
   // Rough ETA from observed throughput so far — an estimate, not a promise.
   const elapsedMin = (Date.now() - new Date(created_at).getTime()) / 60000;
@@ -329,7 +333,9 @@ function JobCard({ job, currentUserEmail, isAdmin, onPause, onResume, onCancel }
 
       <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
         {!canControl && (
-          <span style={{ fontSize: 9.5, color: C.muted, fontStyle: "italic" }}>Only {actor_email || "the owner"} or an Admin can control this job</span>
+          <span style={{ fontSize: 9.5, color: C.muted, fontStyle: "italic" }}>
+            {isAutomatedJob ? "You need toggle access to control this job" : `Only ${actor_email || "the owner"} or an Admin can control this job`}
+          </span>
         )}
         {canControl && status === "RUNNING" && (
           <button style={{ ...pillButton(false), fontSize: 10, padding: "5px 12px" }} onClick={onPause}>Pause</button>
