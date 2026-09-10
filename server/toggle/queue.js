@@ -363,6 +363,95 @@ export async function applySingleCorrections(stores, resolveAction, actorEmail, 
   }
 }
 
+// A filter-scoped manual bulk ("turn off all HSR kitchens" — a handful of stores, not
+// the whole brand) runs as a plain sequence of single-store toggles: NO bulk_toggle_jobs
+// row, NO per-brand overlap lock, so it can run alongside an Hourly Recheck sweep. Each
+// store's desired_state is set first, so that concurrent sweep's own JIT check sees the
+// fresh intent and leaves these stores alone — the targeted manual action wins. Only for
+// small sets (see TARGETED_BULK_MAX); a brand-wide bulk still goes through initiateBulkJob
+// with its progress bar, pause/cancel, and the lock. Fire-and-forget from the route —
+// the caller responds immediately and the cards flip via polling.
+export const TARGETED_BULK_MAX = 25;
+
+export async function applyTargetedBulk(stores, action, actorEmail, performToggleAPI) {
+  if (await isTogglePaused()) return;
+
+  const desiredState = action === 'enable' ? 'ONLINE' : 'OFFLINE';
+
+  const pausedRes = await pool.query(
+    `SELECT location_id FROM managed_stores WHERE location_id = ANY($1) AND paused = true`,
+    [stores.map(s => s.location_id)]
+  );
+  const pausedIds = new Set(pausedRes.rows.map(r => r.location_id));
+  const activeStores = stores.filter(s => !pausedIds.has(s.location_id));
+  if (activeStores.length === 0) return;
+
+  // Set desired_state up front, batched — this is what a concurrent Hourly Recheck's
+  // JIT check reads to decide it should skip these stores.
+  await pool.query(`
+    INSERT INTO store_state (location_id, brand, desired_state)
+    SELECT location_id, brand, $3::text
+    FROM unnest($1::text[], $2::text[]) AS t(location_id, brand)
+    ON CONFLICT (location_id) DO UPDATE SET desired_state = $3, last_updated = NOW()
+  `, [activeStores.map(s => s.location_id), activeStores.map(s => s.brand || 'ovenfresh'), desiredState]);
+
+  for (const store of activeStores) {
+    const brand = store.brand || 'ovenfresh';
+    const storeLabel = `${store.name || store.store_name || store.location_id} (${store.location_id})`;
+
+    let currentAction = action;
+    let wasAutoThrottled = false;
+    try {
+      const fresh = (await pool.query(`SELECT desired_state, active_orders FROM store_state WHERE location_id = $1`, [store.location_id])).rows[0];
+      if (fresh && fresh.desired_state !== desiredState) {
+        await logActivity({
+          storeName: storeLabel, storeId: store.location_id, brand, actorEmail,
+          action: currentAction.toUpperCase(), result: 'SUCCESS',
+          errorMsg: 'Skipped — superseded by a more recent change', isBulk: true, source: 'MANUAL_TARGETED_BULK',
+        });
+        continue;
+      }
+      if (action === 'enable') {
+        currentAction = resolveOnlineAction(brand, fresh?.active_orders);
+        wasAutoThrottled = currentAction === 'disable';
+      }
+    } catch (err) { console.error('[Targeted bulk JIT error]', err); }
+
+    while (true) {
+      const rl = await checkAndIncrementRateLimit(brand);
+      if (rl === -1) {
+        const hRes = await pool.query(`SELECT minute_start_time FROM api_health WHERE brand = $1`, [brand]);
+        const start = new Date(hRes.rows[0]?.minute_start_time || Date.now());
+        const elapsed = Date.now() - start.getTime();
+        await new Promise(r => setTimeout(r, Math.min(Math.max(0, 60000 - elapsed) + 500, 65000)));
+      } else break;
+    }
+
+    try {
+      const toggleRes = await performToggleAPI(store.location_id, currentAction, brand);
+      if (!toggleRes.success) throw new Error(toggleRes.error || 'Toggle failed');
+      await pool.query(`UPDATE managed_stores SET status = $1, status_updated_at = NOW() WHERE location_id = $2`, [currentAction === 'enable' ? 'online' : 'offline', store.location_id]);
+      await pool.query(`UPDATE problem_stores SET resolved = true WHERE store_id = $1 AND resolved = false`, [store.location_id]);
+      await pool.query(`UPDATE api_health SET last_sync_time = NOW() WHERE brand = $1`, [brand]);
+      await logActivity({
+        storeName: storeLabel, storeId: store.location_id, brand,
+        actorEmail: wasAutoThrottled ? 'System — Auto-Throttle' : actorEmail,
+        action: currentAction.toUpperCase(), result: 'SUCCESS',
+        isBulk: true, isAutomated: wasAutoThrottled,
+        source: wasAutoThrottled ? 'AUTO_THROTTLE' : 'MANUAL_TARGETED_BULK',
+        referenceIds: toggleRes.referenceIds,
+      });
+    } catch (err) {
+      await logProblemStore(store, currentAction, err.message);
+      await logActivity({
+        storeName: storeLabel, storeId: store.location_id, brand, actorEmail,
+        action: currentAction.toUpperCase(), result: 'FAILED', errorMsg: err.message,
+        isBulk: true, source: 'MANUAL_TARGETED_BULK',
+      });
+    }
+  }
+}
+
 // ─── HOURLY RECHECK — SELF-CHAINING, NOT A FIXED CLOCK ─────────────────────────
 // Each brand runs its own independent chain: attempt a check → 30 minutes after the
 // LATEST bulk activity for that brand (auto or manual, however it ended) → attempt
@@ -386,10 +475,11 @@ const lastBulkActivityAt = new Map(); // brand -> timestamp (ms)
 const chainTimers = new Map(); // brand -> Timeout handle, always at most one live per brand
 
 // Called by runBulkJob's completion (below) for EVERY job that finishes — auto or
-// manual, completed, cancelled, or failed — and by runHourlyRecheckForBrand itself when
-// a check finds nothing to do. Whatever the reason, this brand's chain due time is now
-// 30 minutes from THIS moment.
-function touchBulkActivity(brand) {
+// manual, completed, cancelled, or failed — by the pause route the moment a job is
+// paused (pausing doesn't reach runBulkJob's completion, so it needs its own touch) —
+// and by runHourlyRecheckForBrand itself when a check finds nothing to do. Whatever the
+// reason, this brand's chain due time is now 30 minutes from THIS moment.
+export function touchBulkActivity(brand) {
   lastBulkActivityAt.set(normalizeBrandKey(brand), Date.now());
 }
 
@@ -399,6 +489,16 @@ function touchBulkActivity(brand) {
 // lets that check notice and kick it back on.
 export function isChainAlive(brand) {
   return chainTimers.has(normalizeBrandKey(brand));
+}
+
+// The timestamp (ms) the next Hourly Recheck attempt for this brand is scheduled for,
+// so the UI can show "next auto run in ~12 min" and offer a skip. Null if the brand
+// isn't auto-managed, or has no pending timer right now (e.g. a job is currently
+// running for it — the chain re-arms once that finishes).
+export function getNextAutoRunAt(brand) {
+  const brandKey = normalizeBrandKey(brand);
+  if (!AUTO_MANAGED_BRANDS.includes(brandKey) || !chainTimers.has(brandKey)) return null;
+  return (lastBulkActivityAt.get(brandKey) || 0) + HOURLY_RECHECK_GAP_MS;
 }
 
 // Ensures exactly one pending timer per brand, aimed at 30 minutes after the latest
@@ -701,10 +801,14 @@ export async function runBulkJob(jobId, stores, action, filterContext, performTo
   const finalJob = await pool.query('SELECT * FROM bulk_toggle_jobs WHERE id = $1', [jobId]);
   const j = finalJob.rows[0];
   const uniqueBrands = [...new Set(stores.map(s => s.brand))].filter(Boolean).join(", ");
-  const summaryMsg = `Bulk ${action.toUpperCase()} [${uniqueBrands}]${filterContext} — ${j.total_stores} Total ✅ ${j.success_count} ❌ ${j.failed_count}`;
+  // The summary must say how the job actually ended — CANCELLED or FAILED read very
+  // differently from a normal finish, and previously this always read the same
+  // regardless, making it look like every job simply completed even when it didn't.
+  const endedNormally = j.status === 'COMPLETED';
+  const summaryMsg = `Bulk ${action.toUpperCase()} [${uniqueBrands}]${filterContext}${endedNormally ? '' : ` — ${j.status}`} — ${j.total_stores} Total ✅ ${j.success_count} ❌ ${j.failed_count}`;
   await logActivity({
     storeName: summaryMsg, storeId: null, brand: uniqueBrands || null,
-    actorEmail, action: action.toUpperCase(), result: 'SUCCESS',
+    actorEmail, action: action.toUpperCase(), result: endedNormally ? 'SUCCESS' : j.status,
     isBulk: true, isAutomated: isAutomatedSource, bulkJobId: jobId, source,
   });
 

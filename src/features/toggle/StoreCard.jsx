@@ -134,7 +134,7 @@ export default function StoreCard({ store, onToggle, isBulking, dbState, readOnl
               color: isOnline ? "#b91c1c" : "#15803d",
             }}
           >
-            {loading ? "Working…" : isOnline ? "Disable" : "Enable"}
+            {loading ? "Working…" : isOnline ? "Turn Off" : "Turn On"}
           </button>
         )}
       </div>

@@ -51,6 +51,7 @@ export default function AuditModal({ onClose, stores = [], selectedBrands = [] }
   const [loading, setLoading] = useState(true);
   const [showSystemSyncs, setShowSystemSyncs] = useState(false);
   const [expanded, setExpanded] = useState(new Set());
+  const [searchQuery, setSearchQuery] = useState("");
 
   useEffect(() => {
     fetch(`${API_BASE}/api/toggle/audit-log`, { headers: getAuthHeaders() })
@@ -67,23 +68,29 @@ export default function AuditModal({ onClose, stores = [], selectedBrands = [] }
     return new Set(stores.filter((s) => selectedBrands.includes(s.brand)).map((s) => s.location_id));
   }, [stores, selectedBrands]);
 
-  const filteredLogs = useMemo(
-    () =>
-      logs.filter((log) => {
-        if (!showSystemSyncs && log.is_automated) return false;
-        if (selectedBrands && selectedBrands.length > 0) {
-          if (log.store_id === null) {
-            // Bulk summary row — match on its real brand column.
-            const matchesBrand = log.brand && selectedBrands.some((b) => log.brand.toLowerCase().includes(b.toLowerCase()));
-            if (!matchesBrand) return false;
-          } else {
-            if (validStoreIds && !validStoreIds.has(log.store_id)) return false;
-          }
+  const filteredLogs = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    return logs.filter((log) => {
+      if (!showSystemSyncs && log.is_automated) return false;
+      if (selectedBrands && selectedBrands.length > 0) {
+        if (log.store_id === null) {
+          // Bulk summary row — match on its real brand column.
+          const matchesBrand = log.brand && selectedBrands.some((b) => log.brand.toLowerCase().includes(b.toLowerCase()));
+          if (!matchesBrand) return false;
+        } else {
+          if (validStoreIds && !validStoreIds.has(log.store_id)) return false;
         }
-        return true;
-      }),
-    [logs, showSystemSyncs, validStoreIds, selectedBrands]
-  );
+      }
+      // Store name or store ID, live as typed — the log gets long fast, this is how
+      // you actually find one specific store in it instead of scrolling.
+      if (q) {
+        const nameMatch = log.store_name && log.store_name.toLowerCase().includes(q);
+        const idMatch = log.store_id && log.store_id.toLowerCase().includes(q);
+        if (!nameMatch && !idMatch) return false;
+      }
+      return true;
+    });
+  }, [logs, showSystemSyncs, validStoreIds, selectedBrands, searchQuery]);
 
   // Group rows that share a bulk_job_id. The row with store_id === null is the
   // summary/header; rows with a real store_id are the per-store detail underneath it.
@@ -134,6 +141,13 @@ export default function AuditModal({ onClose, stores = [], selectedBrands = [] }
             <div style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>Who changed what, whether it worked, and why — last 48 hours</div>
           </div>
           <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search store name or ID…"
+              style={{ fontSize: 12, padding: "6px 12px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontFamily: FONT, outline: "none", width: 180 }}
+            />
             <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 700, color: C.muted, cursor: "pointer", userSelect: "none" }}>
               <input
                 type="checkbox"

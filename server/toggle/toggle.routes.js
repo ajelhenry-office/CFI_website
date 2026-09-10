@@ -1,6 +1,6 @@
 import express from "express";
 import { pool } from "../ratings/db.js";
-import { checkAndIncrementRateLimit, logProblemStore, initiateBulkJob, resolveOnlineAction, RATE_LIMIT_CEILING, normalizeBrandKey, isTogglePaused, isToggleFrozen, AUTO_MANAGED_BRANDS, runHourlyRecheckForBrand } from "./queue.js";
+import { checkAndIncrementRateLimit, logProblemStore, initiateBulkJob, resolveOnlineAction, RATE_LIMIT_CEILING, normalizeBrandKey, isTogglePaused, isToggleFrozen, AUTO_MANAGED_BRANDS, runHourlyRecheckForBrand, touchBulkActivity, scheduleNextAttempt, applyTargetedBulk, TARGETED_BULK_MAX, getNextAutoRunAt } from "./queue.js";
 import { raiseAlert } from "../alerts/alertService.js";
 
 const router = express.Router();
@@ -251,12 +251,26 @@ export async function performToggleAPI(location_id, action, brand) {
 // normally for those exact same accounts. A bare-HTML 404 means "verify" itself isn't
 // supported here, not that the ID is wrong — falling back to the real declared-status
 // action instead of incorrectly rejecting a valid store.
-async function tryVerifyAction(ids, creds) {
+// Waits for room in this brand's shared rate-limit budget before making a real
+// UrbanPiper call — verify/status checks used to call UrbanPiper directly, completely
+// invisible to the same counter every toggle respects, which let repeated Add Store
+// attempts (exactly what happens correcting and resubmitting) push real usage over
+// UrbanPiper's actual ceiling without our own accounting ever noticing.
+async function waitForRateLimitRoom(brandKey) {
+  while (true) {
+    const rl = await checkAndIncrementRateLimit(brandKey);
+    if (rl !== -1) return;
+    await new Promise(r => setTimeout(r, 3000));
+  }
+}
+
+async function tryVerifyAction(ids, creds, brandKey) {
   const errors = [];
   let actionUnsupported = false;
   for (const id of ids) {
+    await waitForRateLimitRoom(brandKey);
     try {
-      const response = await fetch(UP_LOCATION_URL, {
+      let response = await fetch(UP_LOCATION_URL, {
         method: "POST",
         headers: {
           "Authorization": `apikey ${creds.username}:${creds.apikey}`,
@@ -265,7 +279,26 @@ async function tryVerifyAction(ids, creds) {
         },
         body: JSON.stringify({ location_ref_id: String(id), action: "verify", platforms: UP_PLATFORMS }),
       });
+      // A real UrbanPiper 429 here used to fall straight into the generic "not found"
+      // error below — misleading, since the store is very likely fine, UrbanPiper is
+      // just busy. One wait-and-retry, same pattern performToggleAPI already uses.
+      if (response.status === 429) {
+        await new Promise(r => setTimeout(r, 61000));
+        response = await fetch(UP_LOCATION_URL, {
+          method: "POST",
+          headers: {
+            "Authorization": `apikey ${creds.username}:${creds.apikey}`,
+            "Content-Type": "application/json",
+            ...(creds.biz_id ? { "x-upr-biz-id": creds.biz_id } : {})
+          },
+          body: JSON.stringify({ location_ref_id: String(id), action: "verify", platforms: UP_PLATFORMS }),
+        });
+      }
       if (response.status === 200) return { valid: true };
+      if (response.status === 429) {
+        errors.push(`${id}: UrbanPiper is rate-limited right now — try again in a minute.`);
+        continue;
+      }
       const text = await response.text();
       if (response.status === 404 && text.trim().startsWith('<')) actionUnsupported = true;
       errors.push(`${id}: ${text.slice(0, 200)}`);
@@ -286,13 +319,14 @@ async function tryVerifyAction(ids, creds) {
 // is several brand storefronts sharing one kitchen, and stopping early would leave the
 // rest of the group untouched (never reconciled to the declared status) instead of
 // matching performToggleAPI's behavior, which always attempts every id in the group.
-async function tryStatusAction(ids, creds, currentStatus) {
+async function tryStatusAction(ids, creds, currentStatus, brandKey) {
   const action = currentStatus === 'online' ? 'enable' : 'disable';
   const errors = [];
   let anySucceeded = false;
   for (const id of ids) {
+    await waitForRateLimitRoom(brandKey);
     try {
-      const response = await fetch(UP_LOCATION_URL, {
+      let response = await fetch(UP_LOCATION_URL, {
         method: "POST",
         headers: {
           "Authorization": `apikey ${creds.username}:${creds.apikey}`,
@@ -301,8 +335,24 @@ async function tryStatusAction(ids, creds, currentStatus) {
         },
         body: JSON.stringify({ location_ref_id: String(id), action, platforms: UP_PLATFORMS }),
       });
+      if (response.status === 429) {
+        await new Promise(r => setTimeout(r, 61000));
+        response = await fetch(UP_LOCATION_URL, {
+          method: "POST",
+          headers: {
+            "Authorization": `apikey ${creds.username}:${creds.apikey}`,
+            "Content-Type": "application/json",
+            ...(creds.biz_id ? { "x-upr-biz-id": creds.biz_id } : {})
+          },
+          body: JSON.stringify({ location_ref_id: String(id), action, platforms: UP_PLATFORMS }),
+        });
+      }
       if (response.status >= 200 && response.status < 300) {
         anySucceeded = true;
+        continue;
+      }
+      if (response.status === 429) {
+        errors.push(`${id}: UrbanPiper is rate-limited right now — try again in a minute.`);
         continue;
       }
       const text = await response.text();
@@ -322,10 +372,10 @@ async function verifyLocationExists(location_id, brand, currentStatus) {
 
   const ids = String(location_id).split(',').map(s => s.trim()).filter(Boolean);
 
-  const verifyResult = await tryVerifyAction(ids, creds);
+  const verifyResult = await tryVerifyAction(ids, creds, brandKey);
   if (verifyResult.valid || !verifyResult.actionUnsupported) return verifyResult;
 
-  return await tryStatusAction(ids, creds, currentStatus);
+  return await tryStatusAction(ids, creds, currentStatus, brandKey);
 }
 
 // ─── SINGLE TOGGLE ENDPOINT ──────────────────────────────────
@@ -469,8 +519,20 @@ router.post("/toggle/bulk", async (req, res) => {
     }
   }
 
+  const actorEmail = req.user?.email || 'Unknown';
+
+  // A small, filter-scoped set ("all HSR kitchens" — a handful of stores) runs as a
+  // batch of independent single toggles instead of a locked bulk job, so it isn't
+  // blocked by an Hourly Recheck sweep already running for the brand. A brand-wide set
+  // still goes through initiateBulkJob below with its progress bar, pause/cancel and the
+  // per-brand overlap lock.
+  if (stores.length <= TARGETED_BULK_MAX) {
+    applyTargetedBulk(stores, action, actorEmail, performToggleAPI)
+      .catch(err => console.error("[Targeted bulk error]", err));
+    return res.json({ success: true, jobId: null, targeted: true, message: `Toggling ${stores.length} store${stores.length > 1 ? 's' : ''} — cards will update as each one completes.` });
+  }
+
   try {
-    const actorEmail = req.user?.email || 'Unknown';
     const { jobId, skippedPaused } = await initiateBulkJob(stores, action, filterContext, actorEmail, 'MANUAL_BULK', performToggleAPI);
     const pausedNote = skippedPaused ? ` (${skippedPaused} paused store${skippedPaused > 1 ? 's' : ''} skipped)` : '';
     if (!jobId) {
@@ -554,7 +616,11 @@ router.get("/toggle/sidebar-data", async (req, res) => {
         dailyStats: {
           successCount: dailySuccessCount,
           problemCount: problemsRes.rows.length
-        }
+        },
+        // When the next Hourly Recheck sweep for this brand is due (ms epoch), so the
+        // status bar can show a countdown and offer a skip. Null on Home, or while a
+        // job is currently running for the brand.
+        nextAutoRunAt: brand ? getNextAutoRunAt(brand) : null,
       }
     });
   } catch (err) {
@@ -570,6 +636,63 @@ router.get("/toggle/audit-log", async (req, res) => {
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
+});
+
+// ─── DISPLAY SYNC ────────────────────────────────────────────
+// "I turned these stores on/off directly in UrbanPiper — just make the dashboard match,
+// don't call UrbanPiper." Updates our own status + desired_state so the cards flip and
+// the mismatch badge clears, resolves any open problem, and logs each store with a
+// distinct source so the trail stays honest. No API call, no rate limit, no bulk job,
+// no effect on the 30-minute chain. NOTE: syncing to OFFLINE is a "you're asserting
+// this" action — Hourly Recheck never re-pushes disable, so it won't self-correct if
+// the store is actually still on in UrbanPiper. Syncing to ONLINE is safe (the next
+// enable sweep makes the real call if you were wrong).
+router.post("/toggle/sync-status", canManageStores, blockIfPaused, async (req, res) => {
+  const { location_ids, status } = req.body;
+  if (!Array.isArray(location_ids) || location_ids.length === 0 || !["online", "offline"].includes(status)) {
+    return res.status(400).json({ success: false, error: "location_ids (array) and status ('online'|'offline') required" });
+  }
+  const actorEmail = req.user?.email || 'Unknown';
+  const desiredState = status === 'online' ? 'ONLINE' : 'OFFLINE';
+  try {
+    const rowsRes = await pool.query(`SELECT location_id, name, brand FROM managed_stores WHERE location_id = ANY($1)`, [location_ids]);
+    const rows = rowsRes.rows;
+    if (rows.length === 0) return res.status(404).json({ success: false, error: "No matching stores." });
+
+    await pool.query(`UPDATE managed_stores SET status = $1, status_updated_at = NOW() WHERE location_id = ANY($2)`, [status, location_ids]);
+    await pool.query(`
+      INSERT INTO store_state (location_id, brand, desired_state)
+      SELECT location_id, brand, $3::text
+      FROM unnest($1::text[], $2::text[]) AS t(location_id, brand)
+      ON CONFLICT (location_id) DO UPDATE SET desired_state = $3, last_updated = NOW()
+    `, [rows.map(r => r.location_id), rows.map(r => r.brand || 'ovenfresh'), desiredState]);
+    await pool.query(`UPDATE problem_stores SET resolved = true WHERE store_id = ANY($1) AND resolved = false`, [location_ids]);
+
+    for (const r of rows) {
+      await pool.query(`INSERT INTO toggle_activity (store_name, store_id, brand, email, action, result, error_msg, is_bulk, source) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+        [`${r.name} (${r.location_id})`, r.location_id, r.brand, actorEmail, status.toUpperCase(), 'SUCCESS', 'Display sync — no UrbanPiper call', true, 'MANUAL_DISPLAY_SYNC']);
+    }
+    res.json({ success: true, count: rows.length, message: `${rows.length} store${rows.length > 1 ? 's' : ''} marked ${status} in the dashboard (no change made in UrbanPiper).` });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ─── SKIP / POSTPONE THE NEXT AUTO RUN ───────────────────────
+// Pushes this brand's next Hourly Recheck sweep out by 30 minutes — for "I want to work
+// in UrbanPiper directly for a few minutes without the auto run stepping on it." Same
+// primitives pause/cancel already use. Click again for another 30; for a longer hold,
+// Freeze is the tool.
+router.post("/toggle/auto-run/skip", canManageStores, async (req, res) => {
+  const brand = normalizeBrandKey(req.body.brand || "");
+  if (!AUTO_MANAGED_BRANDS.includes(brand)) {
+    return res.status(400).json({ success: false, error: "Not an auto-managed brand." });
+  }
+  touchBulkActivity(brand);
+  scheduleNextAttempt(brand, performToggleAPI);
+  await pool.query(`INSERT INTO toggle_activity (store_name, brand, email, action, result, is_bulk, is_automated, source) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+    [`— Next auto run for ${brand} postponed 30 min —`, brand, req.user?.email || 'Unknown', 'SKIP_AUTO_RUN', 'SUCCESS', true, false, 'MANUAL_SKIP_AUTO_RUN']);
+  res.json({ success: true, nextAutoRunAt: getNextAutoRunAt(brand) });
 });
 
 // ─── RESOLVE PROBLEM ENDPOINTS ────────────────────────────────
@@ -669,19 +792,41 @@ async function canControlJob(req, res, jobId) {
 router.post("/toggle/bulk/cancel", async (req, res) => {
   const { jobId } = req.body;
   if (!(await canControlJob(req, res, jobId))) return;
-  // Cancelling here is enough on its own — the Hourly Recheck chain (queue.js) re-arms
-  // itself 30 minutes from whatever the most recent activity was for a brand, and the
-  // background loop that was running this job notices CANCELLED and, on its own
-  // completion, counts this cancellation as that activity. No extra bookkeeping needed
-  // here for that to happen.
-  await pool.query(`UPDATE bulk_toggle_jobs SET status = 'CANCELLED' WHERE id = $1`, [jobId]);
+  // The 30-minute chain re-arm itself (queue.js) happens on its own once the background
+  // loop that was running this job notices CANCELLED and reaches its own completion —
+  // no extra bookkeeping needed here for that. This is purely the audit trail: without
+  // it, a cancellation was invisible in the log — the job's own closing summary row
+  // (written later, by runBulkJob) now says CANCELLED too, but that can be minutes away
+  // still, so this gives an immediate, clear "who cancelled what and when" the moment
+  // the button is actually clicked.
+  const jobRes = await pool.query(`UPDATE bulk_toggle_jobs SET status = 'CANCELLED' WHERE id = $1 RETURNING brands, actor_email, action`, [jobId]);
+  const job = jobRes.rows[0];
+  if (job) {
+    const isAutomatedJob = (job.actor_email || '').startsWith('System —');
+    await pool.query(`INSERT INTO toggle_activity (store_name, brand, email, action, result, is_bulk, is_automated, bulk_job_id, source) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+      [
+        isAutomatedJob
+          ? `— Auto Hourly Recheck job #${jobId} (${job.brands.join(', ')}) cancelled —`
+          : `— Bulk ${job.action?.toUpperCase()} job #${jobId} (${job.brands.join(', ')}) cancelled —`,
+        job.brands.join(', '), req.user?.email || 'Unknown', 'CANCEL', 'SUCCESS', true, false, jobId, isAutomatedJob ? 'AUTO_CANCEL' : 'MANUAL_CANCEL',
+      ]);
+  }
   res.json({ success: true });
 });
 
 router.post("/toggle/bulk/pause", async (req, res) => {
   const { jobId } = req.body;
   if (!(await canControlJob(req, res, jobId))) return;
-  await pool.query(`UPDATE bulk_toggle_jobs SET status = 'PAUSED' WHERE id = $1`, [jobId]);
+  const jobRes = await pool.query(`UPDATE bulk_toggle_jobs SET status = 'PAUSED' WHERE id = $1 RETURNING brands`, [jobId]);
+  // Pausing (unlike cancelling or finishing) doesn't reach runBulkJob's own completion —
+  // the job just sits waiting — so nothing would otherwise mark this brand's Hourly
+  // Recheck chain as due again. Touching it here means "pause or cancel anything, auto
+  // or manual, and the next auto attempt is 30 minutes out" holds uniformly, not just
+  // for the cancel case.
+  for (const b of jobRes.rows[0]?.brands || []) {
+    touchBulkActivity(b);
+    scheduleNextAttempt(b, performToggleAPI);
+  }
   res.json({ success: true });
 });
 

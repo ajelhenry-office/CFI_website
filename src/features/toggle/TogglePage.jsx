@@ -53,7 +53,13 @@ export default function TogglePage({ userRole, userRoles }) {
 
   // null = Home (all-brands, view-only). Otherwise one of REAL_BRANDS[].key, or a
   // normalized non-tile brand key (e.g. "ovenfresh") entered via the Home filter.
-  const [selectedBrand, setSelectedBrand] = useState(null);
+  // Restored from sessionStorage on load so a refresh keeps you in the same workspace
+  // instead of bouncing back to Home — sessionStorage rather than localStorage
+  // deliberately, since a fresh browser session starting at Home is the right default,
+  // only a same-tab refresh should be preserved.
+  const [selectedBrand, setSelectedBrand] = useState(() => {
+    try { return sessionStorage.getItem("toggle_selectedBrand") || null; } catch { return null; }
+  });
 
   // Pending filters (multi-select)
   const [brand, setBrand] = useState([]);
@@ -62,8 +68,11 @@ export default function TogglePage({ userRole, userRoles }) {
   const [area, setArea] = useState([]);
   const [search, setSearch] = useState("");
 
-  // Active filters (applied when "Apply" is clicked)
-  const [activeFilters, setActiveFilters] = useState({ brand: [], zone: [], city: [], area: [], search: "" });
+  // Active filters (applied when "Apply" is clicked). Search is deliberately NOT part
+  // of this — a text search should narrow the grid live as you type, unlike the
+  // multi-select filters where batching several picks behind one Apply click makes
+  // sense. See baseFiltered below, which reads the live `search` state directly.
+  const [activeFilters, setActiveFilters] = useState({ brand: [], zone: [], city: [], area: [] });
 
   const [statusFilter, setStatusFilter] = useState("Total");
   const [sidebarData, setSidebarData] = useState(null);
@@ -90,7 +99,7 @@ export default function TogglePage({ userRole, userRoles }) {
   const handleCityChange = (c) => { setCity(c); setArea([]); };
 
   const handleApply = () => {
-    setActiveFilters({ brand, zone, city, area, search });
+    setActiveFilters({ brand, zone, city, area });
   };
 
   const handleClear = () => {
@@ -99,7 +108,7 @@ export default function TogglePage({ userRole, userRoles }) {
     setCity([]);
     setArea([]);
     setSearch("");
-    setActiveFilters({ brand: [], zone: [], city: [], area: [], search: "" });
+    setActiveFilters({ brand: [], zone: [], city: [], area: [] });
   };
 
   // Entering or leaving a brand workspace starts filters fresh — each brand (and Home)
@@ -107,6 +116,15 @@ export default function TogglePage({ userRole, userRoles }) {
   // silently carry into Olio.
   const enterBrand = (key) => { handleClear(); setStatusFilter("Total"); setSelectedBrand(key); };
   const goHome = () => { handleClear(); setStatusFilter("Total"); setSelectedBrand(null); };
+
+  // Keeps sessionStorage in sync with wherever the user currently is, so a refresh
+  // restores the same workspace (see the useState initializer above).
+  useEffect(() => {
+    try {
+      if (selectedBrand) sessionStorage.setItem("toggle_selectedBrand", selectedBrand);
+      else sessionStorage.removeItem("toggle_selectedBrand");
+    } catch {}
+  }, [selectedBrand]);
 
   const fetchSidebar = useCallback(() => {
     fetch(`${API_BASE}/api/toggle/stores`, { headers: getAuthHeaders() })
@@ -239,7 +257,7 @@ export default function TogglePage({ userRole, userRoles }) {
   }, [stores, selectedBrand, activeFilters.brand]);
 
   const baseFiltered = useMemo(() => {
-    const q = activeFilters.search.toLowerCase();
+    const q = search.toLowerCase();
     return scopedStores.filter((s) => {
       if (activeFilters.zone.length > 0 && !activeFilters.zone.includes(s.zone)) return false;
       if (activeFilters.city.length > 0 && !activeFilters.city.includes(s.city)) return false;
@@ -247,7 +265,7 @@ export default function TogglePage({ userRole, userRoles }) {
       if (q && !s.name.toLowerCase().includes(q) && !s.location_id.toLowerCase().includes(q)) return false;
       return true;
     });
-  }, [scopedStores, activeFilters]);
+  }, [scopedStores, activeFilters, search]);
 
   const onlineCount = baseFiltered.filter((s) => s.status === "online").length;
   const offlineCount = baseFiltered.length - onlineCount;
@@ -303,12 +321,18 @@ export default function TogglePage({ userRole, userRoles }) {
     (job) => ["RUNNING", "PAUSED"].includes(job.status) && job.brands?.some((b) => filteredBrandSlugs.has(b))
   ) || null;
 
+  // A small, filter-scoped set runs on the backend as a batch of independent single
+  // toggles — not a locked bulk job — so it's allowed even while an Hourly Recheck sweep
+  // is running for the brand. Mirrors the server-side TARGETED_BULK_MAX (25).
+  const TARGETED_MAX = 25;
+  const isTargetedBulk = filtered.length > 0 && filtered.length <= TARGETED_MAX;
+
   const handleBulk = async (action) => {
     // Send every currently-filtered store, regardless of our own possibly-stale local
     // status — this must hit UrbanPiper for all of them, not just ones we think need it.
     const targets = filtered;
     if (!targets.length) return;
-    if (!confirm(`${action === "enable" ? "Enable" : "Disable"} ${targets.length} stores?`)) return;
+    if (!confirm(`${action === "enable" ? "Turn on" : "Turn off"} ${targets.length} store${targets.length > 1 ? "s" : ""} in UrbanPiper?`)) return;
     setIsBulking(true);
     const storePayload = targets.map((s) => ({
       location_id: s.location_id,
@@ -322,6 +346,22 @@ export default function TogglePage({ userRole, userRoles }) {
       alert(`Can't start — a bulk job is already running for ${j.brands.join(", ")}.\nStarted by ${j.actor_email}, ${j.total_stores - j.pending_count}/${j.total_stores} done.\nWait for it to finish or cancel it below.`);
     }
     else if (res?.error) alert(`Bulk failed: ${res.error}`);
+    setIsBulking(false);
+  };
+
+  // Display-only: mark the shown cards on/off to match what the user already did
+  // directly in UrbanPiper. Makes NO UrbanPiper call — see /toggle/sync-status.
+  const handleSync = async (status) => {
+    const targets = filtered;
+    if (!targets.length) return;
+    if (!confirm(`Mark ${targets.length} shown store${targets.length > 1 ? "s" : ""} as ${status.toUpperCase()} in the dashboard only?\n\nThis makes NO change in UrbanPiper — use it to match what you already set there.`)) return;
+    setIsBulking(true);
+    const res = await post("/api/toggle/sync-status", {
+      location_ids: targets.map((s) => s.location_id),
+      status,
+    }).catch(() => null);
+    if (res?.success) fetchSidebar();
+    else if (res?.error) alert(`Sync failed: ${res.error}`);
     setIsBulking(false);
   };
 
@@ -476,45 +516,72 @@ export default function TogglePage({ userRole, userRoles }) {
             </div>
           </div>
         ) : (
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 24, marginTop: 16, flexWrap: "wrap" }}>
-            <ActionButton
-              icon={<IconPower />}
-              label="Bulk Enable"
-              color="#16a34a"
-              bg="#f0fdf4"
-              borderColor="#bbf7d0"
-              onClick={() => handleBulk("enable")}
-              disabled={isBulking || !!conflictingJob}
-              title={conflictingJob ? `A bulk job for ${conflictingJob.brands.join(", ")} is already running (started by ${conflictingJob.actor_email})` : undefined}
-            />
-            <ActionButton
-              icon={<IconPower />}
-              label="Bulk Disable"
-              color="#ef4444"
-              bg="#fef2f2"
-              borderColor="#fecaca"
-              onClick={() => handleBulk("disable")}
-              disabled={isBulking || !!conflictingJob}
-              title={conflictingJob ? `A bulk job for ${conflictingJob.brands.join(", ")} is already running (started by ${conflictingJob.actor_email})` : undefined}
-            />
-            {canManageStores && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 16 }}>
+            <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
               <ActionButton
-                icon={<IconStore />}
-                label="Manage Stores"
-                color="#2563eb"
-                bg="#eff6ff"
-                borderColor="#bfdbfe"
-                onClick={() => setShowManage(true)}
+                icon={<IconPower />}
+                label="Bulk On"
+                color="#16a34a"
+                bg="#f0fdf4"
+                borderColor="#bbf7d0"
+                onClick={() => handleBulk("enable")}
+                disabled={isBulking || (!!conflictingJob && !isTargetedBulk)}
+                title={conflictingJob && !isTargetedBulk ? `A bulk job for ${conflictingJob.brands.join(", ")} is already running (started by ${conflictingJob.actor_email}) — filter to a smaller area (${TARGETED_MAX} stores or fewer) to run alongside it` : "Turns the shown stores ON in UrbanPiper"}
               />
+              <ActionButton
+                icon={<IconPower />}
+                label="Bulk Off"
+                color="#ef4444"
+                bg="#fef2f2"
+                borderColor="#fecaca"
+                onClick={() => handleBulk("disable")}
+                disabled={isBulking || (!!conflictingJob && !isTargetedBulk)}
+                title={conflictingJob && !isTargetedBulk ? `A bulk job for ${conflictingJob.brands.join(", ")} is already running (started by ${conflictingJob.actor_email}) — filter to a smaller area (${TARGETED_MAX} stores or fewer) to run alongside it` : "Turns the shown stores OFF in UrbanPiper"}
+              />
+              {canManageStores && (
+                <ActionButton
+                  icon={<IconStore />}
+                  label="Manage Stores"
+                  color="#2563eb"
+                  bg="#eff6ff"
+                  borderColor="#bfdbfe"
+                  onClick={() => setShowManage(true)}
+                />
+              )}
+              <ActionButton
+                icon={<IconFile />}
+                label="Audit Log"
+                color="#9333ea"
+                bg="#faf5ff"
+                borderColor="#e9d5ff"
+                onClick={() => setShowAudit(true)}
+              />
+            </div>
+            {canManageStores && (
+              <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center" }}>
+                <span style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: 0.5 }}>Dashboard only — no UrbanPiper call:</span>
+                <ActionButton
+                  icon={<IconSync />}
+                  label="Sync On"
+                  color="#b45309"
+                  bg="#fffbeb"
+                  borderColor="#fde68a"
+                  onClick={() => handleSync("online")}
+                  disabled={isBulking}
+                  title="Marks the shown cards ONLINE to match what you already set in UrbanPiper — makes no API call"
+                />
+                <ActionButton
+                  icon={<IconSync />}
+                  label="Sync Off"
+                  color="#b45309"
+                  bg="#fffbeb"
+                  borderColor="#fde68a"
+                  onClick={() => handleSync("offline")}
+                  disabled={isBulking}
+                  title="Marks the shown cards OFFLINE to match UrbanPiper — makes no API call. Note: won't self-correct if the store is actually still on."
+                />
+              </div>
             )}
-            <ActionButton
-              icon={<IconFile />}
-              label="Audit Log"
-              color="#9333ea"
-              bg="#faf5ff"
-              borderColor="#e9d5ff"
-              onClick={() => setShowAudit(true)}
-            />
           </div>
         )}
 
@@ -548,6 +615,8 @@ export default function TogglePage({ userRole, userRoles }) {
         data={sidebarData}
         jobs={selectedBrand ? globalActiveJobs : (sidebarData?.activeBulkJobs || [])}
         hasBrandContext={!!selectedBrand}
+        brandKey={selectedBrand}
+        nextAutoRunAt={sidebarData?.nextAutoRunAt || null}
         fetchData={fetchSidebar}
         currentUserEmail={JSON.parse(localStorage.getItem("user") || "{}").email}
         isAdmin={isAdmin}
@@ -696,4 +765,7 @@ function IconStore() {
 }
 function IconFile() {
   return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>;
+}
+function IconSync() {
+  return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>;
 }

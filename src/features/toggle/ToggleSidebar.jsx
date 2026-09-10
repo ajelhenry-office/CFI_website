@@ -28,9 +28,19 @@ function timeAgo(iso) {
 // every brand's active bulk jobs regardless of which workspace is open — this is the
 // replacement for what used to be a floating popup. Staff now check status here on
 // their own, on login, instead of it interrupting them automatically.
-export default function ToggleSidebar({ data, jobs, hasBrandContext, fetchData, currentUserEmail, isAdmin }) {
+export default function ToggleSidebar({ data, jobs, hasBrandContext, brandKey, nextAutoRunAt, fetchData, currentUserEmail, isAdmin }) {
   const [isOpen, setIsOpen] = useState(false);
   const [activeTab, setActiveTab] = useState("Jobs");
+  const [skipBusy, setSkipBusy] = useState(false);
+
+  const nextRunMins = nextAutoRunAt ? Math.max(0, Math.round((nextAutoRunAt - Date.now()) / 60000)) : null;
+  const handleSkipAutoRun = async () => {
+    if (!brandKey) return;
+    if (!confirm("Postpone the next auto run for this brand by 30 minutes?")) return;
+    setSkipBusy(true);
+    await post("/api/toggle/auto-run/skip", { brand: brandKey }).then(fetchData).catch(() => {});
+    setSkipBusy(false);
+  };
 
   // Health/Recent/Problems only mean something once a specific brand's workspace is
   // open — Jobs (any bulk job, any brand) is always available, including from Home.
@@ -132,11 +142,28 @@ export default function ToggleSidebar({ data, jobs, hasBrandContext, fetchData, 
           {/* Jobs tab — every currently running/paused bulk job, any brand, manual or
               automated. This is the replacement for the old floating popup. */}
           {effectiveTab === "Jobs" && (
-            activeJobs.length === 0 ? (
-              <div style={{ fontSize: 12, color: C.muted, padding: "12px 0" }}>No bulk jobs running right now.</div>
-            ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                {activeJobs.map((job) => (
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {hasBrandContext && nextRunMins != null && (
+                <div style={{ border: `1px solid ${C.border}`, borderRadius: 10, padding: "10px 12px", backgroundColor: "rgba(19,38,100,0.03)" }}>
+                  <div style={{ fontSize: 11.5, fontWeight: 800, color: C.primary }}>
+                    Next auto run {nextRunMins === 0 ? "any moment now" : `in ~${nextRunMins} min`}
+                  </div>
+                  <div style={{ fontSize: 10, color: C.muted, marginTop: 2 }}>
+                    Automatic re-check for this brand. Skip it if you want to work in UrbanPiper directly for a bit.
+                  </div>
+                  <button
+                    onClick={handleSkipAutoRun}
+                    disabled={skipBusy}
+                    style={{ marginTop: 8, ...pillButton(false), fontSize: 10, padding: "5px 12px" }}
+                  >
+                    {skipBusy ? "…" : "Skip — postpone 30 min"}
+                  </button>
+                </div>
+              )}
+              {activeJobs.length === 0 ? (
+                <div style={{ fontSize: 12, color: C.muted, padding: "12px 0" }}>No bulk jobs running right now.</div>
+              ) : (
+                activeJobs.map((job) => (
                   <JobCard
                     key={job.id}
                     job={job}
@@ -146,9 +173,9 @@ export default function ToggleSidebar({ data, jobs, hasBrandContext, fetchData, 
                     onResume={() => handleResumeJob(job.id)}
                     onCancel={() => handleCancelJob(job.id)}
                   />
-                ))}
-              </div>
-            )
+                ))
+              )}
+            </div>
           )}
 
           {/* Health tab */}
