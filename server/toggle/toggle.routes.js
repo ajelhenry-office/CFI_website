@@ -93,10 +93,20 @@ export const UP_BRANDS = {
     apikey   : process.env.UP_APIKEY_OVENFRESH,
     biz_id   : process.env.UP_BIZ_ID_OVENFRESH,
   },
+  // 3 keys, round-robin — mirrors the legacy "Kitchen Status Automation" Apps Script
+  // exactly (same 3 keys, same rotation), which has run this account reliably for a
+  // long time. All 3 share the one real biz_id below — they're 3 logins into the same
+  // UrbanPiper business account, not 3 separate accounts, so rotating them does not
+  // multiply the account's real rate ceiling (see the paceEatfitCall() comment below
+  // for what actually keeps this account within its limit).
   eatfit: {
-    username : process.env.UP_USERNAME_EATFIT,
-    apikey   : process.env.UP_APIKEY_EATFIT,
+    keys: [
+      { username: 'biz_adm_QXJeFIgABXFq', apikey: 'a7d35eac21f5e6eab9d760d25d71a899c3ba2178' },
+      { username: 'biz_adm_mLXRJIVALmwM', apikey: 'c80e49a57e9df60cb9f40763c964cec89155bebb' },
+      { username: 'biz_adm_yZZqaclsncvO', apikey: '88a50190a747df000407aadd1faf588d175c5f5a' },
+    ],
     biz_id   : process.env.UP_BIZ_ID_EATFIT,
+    _counter : 0,
   },
   cake_zone: {
     username : process.env.UP_USERNAME_CAKEZONE,
@@ -107,6 +117,40 @@ export const UP_BRANDS = {
     apikey   : process.env.UP_APIKEY_OLIO,
   },
 };
+
+// ─── EATFIT CALL PACING ──────────────────────────────────────
+// Root cause of the eatfit "1 hour, 85% failed" incident: our own rate limiter counts
+// one budget unit per eatfit "store", but a single eatfit store is actually a kitchen
+// grouping several UrbanPiper ref-IDs (avg ~6, up to 10) — performToggleAPI below fires
+// one real call per ref-ID. At the old BULK_RATE_LIMIT of 16 "stores"/min that's ~100
+// real calls/min against an account that can safely take nowhere near that, so
+// UrbanPiper 429'd most of them, each 429 triggered retries, and a single bad chunk of
+// 10 concurrent multi-ref-ID kitchens could stall for minutes.
+//
+// The legacy "Kitchen Status Automation" Apps Script has run this same eatfit account
+// reliably for a long time doing the simplest possible thing: one real call at a time,
+// 1.2s apart, nothing concurrent. This serializes every real eatfit call — from every
+// caller (bulk jobs, the threshold enforcer, a single manual toggle, a retry) — through
+// that same proven cadence, regardless of how many "stores" our own bulk job dispatches
+// concurrently above this. It's the one place all real eatfit traffic funnels through
+// (performToggleAPI), so gating it here covers every path with no caller-side changes.
+const EATFIT_MIN_CALL_GAP_MS = 1200; // matches the Apps Script's own DELAY_MS
+let eatfitPacerChain = Promise.resolve(0); // resolves to the timestamp of the last permitted call
+
+function paceEatfitCall() {
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const prev = eatfitPacerChain;
+  eatfitPacerChain = gate;
+  return (async () => {
+    const lastAt = await prev;
+    const waitMs = Math.max(0, lastAt + EATFIT_MIN_CALL_GAP_MS - Date.now());
+    if (waitMs > 0) await new Promise((r) => setTimeout(r, waitMs));
+    const now = Date.now();
+    release(now);
+    return now;
+  })();
+}
 
 // ─── HELPER: PERFORM API CALL ────────────────────────────────
 // Exported so the background crons (workers.js) can call it directly, in-process,
@@ -128,8 +172,16 @@ export async function performToggleAPI(location_id, action, brand) {
   }
 
   const brandKey = normalizeBrandKey(brand);
-  const creds = UP_BRANDS[brandKey];
-  if (!creds) return { success: false, error: `Unknown brand: ${brand}` };
+  const brandConfig = UP_BRANDS[brandKey];
+  if (!brandConfig) return { success: false, error: `Unknown brand: ${brand}` };
+
+  // eatfit rotates across its 3 keys (see UP_BRANDS above); every other brand is a
+  // single flat credential object, used as-is.
+  let creds = brandConfig;
+  if (brandConfig.keys) {
+    creds = { ...brandConfig.keys[brandConfig._counter % brandConfig.keys.length], biz_id: brandConfig.biz_id };
+    brandConfig._counter++;
+  }
 
   const ids = String(location_id).split(',').map(s => s.trim()).filter(Boolean);
   let successCount = 0;
@@ -153,6 +205,10 @@ export async function performToggleAPI(location_id, action, brand) {
     const MAX_RATE_LIMIT_RETRIES = 5;
 
     while (currentPlatforms.length > 0) {
+      // The one gate every real eatfit call passes through — see paceEatfitCall above.
+      // No-op for every other brand.
+      if (brandKey === 'eatfit') await paceEatfitCall();
+
       const payload = {
         location_ref_id: String(id),
         action: action,
@@ -184,16 +240,23 @@ export async function performToggleAPI(location_id, action, brand) {
           finalResponseText).catch(() => {});
       }
 
-      // Rate Limit backoff — bounded, see MAX_RATE_LIMIT_RETRIES above.
-      if (finalStatus === 429) {
+      // Rate limit (429) and transient upstream errors (502/503/504 — UrbanPiper's own
+      // gateway/server having a bad moment, not our fault and not this store's) get the
+      // same bounded, backing-off retry. Previously only 429 retried at all; a 502/503/504
+      // fell straight into "failed, can't be retried" with zero attempt to ride it out.
+      // Exponential (2s, 4s, 8s, 16s, 32s) rather than the old flat 2s — more patient
+      // with a real transient blip, which matters more now that the eatfit pacer above
+      // means we're no longer causing most of these ourselves.
+      if (finalStatus === 429 || finalStatus === 502 || finalStatus === 503 || finalStatus === 504) {
         rateLimitRetries++;
         if (rateLimitRetries > MAX_RATE_LIMIT_RETRIES) {
-          console.log(`[UP] ${id} still 429 after ${MAX_RATE_LIMIT_RETRIES} retries — giving up, marking failed.`);
-          overallError = `UrbanPiper returned 429 for ${id} after ${MAX_RATE_LIMIT_RETRIES} retries`;
+          console.log(`[UP] ${id} still ${finalStatus} after ${MAX_RATE_LIMIT_RETRIES} retries — giving up, marking failed.`);
+          overallError = `UrbanPiper returned ${finalStatus} for ${id} after ${MAX_RATE_LIMIT_RETRIES} retries`;
           break;
         }
-        console.log(`[UP] Rate limited (429) for ${id}, waiting 2 seconds before retry... (${rateLimitRetries}/${MAX_RATE_LIMIT_RETRIES})`);
-        await new Promise(res => setTimeout(res, 2000));
+        const backoffMs = Math.pow(2, rateLimitRetries) * 1000;
+        console.log(`[UP] ${finalStatus} for ${id}, waiting ${backoffMs / 1000}s before retry... (${rateLimitRetries}/${MAX_RATE_LIMIT_RETRIES})`);
+        await new Promise(res => setTimeout(res, backoffMs));
         continue; // Retry the same platforms
       }
 
