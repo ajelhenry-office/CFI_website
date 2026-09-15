@@ -149,28 +149,50 @@ export const UP_BRANDS = {
 // that same proven cadence, regardless of how many "stores" our own bulk job dispatches
 // concurrently above this. It's the one place all real eatfit traffic funnels through
 // (performToggleAPI), so gating it here covers every path with no caller-side changes.
+// Two lanes, not one FIFO line: a plain queue meant every real eatfit call — bulk sweep
+// or a person waiting on a click — queued up in the order it arrived, so a manual
+// toggle landing mid-sweep could sit behind dozens of already-queued bulk calls before
+// its own turn came, each slot 1.2s apart. Priority calls (a human waiting: single
+// toggle, problem-store retry, pause, a small manual bulk) always go next once a slot
+// opens, ahead of anything still waiting in the normal (bulk sweep / threshold
+// enforcer) lane — same 1.2s global cadence either way, so total throughput to
+// UrbanPiper is unaffected; only the order changes.
 const EATFIT_MIN_CALL_GAP_MS = 1200; // matches the Apps Script's own DELAY_MS
-let eatfitPacerChain = Promise.resolve(0); // resolves to the timestamp of the last permitted call
+let eatfitLastCallAt = 0;
+const eatfitPriorityQueue = [];
+const eatfitNormalQueue = [];
+let eatfitDraining = false;
 
-function paceEatfitCall() {
-  let release;
-  const gate = new Promise((r) => { release = r; });
-  const prev = eatfitPacerChain;
-  eatfitPacerChain = gate;
-  return (async () => {
-    const lastAt = await prev;
-    const waitMs = Math.max(0, lastAt + EATFIT_MIN_CALL_GAP_MS - Date.now());
-    if (waitMs > 0) await new Promise((r) => setTimeout(r, waitMs));
-    const now = Date.now();
-    release(now);
-    return now;
-  })();
+function paceEatfitCall(priority = false) {
+  return new Promise((resolve) => {
+    (priority ? eatfitPriorityQueue : eatfitNormalQueue).push(resolve);
+    drainEatfitQueue();
+  });
+}
+
+async function drainEatfitQueue() {
+  if (eatfitDraining) return;
+  eatfitDraining = true;
+  try {
+    while (eatfitPriorityQueue.length > 0 || eatfitNormalQueue.length > 0) {
+      const next = eatfitPriorityQueue.length > 0 ? eatfitPriorityQueue.shift() : eatfitNormalQueue.shift();
+      const waitMs = Math.max(0, eatfitLastCallAt + EATFIT_MIN_CALL_GAP_MS - Date.now());
+      if (waitMs > 0) await new Promise((r) => setTimeout(r, waitMs));
+      eatfitLastCallAt = Date.now();
+      next();
+    }
+  } finally {
+    eatfitDraining = false;
+  }
 }
 
 // ─── HELPER: PERFORM API CALL ────────────────────────────────
 // Exported so the background crons (workers.js) can call it directly, in-process,
 // instead of making a self-referential HTTP request to this same server.
-export async function performToggleAPI(location_id, action, brand) {
+// priority: true for a call a person is actively waiting on (single toggle, problem-
+// store retry, pause, a small manual bulk) — jumps the eatfit pacer's queue ahead of
+// bulk-sweep/threshold-enforcer traffic. Ignored for every other brand.
+export async function performToggleAPI(location_id, action, brand, priority = false) {
   // Deepest backstop — every real UrbanPiper call (single toggle, bulk via runBulkJob,
   // retry, pause) funnels through here, so this alone blocks all of them even if a
   // route or cron elsewhere forgot to check isTogglePaused() itself.
@@ -222,7 +244,7 @@ export async function performToggleAPI(location_id, action, brand) {
     while (currentPlatforms.length > 0) {
       // The one gate every real eatfit call passes through — see paceEatfitCall above.
       // No-op for every other brand.
-      if (brandKey === 'eatfit') await paceEatfitCall();
+      if (brandKey === 'eatfit') await paceEatfitCall(priority);
 
       const payload = {
         location_ref_id: String(id),
@@ -561,7 +583,7 @@ router.post("/toggle", blockIfPaused, blockIfFrozen, async (req, res) => {
   }
 
   try {
-    const apiRes = await performToggleAPI(location_id, realAction, brand);
+    const apiRes = await performToggleAPI(location_id, realAction, brand, true);
 
     if (apiRes.success) {
       await pool.query(`UPDATE managed_stores SET status = $1, status_updated_at = NOW() WHERE location_id = $2`, [realAction === 'enable' ? 'online' : 'offline', location_id]);
@@ -839,7 +861,7 @@ router.post("/toggle/problem/retry", blockIfPaused, async (req, res) => {
     const rl = await checkAndIncrementRateLimit(problem.brand);
     if (rl === -1) return res.status(429).json({ success: false, error: "Rate limit exceeded, try again shortly" });
 
-    const apiRes = await performToggleAPI(problem.store_id, action, problem.brand);
+    const apiRes = await performToggleAPI(problem.store_id, action, problem.brand, true);
     if (apiRes.success) {
       await pool.query(`UPDATE managed_stores SET status = $1, status_updated_at = NOW() WHERE location_id = $2`, [action === 'enable' ? 'online' : 'offline', problem.store_id]);
       await pool.query(`UPDATE problem_stores SET resolved = true WHERE id = $1`, [id]);
@@ -1104,7 +1126,7 @@ router.post("/toggle/stores/:location_id/pause", canManageStores, blockIfPaused,
       return res.status(423).json({ success: false, error: frozenMessage(store.brand), frozen: true });
     }
 
-    const apiRes = await performToggleAPI(location_id, 'disable', store.brand);
+    const apiRes = await performToggleAPI(location_id, 'disable', store.brand, true);
 
     await pool.query(`
       UPDATE managed_stores

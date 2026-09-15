@@ -448,7 +448,9 @@ export async function applyTargetedBulk(stores, action, actorEmail, performToggl
     }
 
     try {
-      const toggleRes = await performToggleAPI(store.location_id, currentAction, brand);
+      // priority: true — a small manual bulk is someone waiting on a click, same as a
+      // single toggle; jumps the eatfit pacer ahead of the big sweep/threshold enforcer.
+      const toggleRes = await performToggleAPI(store.location_id, currentAction, brand, true);
       if (!toggleRes.success) throw new Error(toggleRes.error || 'Toggle failed');
       await pool.query(`UPDATE managed_stores SET status = $1, status_updated_at = NOW() WHERE location_id = $2`, [currentAction === 'enable' ? 'online' : 'offline', store.location_id]);
       await pool.query(`UPDATE problem_stores SET resolved = true WHERE store_id = $1 AND resolved = false`, [store.location_id]);
