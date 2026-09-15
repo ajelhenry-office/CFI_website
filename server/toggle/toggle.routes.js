@@ -80,6 +80,21 @@ async function fetchWithTimeout(url, opts = {}, ms = 20000) {
 // doesn't actually have never breaks the call.
 const UP_PLATFORMS    = ["swiggy", "zomato", "dotpe", "ownly", "dunzo", "magicpin", "masalabox", "tipplr", "bitsila"];
 
+// eatfit's UrbanPiper business is only actually associated with these 3 — confirmed by
+// the legacy Apps Script's own PLATFORMS config, which has run this exact account
+// reliably. Sending the full 9-platform list above (correct for cake_zone/olio) against
+// eatfit means every single call gets "Platform not associated with business" and has
+// to retry-narrow its way down — live-tested during this fix: the same handful of
+// eatfit ref-IDs cycling through repeated 400s, several wasted round-trips per store,
+// on every call, every time. That was the actual dominant cost, well above the raw
+// pacing fix below. Giving eatfit its own correct list means its calls succeed (or
+// genuinely fail) on the first real attempt, same as every other brand already does.
+const EATFIT_PLATFORMS = ["zomato", "swiggy", "ownly"];
+
+function platformsForBrand(brandKey) {
+  return brandKey === 'eatfit' ? EATFIT_PLATFORMS : UP_PLATFORMS;
+}
+
 // No hardcoded fallbacks — a missing credential must fail loudly (see the startup
 // check in server.js), not silently run on a value that's sitting in git history.
 export const UP_BRANDS = {
@@ -192,7 +207,7 @@ export async function performToggleAPI(location_id, action, brand) {
   const referenceIds = [];
 
   for (const id of ids) {
-    let currentPlatforms = [...UP_PLATFORMS];
+    let currentPlatforms = [...platformsForBrand(brandKey)];
     let finalStatus = 500;
     let finalResponseText = "";
     let rateLimitRetries = 0;
@@ -353,7 +368,7 @@ async function tryVerifyAction(ids, creds, brandKey) {
           "Content-Type": "application/json",
           ...(creds.biz_id ? { "x-upr-biz-id": creds.biz_id } : {})
         },
-        body: JSON.stringify({ location_ref_id: String(id), action: "verify", platforms: UP_PLATFORMS }),
+        body: JSON.stringify({ location_ref_id: String(id), action: "verify", platforms: platformsForBrand(brandKey) }),
       });
       // A real UrbanPiper 429 here used to fall straight into the generic "not found"
       // error below — misleading, since the store is very likely fine, UrbanPiper is
@@ -367,7 +382,7 @@ async function tryVerifyAction(ids, creds, brandKey) {
             "Content-Type": "application/json",
             ...(creds.biz_id ? { "x-upr-biz-id": creds.biz_id } : {})
           },
-          body: JSON.stringify({ location_ref_id: String(id), action: "verify", platforms: UP_PLATFORMS }),
+          body: JSON.stringify({ location_ref_id: String(id), action: "verify", platforms: platformsForBrand(brandKey) }),
         });
       }
       if (response.status === 200) return { valid: true };
@@ -409,7 +424,7 @@ async function tryStatusAction(ids, creds, currentStatus, brandKey) {
           "Content-Type": "application/json",
           ...(creds.biz_id ? { "x-upr-biz-id": creds.biz_id } : {})
         },
-        body: JSON.stringify({ location_ref_id: String(id), action, platforms: UP_PLATFORMS }),
+        body: JSON.stringify({ location_ref_id: String(id), action, platforms: platformsForBrand(brandKey) }),
       });
       if (response.status === 429) {
         await new Promise(r => setTimeout(r, 61000));
@@ -420,7 +435,7 @@ async function tryStatusAction(ids, creds, currentStatus, brandKey) {
             "Content-Type": "application/json",
             ...(creds.biz_id ? { "x-upr-biz-id": creds.biz_id } : {})
           },
-          body: JSON.stringify({ location_ref_id: String(id), action, platforms: UP_PLATFORMS }),
+          body: JSON.stringify({ location_ref_id: String(id), action, platforms: platformsForBrand(brandKey) }),
         });
       }
       if (response.status >= 200 && response.status < 300) {
