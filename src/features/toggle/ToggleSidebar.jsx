@@ -190,21 +190,23 @@ export default function ToggleSidebar({ data, jobs, hasBrandContext, brandKey, b
         </div>
 
         <div style={{ flex: 1, padding: "16px 20px", overflowY: "auto" }}>
-          {/* Jobs tab — every currently running/paused bulk job, any brand, manual or
-              automated. This is the replacement for the old floating popup. */}
+          {/* Jobs tab — scoped to the open brand workspace (only that brand's own job,
+              never another brand's); Home (no workspace open) still shows every brand's
+              active jobs together, which is what an overview screen is for. */}
           {effectiveTab === "Jobs" && (
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              {hasBrandContext && canManageToggle && (
+              {/* Hidden once a job is actually running for this brand — the job card
+                  below already says that, so a countdown-to-next-run panel next to it
+                  would just be redundant clutter. */}
+              {hasBrandContext && canManageToggle && !autoRunActive && (
                 <div style={{ border: `1px solid ${C.border}`, borderRadius: 10, padding: "10px 12px", backgroundColor: "rgba(19,38,100,0.03)" }}>
                   <div style={{ fontSize: 11.5, fontWeight: 800, color: C.primary }}>
                     {nextRunMins == null
-                      ? (autoRunActive ? `${brandLabel || "Auto re-enable"} — running now` : `Auto re-enable — ${brandLabel || "this brand"}`)
+                      ? `Auto re-enable — ${brandLabel || "this brand"}`
                       : `Next auto run for ${brandLabel || "this brand"} ${nextRunMins === 0 ? "any moment now" : `in ~${nextRunMins} min`}`}
                   </div>
                   <div style={{ fontSize: 10, color: C.muted, marginTop: 2 }}>
-                    {autoRunActive
-                      ? `A bulk job for ${brandLabel || "this brand"} is already running — see it below.`
-                      : `Automatic re-check for ${brandLabel || "this brand"}. Skip it to work in UrbanPiper directly for a bit, or start it now.`}
+                    Automatic re-check for {brandLabel || "this brand"}. Skip it to work in UrbanPiper directly for a bit, or start it now.
                   </div>
                   <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
                     <button
@@ -216,7 +218,7 @@ export default function ToggleSidebar({ data, jobs, hasBrandContext, brandKey, b
                     </button>
                     <button
                       onClick={handleStartAutoRun}
-                      disabled={startBusy || autoRunActive}
+                      disabled={startBusy}
                       style={{ ...pillButton(true), fontSize: 10, padding: "5px 12px" }}
                     >
                       {startBusy ? "…" : "Start auto run now"}

@@ -78,10 +78,6 @@ export default function TogglePage({ userRole, userRoles }) {
 
   const [statusFilter, setStatusFilter] = useState("Total");
   const [sidebarData, setSidebarData] = useState(null);
-  // Every brand's active bulk jobs, regardless of which workspace is open — feeds the
-  // Status sidebar's Jobs tab. Home's sidebarData is already all-brand, so this only
-  // needs its own fetch while a specific brand workspace has sidebarData scoped down.
-  const [globalActiveJobs, setGlobalActiveJobs] = useState([]);
   const [isBulking, setIsBulking] = useState(false);
   const [showAudit, setShowAudit] = useState(false);
   const [showManage, setShowManage] = useState(false);
@@ -144,16 +140,6 @@ export default function TogglePage({ userRole, userRoles }) {
       .then((r) => { handleApiError(r); return r.json(); })
       .then((d) => setSidebarData(d.data || null))
       .catch(() => {});
-
-    // The Status sidebar's Jobs tab always shows every brand's active jobs — only
-    // needs its own fetch while inside a brand workspace, where the fetch above is
-    // scoped down to just that brand.
-    if (selectedBrand) {
-      fetch(`${API_BASE}/api/toggle/sidebar-data`, { headers: getAuthHeaders() })
-        .then((r) => { handleApiError(r); return r.json(); })
-        .then((d) => setGlobalActiveJobs(d.data?.activeBulkJobs || []))
-        .catch(() => {});
-    }
 
     fetch(`${API_BASE}/api/toggle/store-states`, { headers: getAuthHeaders() })
       .then((r) => { handleApiError(r); return r.json(); })
@@ -574,7 +560,7 @@ export default function TogglePage({ userRole, userRoles }) {
           a specific brand workspace is open. */}
       <ToggleSidebar
         data={sidebarData}
-        jobs={selectedBrand ? globalActiveJobs : (sidebarData?.activeBulkJobs || [])}
+        jobs={sidebarData?.activeBulkJobs || []}
         hasBrandContext={!!selectedBrand}
         brandKey={selectedBrand}
         brandLabel={brandLabel}
