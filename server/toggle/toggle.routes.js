@@ -1,6 +1,6 @@
 import express from "express";
 import { pool } from "../ratings/db.js";
-import { checkAndIncrementRateLimit, logProblemStore, initiateBulkJob, resolveOnlineAction, RATE_LIMIT_CEILING, normalizeBrandKey, isTogglePaused, isToggleFrozen, AUTO_MANAGED_BRANDS, runHourlyRecheckForBrand, touchBulkActivity, scheduleNextAttempt, applyTargetedBulk, TARGETED_BULK_MAX, getNextAutoRunAt } from "./queue.js";
+import { checkAndIncrementRateLimit, logProblemStore, initiateBulkJob, resolveOnlineAction, RATE_LIMIT_CEILING, normalizeBrandKey, isTogglePaused, isToggleFrozen, AUTO_MANAGED_BRANDS, runHourlyRecheckForBrand, touchBulkActivity, scheduleNextAttempt, clearPendingAttempt, applyTargetedBulk, TARGETED_BULK_MAX, getNextAutoRunAt } from "./queue.js";
 import { raiseAlert } from "../alerts/alertService.js";
 
 const router = express.Router();
@@ -817,6 +817,11 @@ router.post("/toggle/auto-run/now", canManageStores, async (req, res) => {
   if (!AUTO_MANAGED_BRANDS.includes(brand)) {
     return res.status(400).json({ success: false, error: "Not an auto-managed brand." });
   }
+  // Clear the existing scheduled timer FIRST — same "no pending timer while a run is
+  // happening" state a natural chain tick already puts itself in the instant it fires
+  // (see the setTimeout body in scheduleNextAttempt). Without this the old countdown
+  // just kept ticking toward its stale original time as if the button had done nothing.
+  clearPendingAttempt(brand);
   runHourlyRecheckForBrand(brand, performToggleAPI).catch(err =>
     console.error(`[auto-run/now] ${brand} failed:`, err));
   await pool.query(`INSERT INTO toggle_activity (store_name, brand, email, action, result, is_bulk, is_automated, source) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,

@@ -556,6 +556,21 @@ export function scheduleNextAttempt(brand, performToggleAPI, forceDelayMs = null
   chainTimers.set(brandKey, handle);
 }
 
+// Cancels this brand's pending timer without scheduling a replacement — the same
+// "clear the entry so getNextAutoRunAt() sees nothing scheduled" step a timer already
+// does to itself the instant it fires (see the setTimeout body above), just triggerable
+// on demand. Needed for "Start auto run now": without this, kicking off a manual run
+// left the OLD scheduled timer sitting there untouched, so the sidebar kept counting
+// down toward a stale time as if nothing had happened, right up until that old timer
+// either fired for real (racing the manual run) or the manual run's own completion
+// overwrote it.
+export function clearPendingAttempt(brand) {
+  const brandKey = normalizeBrandKey(brand);
+  const existing = chainTimers.get(brandKey);
+  if (existing) clearTimeout(existing);
+  chainTimers.delete(brandKey);
+}
+
 async function attemptChainTick(brandKey, performToggleAPI) {
   // Something more recent touched this brand since this timer was set (e.g. a manual
   // job finished after the timer fired for it, pushing the due time out further) — don't

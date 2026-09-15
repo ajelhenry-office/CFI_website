@@ -577,7 +577,9 @@ export default function TogglePage({ userRole, userRoles }) {
         jobs={selectedBrand ? globalActiveJobs : (sidebarData?.activeBulkJobs || [])}
         hasBrandContext={!!selectedBrand}
         brandKey={selectedBrand}
+        brandLabel={brandLabel}
         nextAutoRunAt={sidebarData?.nextAutoRunAt || null}
+        autoRunActive={hasActiveJobForBrand}
         fetchData={fetchSidebar}
         currentUserEmail={JSON.parse(localStorage.getItem("user") || "{}").email}
         isAdmin={isAdmin}

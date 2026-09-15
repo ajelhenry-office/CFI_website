@@ -45,7 +45,7 @@ function sidebarActionStyle(color, bg, borderColor, disabled = false) {
 // every brand's active bulk jobs regardless of which workspace is open — this is the
 // replacement for what used to be a floating popup. Staff now check status here on
 // their own, on login, instead of it interrupting them automatically.
-export default function ToggleSidebar({ data, jobs, hasBrandContext, brandKey, nextAutoRunAt, fetchData, currentUserEmail, isAdmin, canManageToggle, onOpenAudit, onOpenManage, onSync, actionsBusy }) {
+export default function ToggleSidebar({ data, jobs, hasBrandContext, brandKey, brandLabel, nextAutoRunAt, autoRunActive, fetchData, currentUserEmail, isAdmin, canManageToggle, onOpenAudit, onOpenManage, onSync, actionsBusy }) {
   const isMobile = useIsMobile();
   const panelWidth = isMobile ? Math.min(340, Math.round(typeof window !== "undefined" ? window.innerWidth * 0.9 : 320)) : 320;
   const [isOpen, setIsOpen] = useState(false);
@@ -198,11 +198,13 @@ export default function ToggleSidebar({ data, jobs, hasBrandContext, brandKey, n
                 <div style={{ border: `1px solid ${C.border}`, borderRadius: 10, padding: "10px 12px", backgroundColor: "rgba(19,38,100,0.03)" }}>
                   <div style={{ fontSize: 11.5, fontWeight: 800, color: C.primary }}>
                     {nextRunMins == null
-                      ? "Auto re-enable"
-                      : `Next auto run ${nextRunMins === 0 ? "any moment now" : `in ~${nextRunMins} min`}`}
+                      ? (autoRunActive ? `${brandLabel || "Auto re-enable"} — running now` : `Auto re-enable — ${brandLabel || "this brand"}`)
+                      : `Next auto run for ${brandLabel || "this brand"} ${nextRunMins === 0 ? "any moment now" : `in ~${nextRunMins} min`}`}
                   </div>
                   <div style={{ fontSize: 10, color: C.muted, marginTop: 2 }}>
-                    Automatic re-check for this brand. Skip it to work in UrbanPiper directly for a bit, or start it now.
+                    {autoRunActive
+                      ? `A bulk job for ${brandLabel || "this brand"} is already running — see it below.`
+                      : `Automatic re-check for ${brandLabel || "this brand"}. Skip it to work in UrbanPiper directly for a bit, or start it now.`}
                   </div>
                   <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
                     <button
@@ -214,7 +216,7 @@ export default function ToggleSidebar({ data, jobs, hasBrandContext, brandKey, n
                     </button>
                     <button
                       onClick={handleStartAutoRun}
-                      disabled={startBusy}
+                      disabled={startBusy || autoRunActive}
                       style={{ ...pillButton(true), fontSize: 10, padding: "5px 12px" }}
                     >
                       {startBusy ? "…" : "Start auto run now"}
