@@ -64,7 +64,11 @@ const columnTriggerStyle = {
 
 const lastColumnTriggerStyle = { ...columnTriggerStyle, borderRight: "none" };
 
-function ColumnValue({ children, active, color }) {
+// maxWidth defaults to 160 (fine for a brand name or "3 selected"), but the
+// Date/Time range values ("2026-09-08 → 2026-09-14") run longer than that
+// and were getting clipped mid-string — those columns pass a wider value so
+// the full range is actually visible instead of silently truncated.
+function ColumnValue({ children, active, color, maxWidth = 160 }) {
   return (
     <span
       style={{
@@ -74,7 +78,7 @@ function ColumnValue({ children, active, color }) {
         whiteSpace: "nowrap",
         overflow: "hidden",
         textOverflow: "ellipsis",
-        maxWidth: 160,
+        maxWidth,
       }}
     >
       {children}
@@ -192,7 +196,7 @@ function RangePopover({ label, value, active, fields, onFieldChange, onClear, is
   return (
     <div style={{ position: "relative" }} ref={ref}>
       <button style={isLast ? lastColumnTriggerStyle : columnTriggerStyle} onClick={() => setOpen((o) => !o)}>
-        <ColumnValue active={active} color={active ? "#d97706" : undefined}>{value}</ColumnValue>
+        <ColumnValue active={active} color={active ? "#d97706" : undefined} maxWidth={220}>{value}</ColumnValue>
         <ColumnLabel>{label}</ColumnLabel>
       </button>
       {open && (
