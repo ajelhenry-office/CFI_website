@@ -254,7 +254,14 @@ export default function GlobalFilters({ filters, masterData, onChange }) {
     // width exactly, with no leftover space at the end, regardless of how
     // short any one column's content is. Divider lines are each column's own
     // right border now instead of separate elements between them.
-    <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(2, 1fr)" : "repeat(7, 1fr)", rowGap: isMobile ? 8 : 0, width: "100%", border: isMobile ? `1px solid ${C.border}` : "none", borderRadius: isMobile ? 10 : 0, overflow: "hidden" }}>
+    // overflow only needs to be hidden on mobile, to clip the bordered box's
+    // rounded corners — on desktop the container is exactly one row (40px)
+    // tall, and every dropdown popover opens *below* that as an absolutely
+    // positioned child, so `overflow: hidden` here was clipping every
+    // popover to zero visible pixels: the click worked, the popover opened,
+    // nothing was ever visible on screen. That's what "filters aren't
+    // clickable" actually was.
+    <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(2, 1fr)" : "repeat(7, 1fr)", rowGap: isMobile ? 8 : 0, width: "100%", border: isMobile ? `1px solid ${C.border}` : "none", borderRadius: isMobile ? 10 : 0, overflow: isMobile ? "hidden" : "visible" }}>
       <CheckboxFilterPopover
         label="Brand"
         options={opts.brands}
