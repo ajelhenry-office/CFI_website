@@ -305,29 +305,17 @@ export async function performToggleAPI(location_id, action, brand, priority = fa
         break; // Success for this ID, move to next ID
       }
 
-      if (response.status === 400) {
-        try {
-          const errBody = JSON.parse(finalResponseText);
-          if (errBody.message && errBody.message.includes("not valid for platform")) {
-            const badPlatformMatch = errBody.message.match(/platform['"\s]*([\w]+)/i);
-            if (badPlatformMatch && badPlatformMatch[1]) {
-              const badPlatform = badPlatformMatch[1].toLowerCase();
-              currentPlatforms = currentPlatforms.filter(p => p !== badPlatform);
-              continue;
-            }
-          } else if (errBody.message && (errBody.message.includes("Invalid platform") || errBody.message.includes("not associated"))) {
-            // Can't tell WHICH platform this message is about, so narrow one at a time
-            // (drop the last one and retry) instead of jumping straight to a hardcoded
-            // 2-platform fallback — with a 9-platform list now, that used to mean losing
-            // up to 7 legitimately-valid platforms over a single ambiguous error.
-            if (currentPlatforms.length > 1) {
-              currentPlatforms = currentPlatforms.slice(0, -1);
-              continue;
-            }
-          }
-        } catch (e) {}
-      }
-      
+      // A 400 (including "platform not valid" / "not associated with business") is not
+      // retried or narrowed — matches cake_zone's own script exactly: one call, all
+      // configured platforms, accept whatever UrbanPiper does with it. Guessing which
+      // platform was the problem and dropping platforms one at a time used to cost
+      // several extra round-trips per affected store AND could permanently drop a
+      // platform that was never actually invalid, just discarded while hunting for the
+      // real one. A store that genuinely has an unsupported platform in this list now
+      // just fails cleanly and shows up in Problem Stores like any other real issue —
+      // fixed by correcting that store's platform setup in UrbanPiper, not by our code
+      // guessing around it.
+
       // If we reach here, it failed and can't be retried
       let upErrorMsg = `UrbanPiper returned ${finalStatus} for ${id}`;
       try {
