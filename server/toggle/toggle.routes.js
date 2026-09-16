@@ -78,22 +78,21 @@ async function fetchWithTimeout(url, opts = {}, ms = 20000) {
 // to widen: performToggleAPI already strips a platform from the list and retries if
 // UrbanPiper says it's "not valid for platform X", so an extra platform a given store
 // doesn't actually have never breaks the call.
-const UP_PLATFORMS    = ["swiggy", "zomato", "dotpe", "ownly", "dunzo", "magicpin", "masalabox", "tipplr", "bitsila"];
-
-// eatfit's UrbanPiper business is only actually associated with these 3 — confirmed by
-// the legacy Apps Script's own PLATFORMS config, which has run this exact account
-// reliably. Sending the full 9-platform list above (correct for cake_zone/olio) against
-// eatfit means every single call gets "Platform not associated with business" and has
-// to retry-narrow its way down — live-tested during this fix: the same handful of
-// eatfit ref-IDs cycling through repeated 400s, several wasted round-trips per store,
-// on every call, every time. That was the actual dominant cost, well above the raw
-// pacing fix below. Giving eatfit its own correct list means its calls succeed (or
-// genuinely fail) on the first real attempt, same as every other brand already does.
-const EATFIT_PLATFORMS = ["zomato", "swiggy", "ownly"];
-
-function platformsForBrand(brandKey) {
-  return brandKey === 'eatfit' ? EATFIT_PLATFORMS : UP_PLATFORMS;
-}
+// Same list for every brand, including eatfit. eatfit was briefly narrowed to just
+// zomato/swiggy/ownly (matching the legacy Apps Script) to kill a retry-storm — but the
+// `platforms` field controls which platforms actually get touched, so that narrowing
+// silently meant magicpin/dotpe/dunzo/etc. were never even attempted for ANY eatfit
+// store, not just skipped-and-retried — an invisible coverage gap a store owner could
+// only find by checking UrbanPiper's own dashboard directly, which is exactly what
+// happened. A cached "known good" list per store would dodge the retry cost but trades
+// it for a worse bug: a platform added to a store after we learned its list would stay
+// invisible forever with nothing to invalidate the cache. Deliberately not doing that —
+// every call attempts the full list fresh, so a store gaining a platform is picked up
+// on its very next toggle with nothing to update. The retry-storm this used to cause is
+// now a non-issue: it was really the eatfit pacer's job (see paceEatfitCall below),
+// which keeps real call volume within UrbanPiper's actual ceiling regardless of how
+// many of these 9 a given store ends up not supporting.
+const UP_PLATFORMS = ["swiggy", "zomato", "dotpe", "ownly", "dunzo", "magicpin", "masalabox", "tipplr", "bitsila"];
 
 // No hardcoded fallbacks — a missing credential must fail loudly (see the startup
 // check in server.js), not silently run on a value that's sitting in git history.
@@ -229,7 +228,7 @@ export async function performToggleAPI(location_id, action, brand, priority = fa
   const referenceIds = [];
 
   for (const id of ids) {
-    let currentPlatforms = [...platformsForBrand(brandKey)];
+    let currentPlatforms = [...UP_PLATFORMS];
     let finalStatus = 500;
     let finalResponseText = "";
     let rateLimitRetries = 0;
@@ -390,7 +389,7 @@ async function tryVerifyAction(ids, creds, brandKey) {
           "Content-Type": "application/json",
           ...(creds.biz_id ? { "x-upr-biz-id": creds.biz_id } : {})
         },
-        body: JSON.stringify({ location_ref_id: String(id), action: "verify", platforms: platformsForBrand(brandKey) }),
+        body: JSON.stringify({ location_ref_id: String(id), action: "verify", platforms: UP_PLATFORMS }),
       });
       // A real UrbanPiper 429 here used to fall straight into the generic "not found"
       // error below — misleading, since the store is very likely fine, UrbanPiper is
@@ -404,7 +403,7 @@ async function tryVerifyAction(ids, creds, brandKey) {
             "Content-Type": "application/json",
             ...(creds.biz_id ? { "x-upr-biz-id": creds.biz_id } : {})
           },
-          body: JSON.stringify({ location_ref_id: String(id), action: "verify", platforms: platformsForBrand(brandKey) }),
+          body: JSON.stringify({ location_ref_id: String(id), action: "verify", platforms: UP_PLATFORMS }),
         });
       }
       if (response.status === 200) return { valid: true };
@@ -446,7 +445,7 @@ async function tryStatusAction(ids, creds, currentStatus, brandKey) {
           "Content-Type": "application/json",
           ...(creds.biz_id ? { "x-upr-biz-id": creds.biz_id } : {})
         },
-        body: JSON.stringify({ location_ref_id: String(id), action, platforms: platformsForBrand(brandKey) }),
+        body: JSON.stringify({ location_ref_id: String(id), action, platforms: UP_PLATFORMS }),
       });
       if (response.status === 429) {
         await new Promise(r => setTimeout(r, 61000));
@@ -457,7 +456,7 @@ async function tryStatusAction(ids, creds, currentStatus, brandKey) {
             "Content-Type": "application/json",
             ...(creds.biz_id ? { "x-upr-biz-id": creds.biz_id } : {})
           },
-          body: JSON.stringify({ location_ref_id: String(id), action, platforms: platformsForBrand(brandKey) }),
+          body: JSON.stringify({ location_ref_id: String(id), action, platforms: UP_PLATFORMS }),
         });
       }
       if (response.status >= 200 && response.status < 300) {
