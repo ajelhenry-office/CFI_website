@@ -27,6 +27,7 @@ const COLS = {
   31: [{ header: "Item Name", key: "item", bold: true }, { header: "Month", key: "month" }, { header: "Average Rating", key: "avg" }, { header: "Reviews Count", key: "count" }],
   32: [{ header: "Item Name", key: "name", bold: true }, { header: "Item Average", key: "avg" }, { header: "Company Average", key: "companyAvg" }, { header: "Rating Gap", key: "gap" }, { header: "Performance Status", key: "status" }],
   17: [{ header: "Fault Responsibility", key: "cause", bold: true }, { header: "Classified Complaints", key: "count" }, { header: "Percentage", key: "percentage", render: (v) => `${v}%` }],
+  13: [{ header: "Kitchen", key: "name", bold: true }, { header: "Order Volume", key: "volume" }, { header: "Average Rating", key: "rating" }],
 };
 
 // Breakdown tables have a different row shape than the "overall" table — keys
