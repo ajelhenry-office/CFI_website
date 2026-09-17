@@ -54,12 +54,26 @@ export default function AuditModal({ onClose, stores = [], selectedBrands = [] }
   const [searchQuery, setSearchQuery] = useState("");
 
   useEffect(() => {
-    fetch(`${API_BASE}/api/toggle/audit-log`, { headers: getAuthHeaders() })
+    // Scope the fetch itself to one brand when we're clearly looking at just one (a
+    // brand workspace's own Audit Log) — otherwise a high-volume brand's own activity
+    // can fill the server's shared 500-row cap and push this brand's rows out of it
+    // entirely before any of this component's own filtering ever runs. Home's
+    // multi-brand filter (selectedBrands.length !== 1) keeps the old unscoped fetch,
+    // same as today.
+    const brandParam = selectedBrands && selectedBrands.length === 1
+      ? `?brand=${encodeURIComponent(selectedBrands[0])}`
+      : "";
+    fetch(`${API_BASE}/api/toggle/audit-log${brandParam}`, { headers: getAuthHeaders() })
       .then((r) => r.json())
       .then((d) => setLogs(d.logs || []))
       .catch(() => setLogs([]))
       .finally(() => setLoading(false));
-  }, []);
+    // Depend on a stable string, not the array itself — selectedBrands is a fresh
+    // literal on every parent re-render (TogglePage polls every few seconds), so
+    // depending on the array reference directly would refetch constantly while this
+    // modal is just sitting open.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [(selectedBrands || []).join(",")]);
 
   // Only show logs for stores belonging to the currently selected brands.
   // When no brands are selected (length === 0), show all.

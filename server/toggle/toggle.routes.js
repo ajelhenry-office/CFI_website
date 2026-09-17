@@ -750,9 +750,18 @@ router.get("/toggle/sidebar-data", async (req, res) => {
 });
 
 // ─── AUDIT LOG ENDPOINT ──────────────────────────────────────
+// Optional ?brand= scoping — without it, the 500-row cap is shared across every brand,
+// and a high-volume brand's own activity (cake_zone's auto-recheck alone can write
+// hundreds of rows in one sweep) can completely fill that window and push a quieter
+// brand's rows out entirely before the frontend ever gets to filter by brand — which is
+// exactly why opening Audit Log for eatfit could show nothing, even with real recent
+// history. Scoping the query itself means each brand gets its own 500-row window.
 router.get("/toggle/audit-log", async (req, res) => {
   try {
-    const result = await pool.query(`SELECT * FROM toggle_activity ORDER BY created_at DESC LIMIT 500`);
+    const brand = req.query.brand ? normalizeBrandKey(req.query.brand) : null;
+    const result = brand
+      ? await pool.query(`SELECT * FROM toggle_activity WHERE brand = $1 ORDER BY created_at DESC LIMIT 500`, [brand])
+      : await pool.query(`SELECT * FROM toggle_activity ORDER BY created_at DESC LIMIT 500`);
     res.json({ success: true, logs: result.rows });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
