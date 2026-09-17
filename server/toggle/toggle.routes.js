@@ -75,24 +75,23 @@ async function fetchWithTimeout(url, opts = {}, ms = 20000) {
 // Matches the platform list used by CakeZone's own working Apps Script tool, which
 // confirms real stores exist on more than just swiggy/zomato — the narrower list here
 // meant KitchenPulse could never toggle a store's listing on any of the others. Safe
-// to widen: performToggleAPI already strips a platform from the list and retries if
-// UrbanPiper says it's "not valid for platform X", so an extra platform a given store
-// doesn't actually have never breaks the call.
-// Same list for every brand, including eatfit. eatfit was briefly narrowed to just
-// zomato/swiggy/ownly (matching the legacy Apps Script) to kill a retry-storm — but the
-// `platforms` field controls which platforms actually get touched, so that narrowing
-// silently meant magicpin/dotpe/dunzo/etc. were never even attempted for ANY eatfit
-// store, not just skipped-and-retried — an invisible coverage gap a store owner could
-// only find by checking UrbanPiper's own dashboard directly, which is exactly what
-// happened. A cached "known good" list per store would dodge the retry cost but trades
-// it for a worse bug: a platform added to a store after we learned its list would stay
-// invisible forever with nothing to invalidate the cache. Deliberately not doing that —
-// every call attempts the full list fresh, so a store gaining a platform is picked up
-// on its very next toggle with nothing to update. The retry-storm this used to cause is
-// now a non-issue: it was really the eatfit pacer's job (see paceEatfitCall below),
-// which keeps real call volume within UrbanPiper's actual ceiling regardless of how
-// many of these 9 a given store ends up not supporting.
+// to widen for cake_zone/olio: verified directly (1576/1576 real calls succeeded on
+// the first attempt, zero platform-association errors) that essentially every store on
+// those accounts is genuinely configured for all 9 — there's nothing here for those
+// brands to ever reject.
 const UP_PLATFORMS = ["swiggy", "zomato", "dotpe", "ownly", "dunzo", "magicpin", "masalabox", "tipplr", "bitsila"];
+
+// eatfit does NOT get the same list — verified directly, live, that it can't: sending
+// all 9 to a real eatfit location whose account isn't configured for some of them gets
+// the whole call rejected ("platform not associated with business"), including the
+// platforms that would have worked fine on their own. Matches the legacy "Kitchen
+// Status Automation" Apps Script exactly, which has run this exact account reliably —
+// it has only ever used these 3, never anything wider.
+const EATFIT_PLATFORMS = ["zomato", "swiggy", "ownly"];
+
+function platformsForBrand(brandKey) {
+  return brandKey === 'eatfit' ? EATFIT_PLATFORMS : UP_PLATFORMS;
+}
 
 // No hardcoded fallbacks — a missing credential must fail loudly (see the startup
 // check in server.js), not silently run on a value that's sitting in git history.
@@ -228,7 +227,7 @@ export async function performToggleAPI(location_id, action, brand, priority = fa
   const referenceIds = [];
 
   for (const id of ids) {
-    let currentPlatforms = [...UP_PLATFORMS];
+    let currentPlatforms = [...platformsForBrand(brandKey)];
     let finalStatus = 500;
     let finalResponseText = "";
     let rateLimitRetries = 0;
@@ -305,16 +304,33 @@ export async function performToggleAPI(location_id, action, brand, priority = fa
         break; // Success for this ID, move to next ID
       }
 
-      // A 400 (including "platform not valid" / "not associated with business") is not
-      // retried or narrowed — matches cake_zone's own script exactly: one call, all
-      // configured platforms, accept whatever UrbanPiper does with it. Guessing which
-      // platform was the problem and dropping platforms one at a time used to cost
-      // several extra round-trips per affected store AND could permanently drop a
+      // Matches the eatfit Apps Script's own error handling exactly: only retry when
+      // UrbanPiper NAMES the exact bad platform ("not valid for platform X") — drop
+      // just that one, try once more. Any other 400 (including the ambiguous "Invalid
+      // platform" / "not associated with business", which doesn't say which one) is NOT
+      // guessed at — no blind drop-from-the-end narrowing. That guessing used to cost
+      // several extra round-trips per affected store and could permanently discard a
       // platform that was never actually invalid, just discarded while hunting for the
-      // real one. A store that genuinely has an unsupported platform in this list now
-      // just fails cleanly and shows up in Problem Stores like any other real issue —
-      // fixed by correcting that store's platform setup in UrbanPiper, not by our code
-      // guessing around it.
+      // real one. A store that genuinely has an unsupported platform now either recovers
+      // via this precise, named removal, or fails cleanly and shows up in Problem Stores
+      // like any other real issue — fixed by correcting that store's platform setup in
+      // UrbanPiper, not by our code guessing around it.
+      if (response.status === 400) {
+        try {
+          const errBody = JSON.parse(finalResponseText);
+          if (errBody.message && errBody.message.includes("not valid for platform")) {
+            const badPlatformMatch = errBody.message.match(/platform['"\s]*([\w]+)/i);
+            if (badPlatformMatch && badPlatformMatch[1]) {
+              const badPlatform = badPlatformMatch[1].toLowerCase();
+              const narrowed = currentPlatforms.filter(p => p !== badPlatform);
+              if (narrowed.length > 0 && narrowed.length < currentPlatforms.length) {
+                currentPlatforms = narrowed;
+                continue;
+              }
+            }
+          }
+        } catch (e) {}
+      }
 
       // If we reach here, it failed and can't be retried
       let upErrorMsg = `UrbanPiper returned ${finalStatus} for ${id}`;
@@ -377,7 +393,7 @@ async function tryVerifyAction(ids, creds, brandKey) {
           "Content-Type": "application/json",
           ...(creds.biz_id ? { "x-upr-biz-id": creds.biz_id } : {})
         },
-        body: JSON.stringify({ location_ref_id: String(id), action: "verify", platforms: UP_PLATFORMS }),
+        body: JSON.stringify({ location_ref_id: String(id), action: "verify", platforms: platformsForBrand(brandKey) }),
       });
       // A real UrbanPiper 429 here used to fall straight into the generic "not found"
       // error below — misleading, since the store is very likely fine, UrbanPiper is
@@ -391,7 +407,7 @@ async function tryVerifyAction(ids, creds, brandKey) {
             "Content-Type": "application/json",
             ...(creds.biz_id ? { "x-upr-biz-id": creds.biz_id } : {})
           },
-          body: JSON.stringify({ location_ref_id: String(id), action: "verify", platforms: UP_PLATFORMS }),
+          body: JSON.stringify({ location_ref_id: String(id), action: "verify", platforms: platformsForBrand(brandKey) }),
         });
       }
       if (response.status === 200) return { valid: true };
@@ -433,7 +449,7 @@ async function tryStatusAction(ids, creds, currentStatus, brandKey) {
           "Content-Type": "application/json",
           ...(creds.biz_id ? { "x-upr-biz-id": creds.biz_id } : {})
         },
-        body: JSON.stringify({ location_ref_id: String(id), action, platforms: UP_PLATFORMS }),
+        body: JSON.stringify({ location_ref_id: String(id), action, platforms: platformsForBrand(brandKey) }),
       });
       if (response.status === 429) {
         await new Promise(r => setTimeout(r, 61000));
@@ -444,7 +460,7 @@ async function tryStatusAction(ids, creds, currentStatus, brandKey) {
             "Content-Type": "application/json",
             ...(creds.biz_id ? { "x-upr-biz-id": creds.biz_id } : {})
           },
-          body: JSON.stringify({ location_ref_id: String(id), action, platforms: UP_PLATFORMS }),
+          body: JSON.stringify({ location_ref_id: String(id), action, platforms: platformsForBrand(brandKey) }),
         });
       }
       if (response.status >= 200 && response.status < 300) {
