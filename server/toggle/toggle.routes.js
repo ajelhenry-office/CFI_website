@@ -84,10 +84,15 @@ const UP_PLATFORMS = ["swiggy", "zomato", "dotpe", "ownly", "dunzo", "magicpin",
 // eatfit does NOT get the same list — verified directly, live, that it can't: sending
 // all 9 to a real eatfit location whose account isn't configured for some of them gets
 // the whole call rejected ("platform not associated with business"), including the
-// platforms that would have worked fine on their own. Matches the legacy "Kitchen
-// Status Automation" Apps Script exactly, which has run this exact account reliably —
-// it has only ever used these 3, never anything wider.
-const EATFIT_PLATFORMS = ["zomato", "swiggy", "ownly"];
+// platforms that would have worked fine on their own. Started from the legacy "Kitchen
+// Status Automation" Apps Script's own 3 (zomato/swiggy/ownly), then individually
+// live-tested every other platform against real, currently-failing stores (BLR_SJR,
+// BLR_BSN, MAA_OVN) before adding anything — magicpin and tipplr both came back a
+// clean 200 on every single test, so they're proven, not guessed. dotpe and dunzo
+// confirmed FAIL ("not associated with business") on real stores during that same
+// round of testing — deliberately left out. masalabox/bitsila were inconclusive
+// (rate-limited mid-test) — worth a clean retest later, not included yet.
+const EATFIT_PLATFORMS = ["zomato", "swiggy", "ownly", "magicpin", "tipplr"];
 
 function platformsForBrand(brandKey) {
   return brandKey === 'eatfit' ? EATFIT_PLATFORMS : UP_PLATFORMS;
