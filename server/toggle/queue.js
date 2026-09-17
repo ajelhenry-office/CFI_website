@@ -125,9 +125,14 @@ export async function logProblemStore(store, action, errorMsg) {
   const storeName = store.name || store.store_name;
   const check = await pool.query(`SELECT id, fail_count FROM problem_stores WHERE store_id = $1 AND issue_type = 'FAILED'`, [store.location_id]);
   if (check.rows.length > 0) {
+    // first_seen_at is deliberately NOT touched here — it's set once, at creation, and
+    // is what the auto-expiry cron (workers.js) uses to clear this row a day after it
+    // first appeared, even if it keeps failing every cycle in between. Refreshing it on
+    // every repeat failure would mean an actively-broken store never ages out, which is
+    // exactly the "stays filled forever" problem this was built to fix.
     await pool.query(`UPDATE problem_stores SET fail_count = fail_count + 1, last_attempt_at = NOW(), resolved = false WHERE id = $1`, [check.rows[0].id]);
   } else {
-    await pool.query(`INSERT INTO problem_stores (store_name, store_id, brand, issue_type) VALUES ($1, $2, $3, 'FAILED')`, [storeName, store.location_id, store.brand]);
+    await pool.query(`INSERT INTO problem_stores (store_name, store_id, brand, issue_type, first_seen_at) VALUES ($1, $2, $3, 'FAILED', NOW())`, [storeName, store.location_id, store.brand]);
   }
 }
 
@@ -941,6 +946,12 @@ export async function ensureToggleJobColumns() {
   await pool.query(`ALTER TABLE bulk_toggle_jobs ADD COLUMN IF NOT EXISTS paused_at TIMESTAMP`);
   await pool.query(`ALTER TABLE bulk_toggle_jobs ADD COLUMN IF NOT EXISTS store_ids TEXT[]`);
   await pool.query(`ALTER TABLE bulk_toggle_jobs ADD COLUMN IF NOT EXISTS store_brands TEXT[]`);
+  // first_seen_at backs the Problem Stores auto-expiry cron (workers.js) — set once at
+  // creation (see logProblemStore above), never refreshed by repeat failures, so a
+  // store that keeps failing every cycle still ages out a day after it first appeared
+  // instead of sitting in the list forever. Existing rows get NOW() as a starting point
+  // (via the default) so nothing pre-dates the column and gets purged immediately.
+  await pool.query(`ALTER TABLE problem_stores ADD COLUMN IF NOT EXISTS first_seen_at TIMESTAMP DEFAULT NOW()`);
 }
 
 // Called once at startup, before the Hourly Recheck chains are kicked. A freshly

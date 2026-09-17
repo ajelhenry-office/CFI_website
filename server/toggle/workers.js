@@ -138,20 +138,24 @@ export function startWorkers() {
     }
   }, 60 * 60 * 1000); // 60 minutes
 
-  // Problem Stores Retention (Runs every 24 hours) — only ever purges rows already
-  // marked resolved (a store gets marked resolved the moment any toggle for it
-  // succeeds, so it's already off the Problems list well before this runs) and only
-  // once they've sat resolved for a while, keeping a short-term audit trail (e.g. "this
-  // kept failing 3 times last week") without letting the table grow forever. An
-  // unresolved row is never touched here — it stays until the store is actually fixed.
+  // Problem Stores Retention (runs hourly) — clears a row a day after it FIRST
+  // appeared (first_seen_at, set once at creation — see logProblemStore), regardless of
+  // whether it's been fixed. Deliberate: a store that's still genuinely, actively
+  // failing every cycle used to sit in the list forever, since nothing ever marks it
+  // resolved and last_attempt_at keeps refreshing on every repeat failure. One day is
+  // enough to notice and act on it without it cluttering the view indefinitely — if
+  // it's still broken after that, the very next failed attempt inserts a fresh row
+  // (and starts a new day-long clock), so a genuinely unresolved problem still comes
+  // back, it just isn't a single entry sitting there forever. Runs hourly (not daily)
+  // so the actual delay past the 1-day mark stays small.
   setInterval(async () => {
     try {
-      const res = await pool.query(`DELETE FROM problem_stores WHERE resolved = true AND last_attempt_at < NOW() - INTERVAL '14 days'`);
-      if (res.rowCount > 0) console.log(`[WORKERS] Purged ${res.rowCount} resolved problem_stores rows older than 14 days.`);
+      const res = await pool.query(`DELETE FROM problem_stores WHERE first_seen_at < NOW() - INTERVAL '1 day'`);
+      if (res.rowCount > 0) console.log(`[WORKERS] Purged ${res.rowCount} problem_stores rows older than 1 day.`);
     } catch (err) {
       console.error("[WORKERS] Problem Stores retention purge failed:", err);
     }
-  }, 24 * 60 * 60 * 1000); // 24 hours
+  }, 60 * 60 * 1000); // 1 hour
 
   // Warmup Ops Cache (Runs every 1 hour)
   setInterval(() => {
