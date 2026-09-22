@@ -169,17 +169,24 @@ router.post('/forgot-password', async (req, res) => {
 
     // Generate random 8 character password
     const newPassword = Math.random().toString(36).slice(-8);
-    const hashedPassword = await bcrypt.hash(newPassword, 10);
 
-    // Update DB
-    await pool.query('UPDATE authorized_users SET password_hash = $1 WHERE id = $2', [hashedPassword, user.id]);
-
-    // Send email
+    // Send the email BEFORE touching the DB. Previously the password was overwritten
+    // first and the email sent after — if delivery failed (e.g. an expired/revoked
+    // Gmail OAuth token), the user was left with a changed password they never
+    // received, unable to log in with their old one and with nothing to reset with.
+    // Now a failed send leaves the existing password untouched and reports a real
+    // error instead of a false "success".
     const subject = "Curefoods Dashboard - Password Reset";
     const body = `Hello,\n\nYour password has been reset.\n\nLogin here: ${FRONTEND_URL}\nYour Username: ${user.email}\nYour New Password: ${newPassword}\n\nPlease login and change your password if needed.`;
-
     const emailSent = await sendEmail(user.email, subject, body);
-    if (!emailSent) console.error(`[AUTH] Password reset succeeded for ${user.email} but the email failed to send.`);
+
+    if (!emailSent) {
+      console.error(`[AUTH] Password reset NOT applied for ${user.email} — email failed to send, password left unchanged.`);
+      return res.status(502).json({ success: false, error: 'Could not send the reset email right now. Your password has NOT been changed — please try again shortly or contact an admin.' });
+    }
+
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    await pool.query('UPDATE authorized_users SET password_hash = $1 WHERE id = $2', [hashedPassword, user.id]);
 
     res.json({ success: true, message: 'If the email exists, a password reset has been sent.' });
   } catch (err) {
