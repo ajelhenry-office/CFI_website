@@ -36,7 +36,7 @@ export async function isToggleFrozen(brand) {
 // brand outside this list (e.g. Ovenfresh), even if that brand happens to have a store
 // left at desired_state = 'ONLINE' from earlier testing. Keys must already be
 // normalizeBrandKey() output (e.g. "cake_zone", not "Cake Zone" or "cake zone").
-export const AUTO_MANAGED_BRANDS = ['olio', 'eatfit', 'cake_zone'];
+export const AUTO_MANAGED_BRANDS = ['olio', 'eatfit', 'cake_zone', 'kk'];
 
 // Single source of truth for the eatfit auto-throttle threshold — imported wherever
 // this number is needed (the JIT check below, the enforcer cron, the legacy webhook)

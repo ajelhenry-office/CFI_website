@@ -134,6 +134,15 @@ export const UP_BRANDS = {
     username : process.env.UP_USERNAME_OLIO,
     apikey   : process.env.UP_APIKEY_OLIO,
   },
+  // No separate biz_id — confirmed live during onboarding that this account doesn't
+  // need the x-upr-biz-id header (same as cake_zone/olio); platformsForBrand() also
+  // gives kk the same full UP_PLATFORMS list as cake_zone/olio, not eatfit's narrowed
+  // one, and it deliberately gets no order-count throttle (resolveOnlineAction only
+  // special-cases brands whose name includes "eatfit").
+  kk: {
+    username : process.env.UP_USERNAME_KK,
+    apikey   : process.env.UP_APIKEY_KK,
+  },
 };
 
 // ─── EATFIT CALL PACING ──────────────────────────────────────

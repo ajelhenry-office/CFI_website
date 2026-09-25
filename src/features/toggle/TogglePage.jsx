@@ -21,6 +21,7 @@ const REAL_BRANDS = [
   { key: "olio", label: "Olio" },
   { key: "eatfit", label: "EatFit" },
   { key: "cake_zone", label: "CakeZone" },
+  { key: "kk", label: "Krispy Kreme" },
 ];
 const normalizeBrand = (b) => String(b || "").toLowerCase().replace(/[^a-z]/g, "_");
 
