@@ -94,8 +94,20 @@ const UP_PLATFORMS = ["swiggy", "zomato", "dotpe", "ownly", "dunzo", "magicpin",
 // (rate-limited mid-test) — worth a clean retest later, not included yet.
 const EATFIT_PLATFORMS = ["zomato", "swiggy", "ownly", "magicpin", "tipplr"];
 
+// kk hit the exact same wall as eatfit did: sending the full UP_PLATFORMS 9-list to a
+// real kk location got every single call rejected ("Platform not associated with
+// business/ Invalid platform") the moment it went live under AUTO_MANAGED_BRANDS,
+// confirmed via live per-platform verify tests immediately after — swiggy/zomato/ownly/
+// magicpin all came back a clean 200, dotpe and dunzo confirmed FAIL. masalabox/tipplr/
+// bitsila were rate-limited mid-test (contending with the live failing cycle) — still
+// unverified, deliberately left out until retested clean, same as eatfit's own
+// masalabox/bitsila gap.
+const KK_PLATFORMS = ["swiggy", "zomato", "ownly", "magicpin"];
+
 function platformsForBrand(brandKey) {
-  return brandKey === 'eatfit' ? EATFIT_PLATFORMS : UP_PLATFORMS;
+  if (brandKey === 'eatfit') return EATFIT_PLATFORMS;
+  if (brandKey === 'kk') return KK_PLATFORMS;
+  return UP_PLATFORMS;
 }
 
 // No hardcoded fallbacks — a missing credential must fail loudly (see the startup
