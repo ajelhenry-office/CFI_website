@@ -223,7 +223,10 @@ export function SettingsPage() {
         setNewRoles([]);
         setShowModal(false);
         fetchUsers();
-        setTimeout(() => alert(data.message || "Employee added successfully!"), 100);
+        const alertMsg = data.password
+          ? `${data.message}\n\nUsername: ${data.user?.email}\nPassword: ${data.password}`
+          : (data.message || "Employee added successfully!");
+        setTimeout(() => alert(alertMsg), 100);
       } else {
         setError(data.error);
       }

@@ -260,6 +260,11 @@ router.post('/users', authMiddleware, adminMiddleware, async (req, res) => {
       success: true,
       user: rows[0],
       emailSent,
+      // Without this, a failed send left the admin with a password that existed nowhere
+      // retrievable — only its bcrypt hash was stored, and the UI told them to "share it
+      // manually" with nothing to actually share. Matches /users/:id/reset-password,
+      // which already always returns newPassword for the same reason.
+      password: emailSent ? undefined : password,
       message: emailSent ? 'Employee added and credentials emailed.' : 'Employee added, but the welcome email failed to send — share the credentials with them manually.',
     });
   } catch (err) {
