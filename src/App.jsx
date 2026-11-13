@@ -5,8 +5,6 @@ import useIsMobile from "./useIsMobile";
 import { C, FONT } from "./theme";
 import TogglePage from "./features/toggle/TogglePage";
 import TimingPage from "./features/timing/TimingPage";
-import ReviewsPage from "./features/reviews/ReviewsPage";
-import RouteBackfillingPage from "./features/backfilling/RouteBackfillingPage";
 import RatingsPage from "./features/ratings/RatingsPage";
 import OpsMatrixPage from "./features/ops_matrix/OpsMatrixPage";
 import { SettingsPage, ThemePage } from "./features/static/StaticPages";
@@ -187,55 +185,49 @@ export default function App() {
           </button>
         )}
 
-        {/* The Reviews tab has its own full header and its own filter bar built in —
-            this shared one would just be a redundant duplicate above it. */}
-        {activeTab !== "reviews" && (
-          <header
-            style={{
-              padding: isMobile
-                ? "16px 14px 12px 54px"
-                : (collapsed ? "20px 28px 16px 58px" : "20px 28px 16px"),
-              borderBottom: `1px solid ${C.border}`,
-              display: "flex",
-              flexDirection: "column",
-              gap: isMobile ? 10 : 14,
-            }}
-          >
-            {activeTab === "ratings" ? (
-              // Its own full-width row so centering has something to center within —
-              // the shared title+header-actions row below is only ever as wide as its
-              // own content, so text-align:center on the h1 alone had nothing to act on.
-              <h1 style={{ fontSize: 24, fontWeight: 800, color: C.primary, margin: 0, letterSpacing: -0.3, width: "100%", textAlign: "center" }}>
-                ⭐ {title} ⭐
-              </h1>
-            ) : (
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                <div style={{ minWidth: 0 }}>
-                  <h1 style={{ fontSize: isMobile ? 19 : 24, fontWeight: 800, color: C.primary, margin: 0, letterSpacing: -0.3 }}>{title}</h1>
-                  <div style={{ fontSize: isMobile ? 12 : 13, color: C.muted, marginTop: 3 }}>{subtitle}</div>
-                </div>
-                <div id="header-actions"></div>
+        <header
+          style={{
+            padding: isMobile
+              ? "16px 14px 12px 54px"
+              : (collapsed ? "20px 28px 16px 58px" : "20px 28px 16px"),
+            borderBottom: `1px solid ${C.border}`,
+            display: "flex",
+            flexDirection: "column",
+            gap: isMobile ? 10 : 14,
+          }}
+        >
+          {activeTab === "ratings" ? (
+            // Its own full-width row so centering has something to center within —
+            // the shared title+header-actions row below is only ever as wide as its
+            // own content, so text-align:center on the h1 alone had nothing to act on.
+            <h1 style={{ fontSize: 24, fontWeight: 800, color: C.primary, margin: 0, letterSpacing: -0.3, width: "100%", textAlign: "center" }}>
+              ⭐ {title} ⭐
+            </h1>
+          ) : (
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <div style={{ minWidth: 0 }}>
+                <h1 style={{ fontSize: isMobile ? 19 : 24, fontWeight: 800, color: C.primary, margin: 0, letterSpacing: -0.3 }}>{title}</h1>
+                <div style={{ fontSize: isMobile ? 12 : 13, color: C.muted, marginTop: 3 }}>{subtitle}</div>
               </div>
-            )}
-            {activeTab !== "toggle" && activeTab !== "timing" && activeTab !== "settings" && activeTab !== "ops_matrix" && (
-              <GlobalFilters
-                filters={globalFilters}
-                masterData={masterData}
-                onChange={updateFilters}
-              />
-            )}
-            {/* Search / Apply / Download / Clear for the Ratings tab portal here, so it
-                sits in the same header block right below the filter row instead of as a
-                separate bar further down the page. */}
-            {activeTab === "ratings" && <div id="ratings-actions-slot" />}
-          </header>
-        )}
+              <div id="header-actions"></div>
+            </div>
+          )}
+          {activeTab !== "toggle" && activeTab !== "timing" && activeTab !== "settings" && activeTab !== "ops_matrix" && (
+            <GlobalFilters
+              filters={globalFilters}
+              masterData={masterData}
+              onChange={updateFilters}
+            />
+          )}
+          {/* Search / Apply / Download / Clear for the Ratings tab portal here, so it
+              sits in the same header block right below the filter row instead of as a
+              separate bar further down the page. */}
+          {activeTab === "ratings" && <div id="ratings-actions-slot" />}
+        </header>
 
-        <div style={{ flex: 1, overflowY: "auto", padding: activeTab === "reviews" ? 0 : (isMobile ? "14px 12px 48px" : "22px 28px 60px") }}>
+        <div style={{ flex: 1, overflowY: "auto", padding: isMobile ? "14px 12px 48px" : "22px 28px 60px" }}>
           {activeTab === "toggle" && <TogglePage userRole={user.role} userRoles={user.roles || [user.role]} />}
           {activeTab === "timing" && <TimingPage globalFilters={globalFilters} />}
-          {activeTab === "reviews" && <ReviewsPage globalFilters={globalFilters} />}
-          {activeTab === "backfilling" && <RouteBackfillingPage globalFilters={globalFilters} />}
           {activeTab === "ratings" && (
             <RatingsPage
               globalFilters={globalFilters}

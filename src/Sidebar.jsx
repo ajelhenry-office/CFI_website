@@ -9,8 +9,6 @@ const Icon = ({ d }) => (
 const ICONS = {
   toggle: <Icon d={<><rect x="1" y="6" width="22" height="12" rx="6" /><circle cx="16" cy="12" r="3" /></>} />,
   timing: <Icon d={<><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>} />,
-  reviews: <Icon d={<><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></>} />,
-  backfill: <Icon d={<><path d="M3 12h6l3 8 3-16 3 8h3" /></>} />,
   ratings: <Icon d={<><path d="M12 3l2.9 5.9 6.5.9-4.7 4.6 1.1 6.5L12 17.8 6.2 20.9l1.1-6.5L2.6 9.8l6.5-.9z" /></>} />,
   ops_matrix: <Icon d={<><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M3 9h18" /><path d="M3 15h18" /><path d="M9 3v18" /><path d="M15 3v18" /></>} />,
   settings: <Icon d={<><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2V21a2 2 0 1 1-4 0v-.1A1.7 1.7 0 0 0 7 19.4a2 2 0 1 1-2.8-2.8l.1-.1A1.7 1.7 0 0 0 3 13.6H3a2 2 0 1 1 0-4h.1A1.7 1.7 0 0 0 4.6 7a2 2 0 1 1 2.8-2.8l.1.1A1.7 1.7 0 0 0 10 3V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 2.6 1.5 2 2 0 1 1 2.8 2.8l-.1.1A1.7 1.7 0 0 0 21 10a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" /></>} />,
@@ -21,8 +19,6 @@ const ICONS = {
 export const NAV_ITEMS = [
   { key: "toggle", label: "Toggle", subtitle: "Outlet & item availability control" },
   { key: "timing", label: "Timing", subtitle: "Operational hours and slot health" },
-  { key: "reviews", label: "Dine-in Reviews", subtitle: "Dine-in guest feedback stream" },
-  { key: "backfilling", label: "Route Backfilling", subtitle: "Rider route gap reconciliation" },
   { key: "ratings", label: "Ratings & Insights", subtitle: "Brand, Zone, City & Kitchen ratings across the portfolio" },
   { key: "ops_matrix", label: "Ops Matrix", subtitle: "Operations performance matrix" },
   { key: "settings", label: "Settings", subtitle: "Profile and connected platforms" },
@@ -32,8 +28,6 @@ export const NAV_ITEMS = [
 const ICON_FOR = {
   toggle: "toggle",
   timing: "timing",
-  reviews: "reviews",
-  backfilling: "backfill",
   ratings: "ratings",
   ops_matrix: "ops_matrix",
   settings: "settings",
@@ -41,10 +35,10 @@ const ICON_FOR = {
 };
 
 export const ROLE_PERMISSIONS = {
-  super_admin: ["toggle", "timing", "reviews", "backfilling", "ratings", "ops_matrix", "settings", "theme"],
-  admin: ["toggle", "timing", "reviews", "backfilling", "ratings", "ops_matrix", "settings", "theme"],
+  super_admin: ["toggle", "timing", "ratings", "ops_matrix", "settings", "theme"],
+  admin: ["toggle", "timing", "ratings", "ops_matrix", "settings", "theme"],
   dark_kitchen: ["ratings", "ops_matrix"],
-  supervisor: ["ratings", "ops_matrix", "reviews", "backfilling"],
+  supervisor: ["ratings", "ops_matrix"],
   control_tower: ["toggle"],
 };
 
