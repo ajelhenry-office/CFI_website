@@ -6,40 +6,41 @@ import InsightResult from "./InsightResult";
 import DefaultDashboard from "./insights/DefaultDashboard";
 import DownloadDialog from "./insights/DownloadDialog";
 
-// All re-enabled (2026-09-16) for a full review of the catalog. `paused:
-// true` is still supported (the search box filters those out, and the
-// backend's ACTIVE_INSIGHT_IDS refuses to run them) — nothing was deleted
-// from that mechanism, every entry below is just not currently using it.
+// Back down to only Brand/Zone/City/Kitchen Level Rating (2026-11-13), after
+// the full-catalog review enabled 2026-09-16. `paused: true` is kept, not
+// deleted — the search box filters those out, and the backend's
+// ACTIVE_INSIGHT_IDS refuses to run them — so re-enabling any of them later
+// is just removing the flag on both ends.
 export const INSIGHTS = [
   { id: 1, label: "Brand Level Rating", category: "Performance" },
   { id: 2, label: "Zone Level Rating", category: "Location" },
   { id: 3, label: "City Level Rating", category: "Location" },
   { id: 4, label: "Kitchen Level Rating", category: "Location" },
-  { id: 5, label: "Platform Comparison", category: "Performance" },
-  { id: 6, label: "SKU Leaderboard - Top Rated", category: "SKUs" },
-  { id: 7, label: "SKU Leaderboard - Worst Rated (Kill List)", category: "SKUs" },
-  { id: 8, label: "High Volume SKUs", category: "SKUs" },
-  { id: 9, label: "Category Ratings", category: "Performance" },
-  { id: 10, label: "High Volume, Low Rating items", category: "SKUs" },
-  { id: 11, label: "Rating Distribution Stats", category: "Performance" },
-  { id: 12, label: "Monthly Trends Comparison", category: "Time" },
-  { id: 13, label: "Volume vs Rating by Kitchen", category: "Location" },
-  { id: 14, label: "Weekend vs Weekday Ratings", category: "Time" },
-  { id: 15, label: "Peak Complaint Hours", category: "Time" },
-  { id: 16, label: "AI Repeat Complaint Finder", category: "Performance" },
-  { id: 17, label: "AI Department Blame Split", category: "Performance" },
-  { id: 18, label: "AI Weekly Operations Brief", category: "Performance" },
-  { id: 19, label: "AI Action Items Generator", category: "Performance" },
-  { id: 20, label: "AI Packaging Issues Tracker", category: "Performance" },
-  { id: 21, label: "Comments Insight", category: "Performance" },
-  { id: 23, label: "Hourly Daypart Split", category: "Time" },
-  { id: 26, label: "Best & Worst Brand per City", category: "Location" },
-  { id: 27, label: "Outlet vs Kitchen Average Gap", category: "Location" },
-  { id: 28, label: "Best Item per Outlet", category: "Location" },
-  { id: 29, label: "SKU Consistency (Variance)", category: "SKUs" },
-  { id: 30, label: "Item Rating by City", category: "Item-wise" },
-  { id: 31, label: "Item Trend Over Time", category: "Item-wise" },
-  { id: 32, label: "Item vs Company Average Gap", category: "Item-wise" },
+  { id: 5, label: "Platform Comparison", category: "Performance", paused: true },
+  { id: 6, label: "SKU Leaderboard - Top Rated", category: "SKUs", paused: true },
+  { id: 7, label: "SKU Leaderboard - Worst Rated (Kill List)", category: "SKUs", paused: true },
+  { id: 8, label: "High Volume SKUs", category: "SKUs", paused: true },
+  { id: 9, label: "Category Ratings", category: "Performance", paused: true },
+  { id: 10, label: "High Volume, Low Rating items", category: "SKUs", paused: true },
+  { id: 11, label: "Rating Distribution Stats", category: "Performance", paused: true },
+  { id: 12, label: "Monthly Trends Comparison", category: "Time", paused: true },
+  { id: 13, label: "Volume vs Rating by Kitchen", category: "Location", paused: true },
+  { id: 14, label: "Weekend vs Weekday Ratings", category: "Time", paused: true },
+  { id: 15, label: "Peak Complaint Hours", category: "Time", paused: true },
+  { id: 16, label: "AI Repeat Complaint Finder", category: "Performance", paused: true },
+  { id: 17, label: "AI Department Blame Split", category: "Performance", paused: true },
+  { id: 18, label: "AI Weekly Operations Brief", category: "Performance", paused: true },
+  { id: 19, label: "AI Action Items Generator", category: "Performance", paused: true },
+  { id: 20, label: "AI Packaging Issues Tracker", category: "Performance", paused: true },
+  { id: 21, label: "Comments Insight", category: "Performance", paused: true },
+  { id: 23, label: "Hourly Daypart Split", category: "Time", paused: true },
+  { id: 26, label: "Best & Worst Brand per City", category: "Location", paused: true },
+  { id: 27, label: "Outlet vs Kitchen Average Gap", category: "Location", paused: true },
+  { id: 28, label: "Best Item per Outlet", category: "Location", paused: true },
+  { id: 29, label: "SKU Consistency (Variance)", category: "SKUs", paused: true },
+  { id: 30, label: "Item Rating by City", category: "Item-wise", paused: true },
+  { id: 31, label: "Item Trend Over Time", category: "Item-wise", paused: true },
+  { id: 32, label: "Item vs Company Average Gap", category: "Item-wise", paused: true },
 ];
 
 const ACTIVE_INSIGHTS = INSIGHTS.filter((i) => !i.paused);

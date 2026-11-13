@@ -348,13 +348,12 @@ async function callGroq(prompt) {
   return completion.choices[0].message.content;
 }
 
-// Re-enabled (2026-09-16) for a full review of the whole catalog before
-// deciding what to keep/merge/retire — every id implemented in the switch
-// below. 22 isn't a real insight — it's the raw per-review feed that 1-4
-// (and the Company Overview) fetch alongside their own primary query.
-const ACTIVE_INSIGHT_IDS = new Set([
-  1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 26, 27, 28, 29, 30, 31, 32,
-]);
+// Back down to only Brand/Zone/City/Kitchen Level Rating (2026-11-13), after
+// the full-catalog review enabled 2026-09-16. Everything else is paused, not
+// removed — re-adding an id here brings it back. 22 isn't a real insight —
+// it's the raw per-review feed that 1-4 (and the Company Overview) fetch
+// alongside their own primary query, so it has to stay active too.
+const ACTIVE_INSIGHT_IDS = new Set([1, 2, 3, 4, 22]);
 
 router.post("/:id", async (req, res) => {
   try {
