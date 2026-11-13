@@ -1,6 +1,6 @@
 import express from "express";
 import { pool } from "./ratings/db.js";
-import { getMetabaseApiKey, METABASE_CARD_KITCHEN_URL } from "./ops_matrix/ops.routes.js";
+import { getMetabaseApiKey, METABASE_CARD_KITCHEN_URL, OPS_CARD_ID } from "./ops_matrix/ops.routes.js";
 
 const router = express.Router();
 
@@ -90,7 +90,7 @@ async function opsMatrixMetabaseHealth() {
       return { ...base, status: "error", detail: `Metabase rejected the API key (HTTP ${resp.status}) — Ops Matrix will show no data. Check METABASE_API on the server.` };
     }
     if (!resp.ok) {
-      return { ...base, status: "error", detail: `Metabase card 2523 returned HTTP ${resp.status}` };
+      return { ...base, status: "error", detail: `Metabase card ${OPS_CARD_ID} returned HTTP ${resp.status}` };
     }
 
     const json = await resp.json().catch(() => null);

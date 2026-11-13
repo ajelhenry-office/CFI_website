@@ -14,11 +14,19 @@ import { ReviewPoller } from "./server/reviews/poller.js";
 import automationRoutes from "./server/ratings/automation.routes.js";
 import insightsRoutes from "./server/ratings/insights.routes.js";
 import authRoutes, { authMiddleware } from "./server/auth/auth.routes.js";
-import opsRoutes from "./server/ops_matrix/ops.routes.js";
+import opsRoutes, { warmUpOpsCache } from "./server/ops_matrix/ops.routes.js";
 import healthRoutes from "./server/health.routes.js";
 import { handleFilterRequest } from "./server/ratings/filters.js";
 import { pool } from "./server/ratings/db.js";
 import { startWorkers } from "./server/toggle/workers.js";
+
+// LOCAL_SAFE_MODE=1 (npm run start:local) — for running the site on a laptop
+// against the live database / UrbanPiper accounts without touching anything live:
+// no background workers or pollers start, and every request that could change
+// something is refused. Only reads (GET), logging in, and the read-only Ops
+// Matrix data query get through.
+const LOCAL_SAFE_MODE = process.env.LOCAL_SAFE_MODE === "1";
+const SAFE_MODE_ALLOWED_WRITES = new Set(["/api/auth/login", "/api/ops-matrix/data"]);
 
 // Fail loudly at boot if a required secret is missing — better than silently running
 // with an undefined credential (or, before this, a hardcoded one sitting in git history).
@@ -33,8 +41,13 @@ const REQUIRED_ENV_VARS = [
 ];
 const missingEnvVars = REQUIRED_ENV_VARS.filter((key) => !process.env[key]);
 if (missingEnvVars.length > 0) {
-  console.error(`[STARTUP] Missing required environment variable(s): ${missingEnvVars.join(", ")}`);
-  process.exit(1);
+  if (LOCAL_SAFE_MODE && process.env.JWT_SECRET) {
+    // Nothing that uses these credentials can run in safe mode (no workers, no writes).
+    console.warn(`[STARTUP] LOCAL_SAFE_MODE: ignoring missing ${missingEnvVars.join(", ")}`);
+  } else {
+    console.error(`[STARTUP] Missing required environment variable(s): ${missingEnvVars.join(", ")}`);
+    process.exit(1);
+  }
 }
 
 const app = express();
@@ -50,6 +63,15 @@ app.use((req, res, next) => {
   console.log(`[HTTP] ${req.method} ${req.url} - Body:`, JSON.stringify(req.body));
   next();
 });
+
+if (LOCAL_SAFE_MODE) {
+  app.use((req, res, next) => {
+    if (["GET", "HEAD", "OPTIONS"].includes(req.method) || SAFE_MODE_ALLOWED_WRITES.has(req.path)) return next();
+    console.warn(`[SAFE MODE] Blocked ${req.method} ${req.path}`);
+    // 409, not 401/403 — the SPA treats those as "your session died" and logs out.
+    res.status(409).json({ success: false, error: "Local safe mode: changes are disabled on this server." });
+  });
+}
 
 // ─── HEALTH CHECK ─────────────────────────────────────────────
 app.get("/health", (req, res) => {
@@ -96,7 +118,14 @@ const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
   console.log(`KitchenPulse backend running on port ${PORT}`);
   console.log(`Health: http://localhost:${PORT}/health`);
-  
+
+  if (LOCAL_SAFE_MODE) {
+    console.log("[SAFE MODE] Background workers and pollers NOT started; changes are blocked.");
+    // Read-only Metabase queries — prepares the Ops Matrix default view and filter lists.
+    setTimeout(() => warmUpOpsCache(), 5000);
+    return;
+  }
+
   // Start automated cron jobs (Hourly Recheck and Watchdog)
   startWorkers();
   

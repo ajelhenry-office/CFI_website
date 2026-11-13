@@ -32,12 +32,76 @@ const iso = (offsetDays) => {
   return d.toISOString().slice(0, 10);
 };
 
-const CITY_TO_ZONE = {
-  "Delhi": "NORTH", "Gurgaon": "NORTH", "Noida": "NORTH", "Lucknow": "NORTH", "Chandigarh": "NORTH", "Ludhiana": "NORTH", "Jaipur": "NORTH", "Faridabad": "NORTH", "Ghaziabad": "NORTH", "Amritsar": "NORTH", "Dehradun": "NORTH",
-  "Bengaluru": "SOUTH", "Bangalore": "SOUTH", "Chennai": "SOUTH", "Hyderabad": "SOUTH", "Coimbatore": "SOUTH", "Mysuru": "SOUTH", "Cochin": "SOUTH", "Thiruvananthapuram": "SOUTH", "Vizag": "SOUTH", "Hosur": "SOUTH", "Mangalore": "SOUTH", "Manipal": "SOUTH", "Palakkad": "SOUTH", "Puducherry": "SOUTH", "Tumakuru": "SOUTH", "Anantapur": "SOUTH", "Calicut": "SOUTH", "Ernakulam": "SOUTH", "Kakinada": "SOUTH", "Nellore": "SOUTH", "Rajahmundry": "SOUTH", "Tirupati": "SOUTH", "Vijayawada": "SOUTH", "Warangal": "SOUTH",
-  "Mumbai": "WEST", "Pune": "WEST", "Ahemadabad": "WEST", "Goa": "WEST", "Surat": "WEST", "Nagpur": "WEST", "Vadodara": "WEST", "Indore": "WEST", "Bhopal": "WEST", "Aurangabad": "WEST", "Nashik": "WEST",
-  "Kolkata": "EAST", "Guwahati": "EAST", "Bhubaneswar": "EAST", "Patna": "EAST", "Ranchi": "EAST", "Siliguri": "EAST", "Cuttack": "EAST", "Raipur": "EAST"
+// Metabase card columns the page reads — by name, so a column added or moved
+// in Metabase can't shift the numbers into the wrong place.
+const COLS = {
+  brand: "main_brand", subBrand: "sub_brand_name", city: "standardized_city", kitchen: "kitchen", date: "order_date",
+  orders: "Completed_orders", cancelled: "cancelled_orders", kpt: "KPT", p80: "KPT_80_percentile",
+  wait: "waitTime", o2d: "o2D", p80O2d: "O2D_80_percentile",
 };
+
+// The Metabase card's value columns shown on this page (every one except O2A), in
+// the card's own order. `color` = the legend's thresholds, for the ones that have one.
+const METRICS = [
+  { key: "orders", label: "Completed Orders", fmt: (v) => v.toLocaleString() },
+  { key: "cancelled", label: "Cancelled Orders", fmt: (v) => v.toLocaleString() },
+  { key: "kpt", label: "KPT (min)", color: [12, 18, 25] },
+  { key: "p80", label: "KPT P80 (min)", color: [18, 25, 35] },
+  { key: "wait", label: "Wait Time (min)" },
+  { key: "o2d", label: "O2D (min)", color: [20, 28, 35] },
+  { key: "p80O2d", label: "O2D P80 (min)" },
+  { key: "cancelPct", label: "Cancellation %", fmt: (v) => `${v.toFixed(2)}%` },
+];
+
+// Rows are one kitchen-day each (positions: 5 orders, 6 cancelled, 7 KPT, 8 KPT P80,
+// 9 wait, 11 O2D, 12 O2D P80). Counts are added up; times are averaged weighted by
+// completed orders; cancellation % is cancelled / (completed + cancelled), the same
+// formula the card uses.
+const emptyTotals = () => ({ orders: 0, cancelled: 0, sKpt: 0, sP80: 0, sWait: 0, sO2d: 0, sP80O2d: 0 });
+const addToTotals = (t, r) => {
+  const orders = r[5] || 0;
+  t.orders += orders;
+  t.cancelled += r[6] || 0;
+  t.sKpt += (r[7] || 0) * orders;
+  t.sP80 += (r[8] || 0) * orders;
+  t.sWait += (r[9] || 0) * orders;
+  t.sO2d += (r[11] || 0) * orders;
+  t.sP80O2d += (r[12] || 0) * orders;
+};
+const finishTotals = (t) => {
+  const avg = (sum) => (t.orders ? sum / t.orders : 0);
+  const all = t.orders + t.cancelled;
+  return {
+    orders: t.orders, cancelled: t.cancelled,
+    kpt: avg(t.sKpt), p80: avg(t.sP80), wait: avg(t.sWait), o2d: avg(t.sO2d), p80O2d: avg(t.sP80O2d),
+    cancelPct: all ? (t.cancelled / all) * 100 : 0,
+  };
+};
+// Names for the row positions the table can be grouped by (0 brand, 1 sub-brand, 2 city, 3 kitchen, 14 channel).
+const NAME_OF = { 0: "Brand", 1: "Sub Brand", 2: "City", 3: "Kitchen", 14: "Channel" };
+const UNKNOWN = { 0: "Unknown Brand", 1: "None", 2: "Unknown City", 3: "Unknown Kitchen", 14: "Unknown Channel" };
+
+// Each filter box in the top row takes an equal share of the row's width.
+const FILTER_BOX = { flex: "1 1 0", minWidth: 0 };
+
+const formatMetric = (m, v) => (m.fmt ? m.fmt(v || 0) : (v || 0).toFixed(1));
+
+// Brand / Sub Brand / Channel are the Metabase card's own filters: their options
+// come from the card, so they always match it. If Brand or Sub Brand has no option
+// list set in Metabase, its options come from the brands / sub-brands in the query's
+// rows instead. These two also decide how rows are grouped (Channel just narrows the data).
+const BRAND_SLUG = "Brand";
+const SUB_BRAND_SLUG = "sub_brand";
+const CHANNEL_SLUG = "Channel";
+const CHANNEL_COL = "channel";
+// Which column of the filter lists each Metabase card filter matches.
+const FILTER_COL = { [BRAND_SLUG]: COLS.brand, [SUB_BRAND_SLUG]: COLS.subBrand, [CHANNEL_SLUG]: CHANNEL_COL };
+// Metabase takes only one Brand / Sub Brand at a time, so to let several be picked
+// the page fetches every brand for the dates and keeps the picked ones itself.
+const FILTERED_ON_PAGE = new Set([BRAND_SLUG, SUB_BRAND_SLUG]);
+const NONE = [];
+
+const pluralLabel = (name) => (name.endsWith("y") ? `${name.slice(0, -1)}ies` : `${name}s`);
 
 // --- Date to Week Helpers ---
 const getWeekInfo = (dateStr) => {
@@ -50,13 +114,15 @@ const getWeekInfo = (dateStr) => {
   return `W${weekNum}`;
 };
 
+const formatDayLabel = (dateStr) =>
+  new Date(`${dateStr}T00:00:00`).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
 const formatDateFriendly = (dateStr) => {
   const d = new Date(dateStr);
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 };
 
-// --- Custom MultiSelect ---
-function MultiSelectDropdown({ label, options, selected, onChange }) {
+// --- Custom MultiSelect (single = pick one, like Metabase's text filters) ---
+function MultiSelectDropdown({ label, options, selected, onChange, single = false }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const ref = useRef();
@@ -92,7 +158,7 @@ function MultiSelectDropdown({ label, options, selected, onChange }) {
                       `${selected.length} ${label}`;
 
   return (
-    <div ref={ref} style={{ position: "relative", minWidth: 160, flex: 1 }}>
+    <div ref={ref} style={{ position: "relative", width: "100%" }}>
       <button onClick={() => setOpen(!open)} style={{...inputStyle, width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer"}}>
         <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: selected.length > 0 ? 700 : 400, color: selected.length > 0 ? C.primary : C.text }}>
           {displayText}
@@ -100,7 +166,7 @@ function MultiSelectDropdown({ label, options, selected, onChange }) {
         <span style={{ fontSize: 10, color: C.muted }}>▼</span>
       </button>
       {open && (
-        <div style={{ position: "absolute", top: "100%", left: 0, marginTop: 4, width: 240, background: "#fff", border: `1px solid ${C.border}`, borderRadius: 8, zIndex: 50, maxHeight: 350, display: "flex", flexDirection: "column", boxShadow: "0 8px 24px rgba(0,0,0,0.12)" }}>
+        <div style={{ position: "absolute", top: "100%", left: 0, marginTop: 4, width: "max(240px, 100%)", background: "#fff", border: `1px solid ${C.border}`, borderRadius: 8, zIndex: 50, maxHeight: 350, display: "flex", flexDirection: "column", boxShadow: "0 8px 24px rgba(0,0,0,0.12)" }}>
           <div style={{ padding: "8px 12px", borderBottom: `1px solid ${C.borderSoft}` }}>
             <input 
               type="text" 
@@ -115,7 +181,8 @@ function MultiSelectDropdown({ label, options, selected, onChange }) {
               <label key={opt} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14, cursor: "pointer", color: C.text }}>
                 <input type="checkbox" checked={selected.includes(opt)} onChange={(e) => {
                   startTransition(() => {
-                    if (e.target.checked) onChange([...selected, opt]);
+                    if (single) onChange(e.target.checked ? [opt] : []);
+                    else if (e.target.checked) onChange([...selected, opt]);
                     else onChange(selected.filter(x => x !== opt));
                   });
                 }} style={{ width: 16, height: 16, cursor: "pointer" }} />
@@ -130,7 +197,7 @@ function MultiSelectDropdown({ label, options, selected, onChange }) {
             {filteredOptions.length === 0 && <div style={{ fontSize: 12, color: C.muted, textAlign: "center", padding: "12px 0" }}>No matches found</div>}
           </div>
           <div style={{ padding: "8px 12px", borderTop: `1px solid ${C.borderSoft}`, background: "#f8fafc", position: "sticky", bottom: 0, borderRadius: "0 0 8px 8px" }}>
-            <button onClick={toggleAll} style={{ fontSize: 13, padding: "8px 12px", cursor: "pointer", background: "#e2e8f0", color: "#334155", border: "none", borderRadius: 4, width: "100%", fontWeight: 600 }}>Toggle All / None</button>
+            <button onClick={single ? () => onChange([]) : toggleAll} style={{ fontSize: 13, padding: "8px 12px", cursor: "pointer", background: "#e2e8f0", color: "#334155", border: "none", borderRadius: 4, width: "100%", fontWeight: 600 }}>{single ? "Clear" : "Toggle All / None"}</button>
           </div>
         </div>
       )}
@@ -140,9 +207,9 @@ function MultiSelectDropdown({ label, options, selected, onChange }) {
 
 function StatCard({ label, value }) {
   return (
-    <div style={{ ...cardStyle, padding: "16px", flex: 1, textAlign: "left", background: "#fff", border: `1px solid ${C.borderSoft}`, boxShadow: "0 1px 3px rgba(0,0,0,0.05)" }}>
-      <div style={{ fontSize: 11, color: C.muted, textTransform: "uppercase", letterSpacing: 0.5, fontWeight: 700 }}>{label}</div>
-      <div style={{ fontSize: 24, fontWeight: 800, color: "#1e3a8a", marginTop: 8 }}>{value}</div>
+    <div style={{ ...cardStyle, padding: "clamp(10px, 1vw, 16px)", flex: "1 1 0", minWidth: 0, textAlign: "left", background: "#fff", border: `1px solid ${C.borderSoft}`, boxShadow: "0 1px 3px rgba(0,0,0,0.05)" }}>
+      <div style={{ fontSize: "clamp(9px, 0.7vw, 11px)", color: C.muted, textTransform: "uppercase", letterSpacing: 0.5, fontWeight: 700 }}>{label}</div>
+      <div style={{ fontSize: "clamp(15px, 1.5vw, 24px)", fontWeight: 800, color: "#1e3a8a", marginTop: 8, whiteSpace: "nowrap" }}>{value}</div>
     </div>
   );
 }
@@ -297,146 +364,221 @@ export default function OpsMatrixPage() {
   const [rawData, setRawData] = useState([]);
   const [weekDefs, setWeekDefs] = useState([]);
   const [loadError, setLoadError] = useState("");
-  const [partialDays, setPartialDays] = useState(false);
+  const [truncated, setTruncated] = useState(false);
+
+  // The Metabase card's own filters: [{ slug, name, multi, values }]
+  const [cardFilters, setCardFilters] = useState([]);
+  const [filtersError, setFiltersError] = useState("");
+  // Every unique brand / sub-brand / city / kitchen / channel combination the
+  // Metabase card produces — what links the dropdowns. null until it has loaded.
+  const [combos, setCombos] = useState(null); // [{ main_brand, sub_brand_name, ... }]
   
   // Draft States
   const [startDate, setStartDate] = useState(iso(8));
   const [endDate, setEndDate] = useState(iso(1));
-  const [brands, setBrands] = useState([]);
-  const [subBrands, setSubBrands] = useState([]);
-  const [zones, setZones] = useState([]);
+  const [selections, setSelections] = useState({}); // card filter slug -> [values]
   const [cities, setCities] = useState([]);
-  const [areas, setAreas] = useState([]);
+  const [kitchens, setKitchens] = useState([]);
 
   // Applied States
   const [appliedStartDate, setAppliedStartDate] = useState(iso(8));
   const [appliedEndDate, setAppliedEndDate] = useState(iso(1));
-  const [appliedBrands, setAppliedBrands] = useState([]);
-  const [appliedSubBrands, setAppliedSubBrands] = useState([]);
-  const [appliedZones, setAppliedZones] = useState([]);
+  const [appliedSelections, setAppliedSelections] = useState({});
   const [appliedCities, setAppliedCities] = useState([]);
-  const [appliedAreas, setAppliedAreas] = useState([]);
+  const [appliedKitchens, setAppliedKitchens] = useState([]);
+
+  const appliedBrands = appliedSelections[BRAND_SLUG] || NONE;
+  const appliedSubBrands = appliedSelections[SUB_BRAND_SLUG] || NONE;
 
   const diffDays = (new Date(endDate) - new Date(startDate)) / (1000 * 60 * 60 * 24);
   const dateError = diffDays < 0 ? "Start date must be before end date." :
                     diffDays > 30 ? "Please choose a range of at most 1 month." : null;
 
-  const [availBrands, setAvailBrands] = useState([]);
-  const [availSubBrands, setAvailSubBrands] = useState([]);
-  const [availZones, setAvailZones] = useState([]);
-  const [availCities, setAvailCities] = useState([]);
-  const [availAreas, setAvailAreas] = useState([]);
+  useEffect(() => {
+    (async () => {
+      try {
+        const response = await fetch(`${API_BASE}/api/ops-matrix/filters`, { headers: getAuthHeaders() });
+        const json = await response.json().catch(() => null);
+        if (!response.ok || !json?.success) throw new Error(json?.error || `HTTP ${response.status}`);
+        setCardFilters(json.filters || []);
+      } catch (err) {
+        setFiltersError(`Filters couldn't be loaded from Metabase (${err.message}).`);
+      }
+    })();
+
+    // Building the lists can take ~40s when Metabase is cold; the server keeps
+    // working on it, so keep asking until it's ready.
+    (async () => {
+      for (let attempt = 1; attempt <= 8; attempt++) {
+        try {
+          const response = await fetch(`${API_BASE}/api/ops-matrix/options`, { headers: getAuthHeaders() });
+          const json = await response.json().catch(() => null);
+          if (response.ok && json?.success) {
+            const columns = json.columns || [];
+            setCombos((json.combos || []).map(r => Object.fromEntries(columns.map((c, i) => [c, r[i]]))));
+            return;
+          }
+          if (response.status !== 504) return;
+        } catch {
+          // network blip — retry
+        }
+        await new Promise(r => setTimeout(r, 7000));
+      }
+    })();
+  }, []);
+
+  // The last 31 days' combinations plus everything in the dates being viewed, so
+  // brands / sub-brands / cities / kitchens that only existed in an older range
+  // still show up (and can be picked) when that range is loaded. Loaded rows
+  // carry the channels they were fetched with (null = all, i.e. not known).
+  const optionRows = useMemo(() => {
+    const seen = new Set();
+    const loaded = [];
+    const appliedChannels = appliedSelections[CHANNEL_SLUG]?.length ? appliedSelections[CHANNEL_SLUG] : null;
+    rawData.forEach(r => {
+      const key = `${r[0]}\u241f${r[1]}\u241f${r[2]}\u241f${r[3]}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      loaded.push({ [COLS.brand]: r[0], [COLS.subBrand]: r[1], [COLS.city]: r[2], [COLS.kitchen]: r[3], [CHANNEL_COL]: appliedChannels });
+    });
+    return combos ? combos.concat(loaded) : loaded;
+  }, [combos, rawData, appliedSelections]);
+
+  // Every filter narrows every other: each dropdown offers only the values that
+  // appear together with everything picked in the *other* dropdowns.
+  const dims = useMemo(() => {
+    const list = cardFilters
+      .filter(f => FILTER_COL[f.slug])
+      .map(f => ({ key: f.slug, col: FILTER_COL[f.slug], selected: selections[f.slug] || NONE }));
+    list.push({ key: "city", col: COLS.city, selected: cities });
+    list.push({ key: "kitchen", col: COLS.kitchen, selected: kitchens });
+    return list;
+  }, [cardFilters, selections, cities, kitchens]);
+
+  // A row whose value for a filter isn't known (e.g. no channel info, if the server
+  // couldn't build the Channel-linked lists) neither rules itself out nor narrows that
+  // filter's own list.
+  const available = useMemo(() => {
+    const matches = (val, selected) => (Array.isArray(val) ? val.some(v => selected.includes(v)) : val == null || selected.includes(val));
+    const out = {};
+    for (const d of dims) {
+      const known = optionRows.some(r => r[d.col] != null);
+      const others = dims.filter(o => o !== d && o.selected.length > 0);
+      const set = new Set();
+      optionRows.forEach(r => {
+        const v = r[d.col];
+        if (typeof v !== "string" || v === "") return;
+        if (others.every(o => matches(r[o.col], o.selected))) set.add(v);
+      });
+      out[d.key] = { set, narrowed: others.length > 0 && known };
+    }
+    return out;
+  }, [dims, optionRows]);
+
+  // A filter with its own list in Metabase (Brand, Sub Brand, Channel) offers
+  // exactly that list — nothing extra from the data. City / Kitchen (no Metabase
+  // list) offer what's in the data. Once another filter is picked, only values
+  // that go with it remain. Whatever is already picked always stays listed so it
+  // can be un-picked.
+  const optionsFor = (key, metabaseValues = []) => {
+    const avail = available[key];
+    if (!avail) return metabaseValues;
+    const base = metabaseValues.length > 0 ? metabaseValues : Array.from(avail.set).sort();
+    const narrowed = avail.narrowed ? base.filter(v => avail.set.has(v)) : base;
+    const picked = (dims.find(d => d.key === key)?.selected || []).filter(v => !narrowed.includes(v));
+    return picked.concat(narrowed);
+  };
+
+  // One Metabase run for one set of filters, mapped into the fixed row positions
+  // the rest of this page reads. Cached per filter set.
+  const fetchRows = async (filters) => {
+    const cacheKey = JSON.stringify({ startDate: appliedStartDate, endDate: appliedEndDate, filters });
+    if (queryCache.has(cacheKey)) return { rows: queryCache.get(cacheKey) };
+
+    let json = null;
+    let lastErr = "";
+
+    // The first (cold) request for a range can take ~30s and may hit the
+    // proxy's timeout — but the server keeps the query running, so a retry
+    // picks up its result.
+    for (let attempt = 1; attempt <= 4; attempt++) {
+      try {
+        const response = await fetch(`${API_BASE}/api/ops-matrix/data`, {
+          method: "POST",
+          headers: { 
+            "Content-Type": "application/json",
+            ...getAuthHeaders()
+          },
+          body: JSON.stringify({ startDate: appliedStartDate, endDate: appliedEndDate, filters })
+        });
+
+        if (response.ok) {
+          json = await response.json();
+          break;
+        } else if (response.status === 504 && attempt < 4) {
+          console.warn(`[OpsMatrix] 504 on attempt ${attempt} — cold query warming, retrying...`);
+          lastErr = "The data source timed out.";
+          await new Promise(r => setTimeout(r, 7000));
+        } else {
+          try {
+            const body = await response.json();
+            lastErr = body?.error || `Request failed (HTTP ${response.status}).`;
+          } catch {
+            lastErr = `Request failed (HTTP ${response.status}).`;
+          }
+          break;
+        }
+      } catch (err) {
+        lastErr = err?.message || "Network error.";
+        if (attempt < 4) {
+          await new Promise(r => setTimeout(r, 3000));
+        }
+      }
+    }
+
+    if (!json || !json.success || !json.rows) return { error: lastErr || "Could not load Ops Matrix data." };
+
+    // Rebuild each row in the fixed positions the rest of this page reads,
+    // looking every column up by its Metabase name.
+    const at = {};
+    for (const [key, name] of Object.entries(COLS)) at[key] = (json.cols || []).findIndex(c => c.name === name);
+    const v = (r, i) => (i >= 0 ? r[i] : null);
+    const rows = json.rows.map(r => [
+      v(r, at.brand), v(r, at.subBrand), v(r, at.city), v(r, at.kitchen), v(r, at.date), v(r, at.orders),
+      v(r, at.cancelled), v(r, at.kpt), v(r, at.p80), v(r, at.wait), null, v(r, at.o2d), v(r, at.p80O2d),
+    ]);
+    if (rows.length > 0) queryCache.set(cacheKey, rows);
+    return { rows, truncated: !!json.truncated };
+  };
 
   const fetchData = async () => {
     setLoading(true);
     setLoadError("");
-    setPartialDays(false);
+    setTruncated(false);
     try {
-      const bPayload = appliedBrands.length === 1 ? appliedBrands[0] : "";
-      const zPayload = appliedZones.length === 1 ? appliedZones[0] : "";
-      const cPayload = appliedCities.length === 1 ? appliedCities[0] : "";
-      const aPayload = appliedAreas.length === 1 ? appliedAreas[0] : "";
-      const sbPayload = appliedSubBrands.length === 1 ? appliedSubBrands[0] : "";
-
-      const cacheKey = JSON.stringify({ startDate: appliedStartDate, endDate: appliedEndDate, brand: bPayload, subBrand: sbPayload, zone: zPayload, city: cPayload, area: aPayload });
-      
-      let rowsToProcess = [];
-
-      if (queryCache.has(cacheKey)) {
-        rowsToProcess = queryCache.get(cacheKey);
-      } else {
-        let json = null;
-        let fetchSuccess = false;
-        let lastErr = "";
-
-        // The first (cold) request for a range can take ~30s and may hit the
-        // proxy's timeout — but it warms Metabase's cache, so a retry lands fast.
-        for (let attempt = 1; attempt <= 4; attempt++) {
-          try {
-            const payloadParams = {
-              startDate: appliedStartDate,
-              endDate: appliedEndDate,
-              brand: bPayload,
-              zone: zPayload,
-              city: cPayload,
-              area: aPayload
-            };
-            if (sbPayload) payloadParams.subBrand = sbPayload;
-
-            const response = await fetch(`${API_BASE}/api/ops-matrix/prep-time/kitchen`, {
-              method: "POST",
-              headers: { 
-                "Content-Type": "application/json",
-                ...getAuthHeaders()
-              },
-              body: JSON.stringify(payloadParams)
-            });
-
-            if (response.ok) {
-              json = await response.json();
-              fetchSuccess = true;
-              break;
-            } else if (response.status === 504 && attempt < 4) {
-              console.warn(`[OpsMatrix] 504 on attempt ${attempt} — cold query warming, retrying...`);
-              lastErr = "The data source timed out.";
-              await new Promise(r => setTimeout(r, 7000));
-            } else {
-              try {
-                const body = await response.json();
-                lastErr = body?.error || `Request failed (HTTP ${response.status}).`;
-              } catch {
-                lastErr = `Request failed (HTTP ${response.status}).`;
-              }
-              break;
-            }
-          } catch (err) {
-            lastErr = err?.message || "Network error.";
-            if (attempt < 4) {
-              await new Promise(r => setTimeout(r, 3000));
-            }
-          }
-        }
-
-        if (!fetchSuccess) {
-          setLoadError(lastErr || "Could not load Ops Matrix data.");
-        } else if (json && json.partialDays) {
-          setPartialDays(true);
-        }
-
-        if (fetchSuccess && json && json.success && json.data && json.data.rows) {
-          const ALLOWED_BRANDS = new Set([
-            "99SLICE",
-            "Arambam - Start with Millet by Urbanpiper",
-            "CakeZone ++",
-            "Eatfit - MOC",
-            "Krispy Kreme",
-            "Nomad Pizza",
-            "Olio ++",
-            "Rolls On Wheels",
-            "Roz Shawarma by Sharief Bhai",
-            "Sharief Bhai"
-          ]);
-
-          const cleanedRows = [];
-          for (const r of json.data.rows) {
-            let bName = r[0];
-            let sbName = r[1];
-
-            if (!bName || !ALLOWED_BRANDS.has(bName)) continue;
-            if (sbName === "Home Plate - EatFit" || sbName === "Madras Curd Rice Company") continue;
-
-            if (bName === "Krispy Kreme") {
-              sbName = null;
-            }
-
-            const newRow = [...r];
-            newRow[1] = sbName;
-            cleanedRows.push(newRow);
-          }
-          
-          rowsToProcess = cleanedRows;
-        }
+      const filters = {};
+      for (const [slug, vals] of Object.entries(appliedSelections)) {
+        if (vals.length > 0 && !FILTERED_ON_PAGE.has(slug) && slug !== CHANNEL_SLUG) filters[slug] = vals;
       }
+
+      // Metabase takes one Channel at a time, and its rows add all channels together,
+      // so several picked channels mean one run per channel, combined here. Every
+      // channel picked is the same as no Channel filter.
+      const channels = appliedSelections[CHANNEL_SLUG] || NONE;
+      const allChannels = cardFilters.find(f => f.slug === CHANNEL_SLUG)?.values || NONE;
+      const runs = channels.length === 0 || (allChannels.length > 0 && allChannels.every(c => channels.includes(c)))
+        ? [filters]
+        : channels.map(c => ({ ...filters, [CHANNEL_SLUG]: [c] }));
+
+      const results = await Promise.all(runs.map(fetchRows));
+      const failed = results.find(r => r.error);
+      if (failed) setLoadError(failed.error);
+      else if (results.some(r => r.truncated)) setTruncated(true);
+      // With one run per channel, tag every row with its channel (position 14) so
+      // the table can split the numbers by channel.
+      const rowsToProcess = failed ? [] : results.flatMap((r, i) => (runs.length > 1
+        ? r.rows.map(row => { const tagged = [...row]; tagged[14] = runs[i][CHANNEL_SLUG][0]; return tagged; })
+        : r.rows));
 
       if (rowsToProcess.length > 0) {
         const weekExtremes = {};
@@ -460,6 +602,7 @@ export default function OpsMatrixPage() {
           const newRow = [...r];
           if (r[4]) {
             newRow[4] = getWeekInfo(r[4]);
+            newRow[13] = r[4]; // the row's own date, for the day rows under each week
           }
           return newRow;
         });
@@ -470,15 +613,11 @@ export default function OpsMatrixPage() {
 
         setRawData(mappedRows);
         setWeekDefs(weeks);
-
-        if (appliedBrands.length === 0 && appliedSubBrands.length === 0 && appliedZones.length === 0 && appliedCities.length === 0 && appliedAreas.length === 0) {
-          updateCascadingOptions(mappedRows, [], [], [], [], []);
-        }
       } else {
         setRawData([]);
         setWeekDefs([]);
       }
-    } catch (err) {
+    } catch {
       setRawData([]);
       setWeekDefs([]);
     } finally {
@@ -486,219 +625,107 @@ export default function OpsMatrixPage() {
     }
   };
 
+  // Only the filters sent to Metabase need a new fetch; Brand / Sub Brand are applied below.
+  const metabaseFilterKey = JSON.stringify(Object.entries(appliedSelections).filter(([slug]) => !FILTERED_ON_PAGE.has(slug)));
   useEffect(() => {
     fetchData();
-  }, [appliedStartDate, appliedEndDate]);
+  }, [appliedStartDate, appliedEndDate, metabaseFilterKey]);
 
-  useEffect(() => {
-    if (rawData.length > 0) {
-      updateCascadingOptions(rawData, brands, subBrands, zones, cities, areas);
-    }
-  }, [brands, subBrands, zones, cities, areas]);
-
-  const updateCascadingOptions = (allRows, bFilter, sbFilter, zFilter, cFilter, aFilter) => {
-    const bSet = new Set();
-    const sbSet = new Set();
-    const zSet = new Set();
-    const cSet = new Set();
-    const aSet = new Set();
-
-    allRows.forEach(r => {
-      const bName = r[0];
-      const sbName = r[1];
-      const cName = r[2];
-      const kName = r[3];
-      const zName = cName ? CITY_TO_ZONE[cName] : undefined;
-
-      const brandMatch = bFilter.length === 0 || (bName && bFilter.includes(bName));
-      const subBrandMatch = sbFilter.length === 0 || (sbName && sbFilter.includes(sbName));
-      const zoneMatch = zFilter.length === 0 || (zName && zFilter.includes(zName));
-      const cityMatch = cFilter.length === 0 || (cName && cFilter.includes(cName));
-      const areaMatch = aFilter.length === 0 || (kName && aFilter.includes(kName));
-
-      if (sbName && brandMatch && zoneMatch && cityMatch && areaMatch) sbSet.add(sbName);
-      if (bName && subBrandMatch && zoneMatch && cityMatch && areaMatch) bSet.add(bName);
-      if (zName && brandMatch && subBrandMatch && cityMatch && areaMatch) zSet.add(zName);
-      if (cName && brandMatch && subBrandMatch && zoneMatch && areaMatch) cSet.add(cName);
-      if (kName && brandMatch && subBrandMatch && zoneMatch && cityMatch) aSet.add(kName);
-    });
-
-    setAvailBrands(Array.from(bSet).sort());
-    setAvailSubBrands(Array.from(sbSet).sort());
-    setAvailZones(Array.from(zSet).sort());
-    setAvailCities(Array.from(cSet).sort());
-    setAvailAreas(Array.from(aSet).sort());
-  };
-
+  // Channel was already applied by Metabase.
   const filteredRows = useMemo(() => {
     return rawData.filter(r => {
-      const bName = r[0];
-      const sbName = r[1];
-      const cName = r[2];
-      const kName = r[3];
-      const zName = cName ? CITY_TO_ZONE[cName] : undefined;
-      
-      if (appliedBrands.length > 0 && (!bName || !appliedBrands.includes(bName))) return false;
-      if (appliedSubBrands.length > 0 && (!sbName || !appliedSubBrands.includes(sbName))) return false;
-      if (appliedZones.length > 0 && (!zName || !appliedZones.includes(zName))) return false;
-      if (appliedCities.length > 0 && (!cName || !appliedCities.includes(cName))) return false;
-      if (appliedAreas.length > 0 && (!kName || !appliedAreas.includes(kName))) return false;
+      if (appliedBrands.length > 0 && (!r[0] || !appliedBrands.includes(r[0]))) return false;
+      if (appliedSubBrands.length > 0 && (!r[1] || !appliedSubBrands.includes(r[1]))) return false;
+      if (appliedCities.length > 0 && (!r[2] || !appliedCities.includes(r[2]))) return false;
+      if (appliedKitchens.length > 0 && (!r[3] || !appliedKitchens.includes(r[3]))) return false;
       return true;
     });
-  }, [rawData, appliedBrands, appliedSubBrands, appliedZones, appliedCities, appliedAreas]);
+  }, [rawData, appliedBrands, appliedSubBrands, appliedCities, appliedKitchens]);
 
   // Overall Stats
   const stats = useMemo(() => {
-    let tOrders = 0;
-    let sKpt = 0;
-    let sP80 = 0;
-    let sO2d = 0;
-    let sP80O2d = 0;
-    let kitchens = new Set();
-    
+    const totals = emptyTotals();
+    const kitchenSet = new Set();
     filteredRows.forEach(r => {
-      kitchens.add(r[3]);
-      const orders = r[5] || 0;
-      tOrders += orders;
-      sKpt += (r[7] || 0) * orders;
-      sP80 += (r[8] || 0) * orders;
-      sO2d += (r[11] || 0) * orders;
-      sP80O2d += (r[12] || 0) * orders;
+      kitchenSet.add(r[3]);
+      addToTotals(totals, r);
     });
-
-    return {
-      totalKitchens: kitchens.size,
-      totalOrders: tOrders,
-      avgKpt: tOrders ? (sKpt / tOrders).toFixed(1) : 0,
-      p80Kpt: tOrders ? (sP80 / tOrders).toFixed(1) : 0,
-      avgO2d: tOrders ? (sO2d / tOrders).toFixed(1) : 0,
-      avgO2del: tOrders ? (sO2d / tOrders + 15).toFixed(1) : 0,
-      p80O2del: tOrders ? (sP80O2d / tOrders + 15).toFixed(1) : 0,
-    };
+    return { totalKitchens: kitchenSet.size, ...finishTotals(totals) };
   }, [filteredRows]);
 
-  let isDefault = false;
-  if (appliedAreas.length === 0 && appliedCities.length === 0 && appliedZones.length === 0 && appliedBrands.length === 0 && appliedSubBrands.length === 0) {
-    isDefault = true;
-  }
-  
-  let headerLabel = "Overall Summary";
-  if (!isDefault) {
-      if (appliedBrands.length > 0 && (appliedAreas.length || appliedCities.length || appliedZones.length)) headerLabel = "Brand / Location";
-      else if (appliedBrands.length > 0) headerLabel = "Brand";
-      else if (appliedSubBrands.length > 0) headerLabel = "Sub-Brand";
-      else if (appliedAreas.length > 0) headerLabel = "Kitchen";
-      else if (appliedCities.length > 0) headerLabel = "City";
-      else if (appliedZones.length > 0) headerLabel = "Zone";
-  }
+  // Rows carry their channel only when 2+ channels were picked (one Metabase run each).
+  const splitByChannel = rawData.length > 0 && rawData[0][14] != null;
+
+  // Rows follow the most detailed pick on each side: sub-brands (else brands), and
+  // kitchens (else cities), then channel. Each level opens to the next one, and
+  // the last one opens to its weeks, which open to their days.
+  const brandCol = appliedSubBrands.length > 0 ? 1 : appliedBrands.length > 0 ? 0 : null;
+  const placeCol = appliedKitchens.length > 0 ? 3 : appliedCities.length > 0 ? 2 : null;
+  const levels = useMemo(() => [brandCol, placeCol, splitByChannel ? 14 : null].filter(c => c != null), [brandCol, placeCol, splitByChannel]);
+  const isDefault = levels.length === 0;
+
+  // A single picked channel has nothing to split, so it's just named in the header.
+  const appliedChannels = appliedSelections[CHANNEL_SLUG] || NONE;
+  const channelNote = !splitByChannel && appliedChannels.length === 1 ? ` · ${appliedChannels[0]}` : "";
+  const headerLabel = (isDefault ? "Week" : levels.map(c => NAME_OF[c]).join(" / ")) + channelNote;
 
   // Group Data for Display
   const groupedData = useMemo(() => {
-    const groups = {};
-    filteredRows.forEach(r => {
-      let key = "Curefoods Overall Summary";
-      
-      const bName = r[0] || "Unknown Brand";
-      const sbName = r[1] || "None";
-      const zName = `${CITY_TO_ZONE[r[2]] || "OTHER"} Zone`;
-      const cName = r[2] || "Unknown City";
-      const aName = r[3] || "Unknown Kitchen";
+    const buildGroups = (rows, col) => {
+      const groups = {};
+      rows.forEach(r => {
+        const key = col == null ? "Curefoods Overall Summary" : (r[col] || UNKNOWN[col]);
+        if (!groups[key]) groups[key] = { name: key, totals: emptyTotals(), weekMap: {}, rows: [] };
+        addToTotals(groups[key].totals, r);
+        groups[key].rows.push(r);
 
-      if (!isDefault) {
-        if (appliedAreas.length > 0) key = aName;
-        else if (appliedCities.length > 0) key = cName;
-        else if (appliedZones.length > 0) key = zName;
-        else if (appliedSubBrands.length > 0) key = sbName;
-        else if (appliedBrands.length > 0) key = bName;
-      }
+        const weekStr = r[4];
+        if (!groups[key].weekMap[weekStr]) groups[key].weekMap[weekStr] = { totals: emptyTotals(), dayMap: {} };
+        const week = groups[key].weekMap[weekStr];
+        addToTotals(week.totals, r);
+        if (!week.dayMap[r[13]]) week.dayMap[r[13]] = emptyTotals();
+        addToTotals(week.dayMap[r[13]], r);
+      });
 
-      if (!groups[key]) {
-        groups[key] = { name: key, orders: 0, sKpt: 0, sP80: 0, sO2d: 0, sO2del: 0, sP80O2del: 0, weekMap: {} };
-      }
-      
-      const orders = r[5] || 0;
-      const kpt = r[7] || 0;
-      const p80 = r[8] || 0;
-      const o2d = r[11] || 0;
-      const o2del = o2d ? o2d + 15 : 0;
-      const p80O2del = r[12] ? r[12] + 15 : 0;
+      return Object.values(groups).map(g => {
+        const weeks = Object.keys(g.weekMap).map(w => {
+          const def = weekDefs.find(x => x.val === w);
+          const days = Object.keys(g.weekMap[w].dayMap).sort()
+            .map(d => ({ date: d, label: formatDayLabel(d), ...finishTotals(g.weekMap[w].dayMap[d]) }));
+          return { weekVal: w, weekLabel: def ? def.label : w, ...finishTotals(g.weekMap[w].totals), days };
+        }).sort((a, b) => a.weekVal.localeCompare(b.weekVal));
+        return { name: g.name, ...finishTotals(g.totals), weeks, rows: g.rows };
+      }).sort((a, b) => a.name.localeCompare(b.name));
+    };
 
-      groups[key].orders += orders;
-      groups[key].sKpt += (kpt * orders);
-      groups[key].sP80 += (p80 * orders);
-      groups[key].sO2d += (o2d * orders);
-      groups[key].sO2del += (o2del * orders);
-      groups[key].sP80O2del += (p80O2del * orders);
-
-      const weekStr = r[4];
-      if (!groups[key].weekMap[weekStr]) {
-        groups[key].weekMap[weekStr] = { orders: 0, sKpt: 0, sP80: 0, sO2d: 0, sO2del: 0, sP80O2del: 0 };
-      }
-      groups[key].weekMap[weekStr].orders += orders;
-      groups[key].weekMap[weekStr].sKpt += (kpt * orders);
-      groups[key].weekMap[weekStr].sP80 += (p80 * orders);
-      groups[key].weekMap[weekStr].sO2d += (o2d * orders);
-      groups[key].weekMap[weekStr].sO2del += (o2del * orders);
-      groups[key].weekMap[weekStr].sP80O2del += (p80O2del * orders);
-    });
-
-    return Object.keys(groups).map(k => {
-      const g = groups[k];
-      const weeks = Object.keys(g.weekMap).map(w => {
-        const wd = g.weekMap[w];
-        const def = weekDefs.find(x => x.val === w);
-        return {
-          weekVal: w,
-          weekLabel: def ? def.label : w,
-          orders: wd.orders,
-          kpt: wd.orders ? wd.sKpt / wd.orders : 0,
-          p80: wd.orders ? wd.sP80 / wd.orders : 0,
-          o2d: wd.orders ? wd.sO2d / wd.orders : 0,
-          o2del: wd.orders ? wd.sO2del / wd.orders : 0,
-          p80O2del: wd.orders ? wd.sP80O2del / wd.orders : 0,
-        };
-      }).sort((a, b) => a.weekVal.localeCompare(b.weekVal));
-
-      return {
-        name: g.name,
-        orders: g.orders,
-        kpt: g.orders ? g.sKpt / g.orders : 0,
-        p80: g.orders ? g.sP80 / g.orders : 0,
-        o2d: g.orders ? g.sO2d / g.orders : 0,
-        o2del: g.orders ? g.sO2del / g.orders : 0,
-        p80O2del: g.orders ? g.sP80O2del / g.orders : 0,
-        weeks
-      };
-    }).sort((a, b) => a.name.localeCompare(b.name));
-  }, [filteredRows, weekDefs, isDefault, appliedBrands, appliedSubBrands, appliedAreas, appliedCities, appliedZones]);
+    const withoutRows = ({ rows: _unused, ...g }) => g; // eslint-disable-line no-unused-vars
+    const nest = (groups, rest) => groups.map(g => (rest.length > 0
+      ? { ...withoutRows(g), children: nest(buildGroups(g.rows, rest[0]), rest.slice(1)) }
+      : withoutRows(g)));
+    return nest(buildGroups(filteredRows, levels[0] ?? null), levels.slice(1));
+  }, [filteredRows, weekDefs, levels]);
 
   const handleApply = () => {
     if (dateError) return;
     setAppliedStartDate(startDate);
     setAppliedEndDate(endDate);
-    setAppliedBrands(brands);
-    setAppliedSubBrands(subBrands);
-    setAppliedZones(zones);
+    setAppliedSelections(selections);
     setAppliedCities(cities);
-    setAppliedAreas(areas);
+    setAppliedKitchens(kitchens);
   };
 
   const handleClear = () => {
     setStartDate(iso(8));
     setEndDate(iso(1));
-    setBrands([]);
-    setSubBrands([]);
-    setZones([]);
+    setSelections({});
     setCities([]);
-    setAreas([]);
+    setKitchens([]);
     
     setAppliedStartDate(iso(8));
     setAppliedEndDate(iso(1));
-    setAppliedBrands([]);
-    setAppliedSubBrands([]);
-    setAppliedZones([]);
+    setAppliedSelections({});
     setAppliedCities([]);
-    setAppliedAreas([]);
+    setAppliedKitchens([]);
   };
 
   return (
@@ -708,18 +735,25 @@ export default function OpsMatrixPage() {
         <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "nowrap", overflowX: "visible" }}>
           
           <DateRangeButton startDate={startDate} endDate={endDate} onStartChange={setStartDate} onEndChange={setEndDate} hasError={!!dateError} />
-          
 
-          
           {dateError && <span style={{ color: "#ef4444", fontSize: 13, fontWeight: 600 }}>{dateError}</span>}
           
           <div style={{ width: 1, height: 24, background: C.border, margin: "0 4px", flexShrink: 0 }} />
 
-          <div style={{ flexShrink: 0 }}><MultiSelectDropdown label="Brands" options={availBrands} selected={brands} onChange={setBrands} /></div>
-          <div style={{ flexShrink: 0 }}><MultiSelectDropdown label="Sub-Brands" options={availSubBrands} selected={subBrands} onChange={setSubBrands} /></div>
-          <div style={{ flexShrink: 0 }}><MultiSelectDropdown label="Zones" options={availZones} selected={zones} onChange={setZones} /></div>
-          <div style={{ flexShrink: 0 }}><MultiSelectDropdown label="Cities" options={availCities} selected={cities} onChange={setCities} /></div>
-          <div style={{ flexShrink: 0 }}><MultiSelectDropdown label="Areas" options={availAreas} selected={areas} onChange={setAreas} /></div>
+          {/* Filters defined on the Metabase card — added, removed or changed there, they change here too */}
+          {cardFilters.map(f => (
+            <div key={f.slug} style={FILTER_BOX}>
+              <MultiSelectDropdown
+                label={pluralLabel(f.name)}
+                options={optionsFor(f.slug, f.values)}
+                selected={selections[f.slug] || []}
+                onChange={(vals) => setSelections(prev => ({ ...prev, [f.slug]: vals }))}
+                single={!f.multi && !FILTERED_ON_PAGE.has(f.slug) && f.slug !== CHANNEL_SLUG}
+              />
+            </div>
+          ))}
+          <div style={FILTER_BOX}><MultiSelectDropdown label="Cities" options={optionsFor("city")} selected={cities} onChange={setCities} /></div>
+          <div style={FILTER_BOX}><MultiSelectDropdown label="Kitchens" options={optionsFor("kitchen")} selected={kitchens} onChange={setKitchens} /></div>
         </div>
         
         {/* Centered Apply/Clear Buttons */}
@@ -746,15 +780,13 @@ export default function OpsMatrixPage() {
         </div>
       ) : (
         <React.Fragment>
-          {/* 6 Top Stat Cards */}
-          <div style={{ display: "flex", gap: 16 }}>
+          {/* Top Stat Cards */}
+          <div style={{ display: "flex", gap: "clamp(8px, 1vw, 16px)" }}>
             <StatCard label="Total Kitchens" value={stats.totalKitchens} />
-            <StatCard label={`Total Orders (${weekDefs.length} Weeks)`} value={stats.totalOrders.toLocaleString()} />
-            <StatCard label="Avg Kitchen Prep Time" value={`${stats.avgKpt} min`} />
-            <StatCard label="P80 Kitchen Prep Time" value={`${stats.p80Kpt} min`} />
-            <StatCard label="Avg Order to Dispatch" value={`${stats.avgO2d} min`} />
-            <StatCard label="Avg O2Del" value={`${stats.avgO2del} min`} />
-            <StatCard label="P80 O2Del" value={`${stats.p80O2del} min`} />
+            {METRICS.map(m => (
+              <StatCard key={m.key} label={m.key === "orders" ? `Completed Orders (${weekDefs.length} Weeks)` : m.label.replace(" (min)", "")}
+                value={`${formatMetric(m, stats[m.key])}${m.label.endsWith("(min)") ? " min" : ""}`} />
+            ))}
           </div>
 
           {/* Legend Block */}
@@ -771,7 +803,6 @@ export default function OpsMatrixPage() {
                 <div><span style={{ color: C.text }}>KPT:</span> ≤12 / ≤18 / ≤25 / {'>'}25</div>
                 <div><span style={{ color: C.text }}>P80 KPT:</span> ≤18 / ≤25 / ≤35 / {'>'}35</div>
                 <div><span style={{ color: C.text }}>O2D:</span> ≤20 / ≤28 / ≤35 / {'>'}35</div>
-                <div><span style={{ color: C.text }}>O2Del:</span> ≤35 / ≤45 / ≤55 / {'>'}55</div>
               </div>
               
               <div style={{ width: 1, height: 18, background: C.border }}></div>
@@ -788,9 +819,14 @@ export default function OpsMatrixPage() {
               {loadError}
             </div>
           )}
-          {!loading && !loadError && partialDays && (
+          {filtersError && (
             <div style={{ padding: "14px 18px", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 12, color: "#b45309", fontSize: 13.5, fontWeight: 600 }}>
-              Some days in this range couldn't be loaded — the numbers below are partial.
+              {filtersError}
+            </div>
+          )}
+          {!loading && !loadError && truncated && (
+            <div style={{ padding: "14px 18px", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 12, color: "#b45309", fontSize: 13.5, fontWeight: 600 }}>
+              Metabase returned its 2,000-row maximum, so some rows are missing and the numbers below are partial. Narrow the filters or the date range.
             </div>
           )}
 
@@ -799,32 +835,20 @@ export default function OpsMatrixPage() {
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
           <thead>
             <tr style={{ background: "#214a70", color: "#fff", textAlign: "left" }}>
-              <th style={{ padding: "14px 20px", fontSize: 14 }}>{isDefault ? "Week" : headerLabel}</th>
-              <th style={{ padding: "14px 20px", fontSize: 14 }}>Orders</th>
-              <th style={{ padding: "14px 20px", fontSize: 14 }}>Avg KPT (min)</th>
-              <th style={{ padding: "14px 20px", fontSize: 14 }}>P80 KPT (min)</th>
-              <th style={{ padding: "14px 20px", fontSize: 14 }}>Avg O2D (min)</th>
-              <th style={{ padding: "14px 20px", fontSize: 14 }}>Avg O2Del (min)</th>
-              <th style={{ padding: "14px 20px", fontSize: 14 }}>P80 O2Del (min)</th>
+              <th style={{ padding: "14px 20px", fontSize: 14 }}>{headerLabel}</th>
+              {METRICS.map(m => <th key={m.key} style={{ padding: "14px 20px", fontSize: 14 }}>{m.label}</th>)}
             </tr>
           </thead>
           <tbody>
-            {loading && <tr><td colSpan={7} style={{ padding: 40, textAlign: "center", color: C.muted }}>Loading...</td></tr>}
-            {!loading && groupedData.length === 0 && <tr><td colSpan={7} style={{ padding: 40, textAlign: "center", color: C.muted }}>{loadError ? "Data couldn't be loaded — see the message above." : "No records match your selection."}</td></tr>}
+            {loading && <tr><td colSpan={METRICS.length + 1} style={{ padding: 40, textAlign: "center", color: C.muted }}>Loading...</td></tr>}
+            {!loading && groupedData.length === 0 && <tr><td colSpan={METRICS.length + 1} style={{ padding: 40, textAlign: "center", color: C.muted }}>{loadError ? "Data couldn't be loaded — see the message above." : "No records match your selection."}</td></tr>}
             
             {/* If Default Mode (No filters), just show overall weeks directly */}
             {!loading && isDefault && groupedData.map(group => (
               <React.Fragment key={group.name}>
                 {group.weeks.map(row => (
-                  <tr key={row.weekLabel} style={{ borderBottom: `1px solid ${C.borderSoft}` }}>
-                    <td style={{ padding: "12px 20px", fontWeight: 700, color: "#1e3a8a" }}>{row.weekLabel}</td>
-                    <td style={{ padding: "12px 20px" }}>{row.orders?.toLocaleString()}</td>
-                    <td style={{ padding: "12px 20px", fontWeight: 700, backgroundColor: getBgColor(row.kpt, 12, 18, 25), color: getTextColor(row.kpt, 12, 18, 25) }}>{row.kpt?.toFixed(1)}</td>
-                    <td style={{ padding: "12px 20px", fontWeight: 700, backgroundColor: getBgColor(row.p80, 18, 25, 35), color: getTextColor(row.p80, 18, 25, 35) }}>{row.p80?.toFixed(1)}</td>
-                    <td style={{ padding: "12px 20px", fontWeight: 700, backgroundColor: getBgColor(row.o2d, 20, 28, 35), color: getTextColor(row.o2d, 20, 28, 35) }}>{row.o2d?.toFixed(1)}</td>
-                    <td style={{ padding: "12px 20px", fontWeight: 700, backgroundColor: getBgColor(row.o2del, 35, 45, 55), color: getTextColor(row.o2del, 35, 45, 55) }}>{row.o2del?.toFixed(1)}</td>
-                    <td style={{ padding: "12px 20px", fontWeight: 700, backgroundColor: getBgColor(row.p80O2del, 35, 45, 55), color: getTextColor(row.p80O2del, 35, 45, 55) }}>{row.p80O2del?.toFixed(1)}</td>
-                  </tr>
+                  <WeekRow key={row.weekVal} week={row} indent={20} startOpen={weekDefs.length <= 1}
+                    rowStyle={{ background: "#fff" }} labelStyle={{ fontWeight: 700, color: "#1e3a8a" }} cellStyle={{ padding: "12px 20px", fontWeight: 700 }} />
                 ))}
               </React.Fragment>
             ))}
@@ -842,47 +866,78 @@ export default function OpsMatrixPage() {
   );
 }
 
-function AccordionTableRow({ group, isOneWeek }) {
-  const [expanded, setExpanded] = useState(isOneWeek);
+function MetricCells({ row, cellStyle }) {
+  return METRICS.map(m => (
+    <td key={m.key} style={m.color
+      ? { ...cellStyle, backgroundColor: getBgColor(row[m.key], ...m.color), color: getTextColor(row[m.key], ...m.color) }
+      : cellStyle}>
+      {formatMetric(m, row[m.key])}
+    </td>
+  ));
+}
+
+// A week row that opens to its days (at most 7). A 1-week range starts open.
+function WeekRow({ week, indent, startOpen, rowStyle, labelStyle, cellStyle }) {
+  const [open, setOpen] = useState(startOpen);
+
+  return (
+    <React.Fragment>
+      <tr onClick={() => setOpen(!open)} style={{ ...rowStyle, borderBottom: `1px solid ${C.borderSoft}`, cursor: "pointer" }}>
+        <td style={{ ...cellStyle, ...labelStyle, paddingLeft: indent }}>
+          <span style={{ display: "inline-block", width: 16, color: C.primary, fontSize: 11 }}>{open ? "▼" : "▶"}</span>
+          {week.weekLabel}
+        </td>
+        <MetricCells row={week} cellStyle={cellStyle} />
+      </tr>
+      {open && week.days.map(day => (
+        <tr key={day.date} style={{ background: "#ffffff", borderBottom: `1px solid ${C.borderSoft}` }}>
+          <td style={{ padding: `8px 20px 8px ${indent + 36}px`, fontWeight: 500, color: C.muted, fontSize: 12.5 }}>{day.label}</td>
+          <MetricCells row={day} cellStyle={{ padding: "8px 20px", fontWeight: 500, fontSize: 12.5 }} />
+        </tr>
+      ))}
+    </React.Fragment>
+  );
+}
+
+function AccordionTableRow({ group, isOneWeek, depth = 0 }) {
+  // A group with children (brand → locations) opens to them; otherwise to its weeks.
+  const hasChildren = !!group.children;
+  const autoOpen = isOneWeek && !hasChildren;
+  const [expanded, setExpanded] = useState(autoOpen);
 
   useEffect(() => {
-    if (isOneWeek) setExpanded(true);
-  }, [isOneWeek]);
+    if (autoOpen) setExpanded(true);
+  }, [autoOpen]);
+
+  const indent = 20 + depth * 20;
 
   return (
     <React.Fragment>
       {/* Group Summary Row */}
       <tr 
-        onClick={() => !isOneWeek && setExpanded(!expanded)} 
-        style={{ borderBottom: `1px solid ${C.borderSoft}`, cursor: isOneWeek ? "default" : "pointer", background: expanded ? C.surfaceHover : "#fff" }}
+        onClick={() => !autoOpen && setExpanded(!expanded)} 
+        style={{ borderBottom: `1px solid ${C.borderSoft}`, cursor: autoOpen ? "default" : "pointer", background: expanded ? C.surfaceHover : depth > 0 ? "#fbfcfe" : "#fff" }}
       >
-        <td style={{ padding: "14px 20px", fontWeight: 800, color: "#1e3a8a", fontSize: 14 }}>
-          {!isOneWeek && (
+        <td style={{ padding: `14px 20px 14px ${indent}px`, fontWeight: depth > 0 ? 700 : 800, color: "#1e3a8a", fontSize: depth > 0 ? 13 : 14 }}>
+          {!autoOpen && (
             <span style={{ display: "inline-block", width: 16, color: C.primary, fontSize: 12 }}>
               {expanded ? "▼" : "▶"}
             </span>
           )}
           {group.name}
         </td>
-        <td style={{ padding: "14px 20px", fontWeight: 700 }}>{group.orders.toLocaleString()}</td>
-        <td style={{ padding: "14px 20px", fontWeight: 700, backgroundColor: getBgColor(group.kpt, 12, 18, 25), color: getTextColor(group.kpt, 12, 18, 25) }}>{group.kpt.toFixed(1)}</td>
-        <td style={{ padding: "14px 20px", fontWeight: 700, backgroundColor: getBgColor(group.p80, 18, 25, 35), color: getTextColor(group.p80, 18, 25, 35) }}>{group.p80.toFixed(1)}</td>
-        <td style={{ padding: "14px 20px", fontWeight: 700, backgroundColor: getBgColor(group.o2d, 20, 28, 35), color: getTextColor(group.o2d, 20, 28, 35) }}>{group.o2d.toFixed(1)}</td>
-        <td style={{ padding: "14px 20px", fontWeight: 700, backgroundColor: getBgColor(group.o2del, 35, 45, 55), color: getTextColor(group.o2del, 35, 45, 55) }}>{group.o2del.toFixed(1)}</td>
-        <td style={{ padding: "14px 20px", fontWeight: 700, backgroundColor: getBgColor(group.p80O2del, 35, 45, 55), color: getTextColor(group.p80O2del, 35, 45, 55) }}>{group.p80O2del.toFixed(1)}</td>
+        <MetricCells row={group} cellStyle={{ padding: "14px 20px", fontWeight: depth > 0 ? 600 : 700 }} />
       </tr>
-      
+
+      {/* Expanded locations (brand rows) */}
+      {expanded && hasChildren && group.children.map(child => (
+        <AccordionTableRow key={child.name} group={child} isOneWeek={isOneWeek} depth={depth + 1} />
+      ))}
+
       {/* Expanded Weeks Rows */}
-      {expanded && group.weeks.map((row, idx) => (
-        <tr key={idx} style={{ background: "#f8fafc", borderBottom: `1px solid ${C.borderSoft}` }}>
-          <td style={{ padding: "10px 20px 10px 40px", fontWeight: 600, color: C.muted, fontSize: 13 }}>{row.weekLabel}</td>
-          <td style={{ padding: "10px 20px", fontSize: 13 }}>{row.orders?.toLocaleString()}</td>
-          <td style={{ padding: "10px 20px", fontWeight: 600, fontSize: 13, backgroundColor: getBgColor(row.kpt, 12, 18, 25), color: getTextColor(row.kpt, 12, 18, 25) }}>{row.kpt?.toFixed(1)}</td>
-          <td style={{ padding: "10px 20px", fontWeight: 600, fontSize: 13, backgroundColor: getBgColor(row.p80, 18, 25, 35), color: getTextColor(row.p80, 18, 25, 35) }}>{row.p80?.toFixed(1)}</td>
-          <td style={{ padding: "10px 20px", fontWeight: 600, fontSize: 13, backgroundColor: getBgColor(row.o2d, 20, 28, 35), color: getTextColor(row.o2d, 20, 28, 35) }}>{row.o2d?.toFixed(1)}</td>
-          <td style={{ padding: "10px 20px", fontWeight: 600, fontSize: 13, backgroundColor: getBgColor(row.o2del, 35, 45, 55), color: getTextColor(row.o2del, 35, 45, 55) }}>{row.o2del?.toFixed(1)}</td>
-          <td style={{ padding: "10px 20px", fontWeight: 600, fontSize: 13, backgroundColor: getBgColor(row.p80O2del, 35, 45, 55), color: getTextColor(row.p80O2del, 35, 45, 55) }}>{row.p80O2del?.toFixed(1)}</td>
-        </tr>
+      {expanded && !hasChildren && group.weeks.map(row => (
+        <WeekRow key={row.weekVal} week={row} indent={indent + 20} startOpen={isOneWeek}
+          rowStyle={{ background: "#f8fafc" }} labelStyle={{ fontWeight: 600, color: C.muted, fontSize: 13 }} cellStyle={{ padding: "10px 20px", fontWeight: 600, fontSize: 13 }} />
       ))}
     </React.Fragment>
   );
