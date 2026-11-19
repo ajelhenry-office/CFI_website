@@ -18,7 +18,7 @@ const ICONS = {
 
 export const NAV_ITEMS = [
   { key: "toggle", label: "Toggle", subtitle: "Outlet & item availability control" },
-  { key: "timing", label: "Timing", subtitle: "Operational hours and slot health" },
+  { key: "timing", label: "Timing", subtitle: "" },
   { key: "ratings", label: "Ratings & Insights", subtitle: "Brand, Zone, City & Kitchen ratings across the portfolio" },
   { key: "ops_matrix", label: "Ops Matrix", subtitle: "Operations performance matrix" },
   { key: "settings", label: "Settings", subtitle: "Profile and connected platforms" },

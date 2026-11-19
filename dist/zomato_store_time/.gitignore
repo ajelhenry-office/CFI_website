@@ -96,3 +96,6 @@ zomato_session.json
 timings_update.log
 cron_execution.log
 *.png
+
+# Swiggy/Ownly partner API captures (live sessions)
+captures/

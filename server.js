@@ -64,9 +64,15 @@ app.use((req, res, next) => {
   next();
 });
 
+// LOCAL_ALLOW_TIMING_WRITES=1 lets the Timing tab's own writes (store-hour changes on
+// Swiggy/Zomato, its store list) through safe mode for testing them from a laptop —
+// those ARE live changes; everything else stays blocked.
+const LOCAL_ALLOW_TIMING_WRITES = process.env.LOCAL_ALLOW_TIMING_WRITES === "1";
+
 if (LOCAL_SAFE_MODE) {
   app.use((req, res, next) => {
     if (["GET", "HEAD", "OPTIONS"].includes(req.method) || SAFE_MODE_ALLOWED_WRITES.has(req.path)) return next();
+    if (LOCAL_ALLOW_TIMING_WRITES && /^\/api\/timing\/(changes|stores)(\/|$)/.test(req.path)) return next();
     console.warn(`[SAFE MODE] Blocked ${req.method} ${req.path}`);
     // 409, not 401/403 — the SPA treats those as "your session died" and logs out.
     res.status(409).json({ success: false, error: "Local safe mode: changes are disabled on this server." });

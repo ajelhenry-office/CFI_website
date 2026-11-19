@@ -1,6 +1,7 @@
 import { pool } from '../ratings/db.js';
 import { warmUpOpsCache } from '../ops_matrix/ops.routes.js';
 import { startTimingWorker } from '../timing/timingWorker.js';
+import { scheduleTimingConnectionCheck } from '../timing/connectionCheck.js';
 import { AUTO_MANAGED_BRANDS, isTogglePaused, runHourlyRecheckForBrand, isChainAlive, normalizeBrandKey, touchBulkActivity, scheduleNextAttempt, ensureToggleJobColumns, resumeInterruptedJobs } from './queue.js';
 import { performToggleAPI } from './toggle.routes.js';
 import { raiseAlert, resolveAlert } from '../alerts/alertService.js';
@@ -11,6 +12,7 @@ export function startWorkers() {
   console.log("[WORKERS] Starting background workers...");
   startTimingWorker();
   scheduleDailyHealthCheck(8, 0); // 8:00 AM IST daily
+  scheduleTimingConnectionCheck(9, 0); // 9:00 AM IST daily + once now — Zomato/Swiggy timing logins
   scheduleEatfitOrderSync(); // every 5 min — keeps active_orders fresh
   scheduleEatfitThresholdEnforcer(); // every 10 min — throttles down/wakes up based on that data
 

@@ -24,3 +24,6 @@ CFI_website_project.zip
 update_server.tar.gz
 auth_update.tar.gz
 credentials/
+
+# Timing tab partner sessions (live logins)
+server/timing/sessions/

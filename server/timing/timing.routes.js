@@ -1,5 +1,9 @@
 import express from "express";
 import { pool } from "../ratings/db.js";
+import { listConnections } from "./sessionStore.js";
+import { runTimingConnectionCheck } from "./connectionCheck.js";
+import { listStores, addStore, deleteStore, setStorePaused } from "./storeMap.js";
+import { applyTimingChange, listTimingChanges, retryTimingChange } from "./timingChanges.js";
 
 const router = express.Router();
 
@@ -160,6 +164,98 @@ router.get("/timing/audit-log", async (req, res) => {
   } catch (err) {
     console.error("Audit Log error:", err);
     res.status(500).json({ error: "Failed to fetch audit log" });
+  }
+});
+
+// ─── PARTNER CONNECTIONS (Zomato + Swiggy logins) ────────────
+// Same role set the sidebar gives the Timing tab (ROLE_PERMISSIONS in Sidebar.jsx).
+function canManageTiming(req, res, next) {
+  const roles = req.user?.roles || [req.user?.role];
+  if (!roles.some(r => ["super_admin", "admin"].includes(r))) {
+    return res.status(403).json({ success: false, error: "You don't have permission to manage timings." });
+  }
+  next();
+}
+
+router.get("/timing/connections", canManageTiming, async (req, res) => {
+  try {
+    res.json({ success: true, connections: await listConnections() });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.post("/timing/connections/check", canManageTiming, async (req, res) => {
+  try {
+    res.json({ success: true, results: await runTimingConnectionCheck() });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ─── STORE ↔ RID MAP ─────────────────────────────────────────
+router.get("/timing/stores", canManageTiming, async (req, res) => {
+  try {
+    res.json({ success: true, stores: await listStores(req.query.brand) });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.post("/timing/stores", canManageTiming, async (req, res) => {
+  try {
+    const { store, report } = await addStore(req.body || {});
+    res.json({ success: true, store, report });
+  } catch (err) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+router.delete("/timing/stores/:id", canManageTiming, async (req, res) => {
+  try {
+    await deleteStore(req.params.id);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+for (const action of ["pause", "resume"]) {
+  router.post(`/timing/stores/:id/${action}`, canManageTiming, async (req, res) => {
+    try {
+      await setStorePaused(req.params.id, action === "pause");
+      res.json({ success: true });
+    } catch (err) {
+      res.status(400).json({ success: false, error: err.message });
+    }
+  });
+}
+
+// ─── TIMING CHANGES (S1 / S2 saves) + AUDIT ──────────────────
+router.post("/timing/changes", canManageTiming, async (req, res) => {
+  const { storeId, platform, slot, days, start, end } = req.body || {};
+  try {
+    const change = await applyTimingChange({ storeId, platform, slot, days, start, end, userEmail: req.user?.email });
+    res.json({ success: change.status === "success", change, error: change.error || undefined });
+  } catch (err) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+router.get("/timing/changes", canManageTiming, async (req, res) => {
+  try {
+    res.json({ success: true, changes: await listTimingChanges({ status: req.query.status, limit: req.query.limit }) });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.post("/timing/changes/:id/retry", canManageTiming, async (req, res) => {
+  try {
+    const change = await retryTimingChange(req.params.id, req.user?.email);
+    res.json({ success: change.status === "success", change, error: change.error || undefined });
+  } catch (err) {
+    res.status(400).json({ success: false, error: err.message });
   }
 });
 

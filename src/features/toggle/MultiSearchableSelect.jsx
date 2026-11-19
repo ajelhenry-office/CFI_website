@@ -7,7 +7,8 @@ export default function MultiSearchableSelect({
   onChange, 
   placeholder, 
   width = 180,
-  customTrigger = null
+  customTrigger = null,
+  renderOption = null
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -161,7 +162,7 @@ export default function MultiSearchableSelect({
                     onChange={() => toggleOption(opt)}
                     style={{ marginRight: 8, accentColor: C.primary, cursor: "pointer" }}
                   />
-                  {opt}
+                  {renderOption ? renderOption(opt) : opt}
                 </label>
               ))
             )}

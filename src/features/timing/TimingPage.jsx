@@ -1,916 +1,424 @@
-import { useState, useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { C, FONT } from "../../theme";
-import { ZOMATO_STORES } from "./zomato_data";
-import { SWIGGY_STORES } from "./swiggy_data";
-import { getAuthHeaders, handleApiError } from "../../api";
-import TimingAuditModal from "./TimingAuditModal";
+import { API_BASE, getAuthHeaders, handleApiError } from "../../api";
+import MultiSearchableSelect from "../toggle/MultiSearchableSelect";
+import useIsMobile from "../../useIsMobile";
+import TimingSidebar from "./TimingSidebar";
+import PlatformLogo from "./PlatformLogo";
+import { BRANDS, PLATFORMS, PLATFORM_NAMES, platformByName, DAYS, storeTitle } from "./platforms";
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || (import.meta.env.PROD ? "" : "http://localhost:3001");
+// Option text for the Store dropdown — includes the RIDs so typing a Swiggy or
+// Zomato RID in the dropdown's search finds the store.
+function storeOption(s) {
+  const rids = PLATFORMS.filter(p => s[p.rid]).map(p => `${p.name} ${s[p.rid]}`);
+  return rids.length ? `${storeTitle(s)} (${rids.join(", ")})` : storeTitle(s);
+}
 
-// --- Icons ---
-const ChevronDown = () => (
-  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-    <polyline points="6 9 12 15 18 9"></polyline>
-  </svg>
-);
+// Empty selection = no restriction on that filter.
+function inBrands(s, brands) {
+  return !brands.length || brands.includes(s.brand_name);
+}
+function onPlatforms(s, platforms) {
+  return !platforms.length || PLATFORMS.some(p => platforms.includes(p.name) && s[p.rid]);
+}
 
-const ChevronUp = () => (
-  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-    <polyline points="18 15 12 9 6 15"></polyline>
-  </svg>
-);
+// The platform a store row starts on: the first filtered platform it has a RID for.
+function defaultPlatform(s, appliedPlatforms) {
+  const order = appliedPlatforms.length ? PLATFORMS.filter(p => appliedPlatforms.includes(p.name)) : PLATFORMS;
+  return (order.find(p => s[p.rid]) || PLATFORMS.find(p => s[p.rid]))?.name || null;
+}
 
-const TrashIcon = () => (
-  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#6b7280" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" style={{ cursor: "pointer" }}>
-    <polyline points="3 6 5 6 21 6"></polyline>
-    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-    <line x1="10" y1="11" x2="10" y2="17"></line>
-    <line x1="14" y1="11" x2="14" y2="17"></line>
-  </svg>
-);
 
-const LocationIcon = () => (
-  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#6b7280" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path>
-    <circle cx="12" cy="10" r="3"></circle>
-  </svg>
-);
+// Whether our login can reach this store's RID on a platform, plus a hover explanation.
+function ridStatus(platform, store) {
+  const rid = store[platform.rid];
+  const connected = platform.connected ? store[platform.connected] : false;
+  const state = !rid ? "none" : connected ? "ok" : "off";
+  const detail = platform.name === "Swiggy" && store.s_outlet_name ? `${store.s_outlet_name} (account ${store.s_account})`
+    : platform.name === "Zomato" ? store.z_outlet_name : null;
+  const title = state === "ok" ? `${platform.name} ${rid} — connected${detail ? ` (${detail})` : ""}`
+    : state === "off" ? `${platform.name} ${rid} — not visible to our login, not connected`
+    : `No ${platform.name} RID`;
+  return { rid, state, title };
+}
 
-const X = ({ size }) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>;
-
-const PencilIcon = () => (
-  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#6b7280" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M12 20h9"></path>
-    <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path>
-  </svg>
-);
-
-const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
-
-const ZOMATO_BLUE = "#2368ee";
-
-// --- MultiSelect Component ---
-const MultiSelect = ({ options, selected, onChange, placeholder, width, hasSearch, singleSelect }) => {
-  const [isOpen, setIsOpen] = useState(false);
-  const [search, setSearch] = useState("");
-
-  const filteredOptions = hasSearch && search
-    ? options.filter(o => o.label.toLowerCase().includes(search.toLowerCase()) || (o.sublabel && o.sublabel.toLowerCase().includes(search.toLowerCase())))
-    : options;
-
-  const toggle = (val) => {
-    if (singleSelect) {
-      onChange([val]);
-      setIsOpen(false);
-    } else {
-      if (selected.includes(val)) {
-        onChange(selected.filter(v => v !== val));
-      } else {
-        onChange([...selected, val]);
-      }
-    }
-  };
-
-  const selectAll = () => onChange(filteredOptions.map(o => o.value));
-  const selectNone = () => onChange([]);
-
-  return (
-    <div style={{ position: "relative", width }}>
-      <div
-        onClick={() => setIsOpen(!isOpen)}
-        style={{
-          padding: "10px 36px 10px 16px",
-          borderRadius: 8,
-          border: "1px solid #d1d5db",
-          backgroundColor: "#fff",
-          color: "#374151",
-          fontSize: 14,
-          fontWeight: 500,
-          cursor: "pointer",
-          display: "flex",
-          alignItems: "center",
-          minHeight: 20
-        }}
-      >
-        <div style={{ flex: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-          {selected.length === 0 ? placeholder : selected.length === 1 ? options.find(o => o.value === selected[0])?.label : `${selected.length} selected`}
-        </div>
-        <div style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", color: "#6b7280" }}>
-          {isOpen ? <ChevronUp /> : <ChevronDown />}
-        </div>
-      </div>
-
-      {isOpen && (
-        <div style={{
-          position: "absolute", top: "100%", left: 0, right: 0, marginTop: 4,
-          backgroundColor: "#fff", border: "1px solid #d1d5db", borderRadius: 8,
-          boxShadow: "0 4px 6px -1px rgba(0, 0, 0, 0.1)", zIndex: 10,
-          maxHeight: 300, display: "flex", flexDirection: "column"
-        }}>
-          {hasSearch && (
-            <div style={{ padding: 8, borderBottom: "1px solid #e5e7eb" }}>
-              <input
-                type="text"
-                placeholder="Search..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                style={{ width: "100%", padding: "6px 12px", border: "1px solid #d1d5db", borderRadius: 4, boxSizing: "border-box", fontSize: 13 }}
-              />
-            </div>
-          )}
-          {!singleSelect && (
-            <div style={{ padding: "8px 12px", borderBottom: "1px solid #e5e7eb", display: "flex", gap: 12, fontSize: 13, backgroundColor: "#f9fafb" }}>
-              <span onClick={selectAll} style={{ color: ZOMATO_BLUE, cursor: "pointer", fontWeight: 500 }}>Select All</span>
-              <span onClick={selectNone} style={{ color: "#6b7280", cursor: "pointer", fontWeight: 500 }}>Select None</span>
-            </div>
-          )}
-          <div style={{ overflowY: "auto", flex: 1, padding: "4px 0" }}>
-            {filteredOptions.length === 0 ? (
-              <div style={{ padding: "8px 12px", color: "#6b7280", fontSize: 13 }}>No results found</div>
-            ) : (
-              filteredOptions.map((opt, i) => (
-                <label key={opt.value || i} style={{ display: "flex", alignItems: "center", padding: "8px 12px", cursor: "pointer", gap: 8, fontSize: 13, color: "#374151" }}>
-                  <input
-                    type="checkbox"
-                    checked={selected.includes(opt.value)}
-                    onChange={() => toggle(opt.value)}
-                    style={{ cursor: "pointer", accentColor: ZOMATO_BLUE }}
-                  />
-                  <div>
-                    <div>{opt.label}</div>
-                    {opt.sublabel && <div style={{ fontSize: 11, color: "#6b7280" }}>{opt.sublabel}</div>}
-                  </div>
-                </label>
-              ))
-            )}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-};
-
-export default function TimingPage() {
-  const [activePlatform, setActivePlatform] = useState("zomato");
-  const [loading, setLoading] = useState(false);
-  const [expandedDay, setExpandedDay] = useState(() => {
-    return new Date().toLocaleDateString("en-US", { weekday: "long" });
-  });
-  const [copyAll, setCopyAll] = useState(false);
-  const [toastMsg, setToastMsg] = useState("");
-  const [liveTasks, setLiveTasks] = useState([]);
-  const [showAudit, setShowAudit] = useState(false);
-  const [timingCache, setTimingCache] = useState({});
-  const [showBulkModal, setShowBulkModal] = useState(false);
-  const [bulkSelectedStores, setBulkSelectedStores] = useState([]);
-  const [bulkSelectedDays, setBulkSelectedDays] = useState({
-    Monday: true, Tuesday: true, Wednesday: true, Thursday: true, Friday: true, Saturday: true, Sunday: true
-  });
-
-  const getDefaultTimings = () => {
-    const init = {};
-    DAYS.forEach(d => {
-      init[d] = {
-        open: true,
-        slots: [{ start: "08:00", end: "23:59" }]
-      };
-    });
-    return init;
-  };
-
-  // Initialize state for all days
-  const [timings, setTimings] = useState(getDefaultTimings());
-
-  // Filter state
-  const [selectedBrands, setSelectedBrands] = useState([]);
-  const [selectedStores, setSelectedStores] = useState([]);
-
-  const currentStores = activePlatform === "zomato" ? ZOMATO_STORES : SWIGGY_STORES;
-  const currentIdField = activePlatform === "zomato" ? "zomato_id" : "swiggy_id";
-
-  const allBrands = [...new Set(currentStores.map(s => s.brand))].sort();
-
-  const filteredStores = currentStores.filter(store => {
-    return selectedBrands.length > 0 ? selectedBrands.includes(store.brand) : true;
-  });
-
-  const handlePlatformChange = (p) => {
-    setActivePlatform(p);
-    setSelectedBrands([]);
-    setSelectedStores([]);
-  };
-
-  const updateSlot = (day, slotIndex, field, value) => {
-    setTimings(prev => {
-      const newTimings = { ...prev };
-      const newDay = { ...newTimings[day], slots: [...newTimings[day].slots] };
-      newDay.slots[slotIndex] = { ...newDay.slots[slotIndex], [field]: value };
-      newTimings[day] = newDay;
-
-      // If copy all is checked, copy this exact slot configuration to all other days
-      if (copyAll) {
-        DAYS.forEach(d => {
-          if (d !== day) newTimings[d] = { ...newTimings[d], slots: [...newDay.slots] };
-        });
-      }
-      return newTimings;
-    });
-  };
-
-  const addSlot = (day) => {
-    setTimings(prev => {
-      const newTimings = { ...prev };
-      const newDay = { ...newTimings[day], slots: [...newTimings[day].slots] };
-      if (newDay.slots.length < 3) {
-        newDay.slots.push({ start: "", end: "" });
-      }
-      newTimings[day] = newDay;
-
-      if (copyAll) {
-        DAYS.forEach(d => {
-          if (d !== day) newTimings[d] = { ...newTimings[d], slots: [...newDay.slots] };
-        });
-      }
-      return newTimings;
-    });
-  };
-
-  const removeSlot = (day, slotIndex) => {
-    setTimings(prev => {
-      const newTimings = { ...prev };
-      const newDay = { ...newTimings[day], slots: [...newTimings[day].slots] };
-      newDay.slots.splice(slotIndex, 1);
-      newTimings[day] = newDay;
-
-      if (copyAll) {
-        DAYS.forEach(d => {
-          if (d !== day) newTimings[d] = { ...newTimings[d], slots: [...newDay.slots] };
-        });
-      }
-      return newTimings;
-    });
-  };
-
-  const toggleOutletOpen = (day, isOpen) => {
-    setTimings(prev => {
-      const newTimings = { ...prev };
-      newTimings[day] = { ...newTimings[day], open: isOpen };
-
-      if (copyAll) {
-        DAYS.forEach(d => {
-          if (d !== day) newTimings[d] = { ...newTimings[d], open: isOpen };
-        });
-      }
-      return newTimings;
-    });
-  };
-
-  const handleCopyAllChange = (e, currentExpandedDay) => {
-    const isChecked = e.target.checked;
-    setCopyAll(isChecked);
-    if (isChecked) {
-      // Immediately copy current expanded day to all others
-      const template = timings[currentExpandedDay];
-      setTimings(prev => {
-        const next = { ...prev };
-        DAYS.forEach(d => {
-          next[d] = { open: template.open, slots: [...template.slots.map(s => ({ ...s }))] };
-        });
-        return next;
-      });
-    }
-  };
-
-  const fetchLiveTasks = async () => {
-    try {
-      const res = await fetch(`${API_BASE}/api/timing/queue-status`, {
-        headers: getAuthHeaders()
-      });
-      const contentType = res.headers.get("content-type");
-      if (res.ok && contentType && contentType.includes("application/json")) {
-        const data = await res.json();
-        if (data.success) {
-          setLiveTasks(data.tasks || []);
-        }
-      }
-    } catch (err) {
-      // Ignore poll errors
-    }
-  };
-
+// Monday-first weekday name for today, re-checked every minute so a page left open
+// overnight rolls over to the new day on its own.
+function todayName() {
+  return DAYS[(new Date().getDay() + 6) % 7];
+}
+function useToday() {
+  const [today, setToday] = useState(todayName);
   useEffect(() => {
-    fetchLiveTasks();
-    const interval = setInterval(fetchLiveTasks, 5000);
-
-    // Fetch cached timings on mount
-    fetch(`${API_BASE}/api/timing/all-store-timings`, { headers: getAuthHeaders() })
-      .then(r => {
-        const contentType = r.headers.get("content-type");
-        if (r.ok && contentType && contentType.includes("application/json")) {
-          return r.json();
-        }
-        throw new Error("Invalid response");
-      })
-      .then(d => {
-        if (d.success) setTimingCache(d.cache || {});
-      })
-      .catch(console.error);
-
-    return () => clearInterval(interval);
+    const timer = setInterval(() => setToday(todayName()), 60 * 1000);
+    return () => clearInterval(timer);
   }, []);
+  return today;
+}
 
-  // Sync selected store timings
-  useEffect(() => {
-    if (selectedStores.length === 1) {
-      const storeId = selectedStores[0];
-      const cached = timingCache[storeId];
-      if (cached) {
-        setTimings(cached);
-        setToastMsg("Loaded current timings from Zomato");
-        setTimeout(() => setToastMsg(""), 3000);
-      } else {
-        setTimings(getDefaultTimings());
-      }
-    } else {
-      // If 0 or >1 stores, reset to default blank slate
-      setTimings(getDefaultTimings());
-    }
-  }, [selectedStores.length === 1 ? selectedStores[0] : 'multiple']);
+// status: idle → saving → saved | failed (error holds the platform's reason)
+const EMPTY_SLOT = { start: "", end: "", status: "idle", error: "" };
 
-  const handleBulkSave = async () => {
-    if (bulkSelectedStores.length === 0) {
-      setToastMsg("Please select at least one store for bulk update.");
-      setTimeout(() => setToastMsg(""), 3000);
-      return;
-    }
-    const partialTimings = {};
-    Object.keys(bulkSelectedDays).forEach(day => {
-      if (bulkSelectedDays[day]) {
-        partialTimings[day] = timings[day];
-      }
-    });
-    if (Object.keys(partialTimings).length === 0) {
-      setToastMsg("Please select at least one day to apply.");
-      setTimeout(() => setToastMsg(""), 3000);
-      return;
-    }
-    setLoading(true);
-    try {
-      const payload = {
-        platform: activePlatform,
-        stores: bulkSelectedStores,
-        timings: partialTimings
-      };
-      const res = await fetch(`${API_BASE}/api/timing/bulk-update`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
-        body: JSON.stringify(payload)
-      });
-      if (handleApiError(res)) return;
-      const data = await res.json();
-      if (data.success) {
-        setToastMsg(`Successfully queued ${bulkSelectedStores.length} stores for bulk update.`);
-        setTimingCache(prev => {
-          const next = { ...prev };
-          bulkSelectedStores.forEach(sid => {
-            const base = next[sid] ? JSON.parse(JSON.stringify(next[sid])) : getDefaultTimings();
-            Object.keys(partialTimings).forEach(day => {
-              base[day] = JSON.parse(JSON.stringify(partialTimings[day]));
-            });
-            next[sid] = base;
-          });
-          return next;
-        });
-        setTimeout(() => setToastMsg(""), 3000);
-        setShowBulkModal(false);
-        setBulkSelectedStores([]);
-        fetchLiveTasks();
-      } else {
-        setToastMsg("Failed to queue bulk updates: " + data.error);
-        setTimeout(() => setToastMsg(""), 4000);
-      }
-    } catch (err) {
-      setToastMsg("Error: " + err.message);
-      setTimeout(() => setToastMsg(""), 4000);
-    }
-    setLoading(false);
-  };
-
-  const handleSave = async () => {
-    if (selectedStores.length === 0) {
-      setToastMsg("Please select at least one store.");
-      setTimeout(() => setToastMsg(""), 3000);
-      return;
-    }
-
-    setLoading(true);
-    try {
-      const payload = {
-        platform: activePlatform,
-        stores: selectedStores,
-        timings: timings
-      };
-
-      const res = await fetch(`${API_BASE}/api/timing/bulk-update`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
-        body: JSON.stringify(payload)
-      });
-
-      if (handleApiError(res)) return;
-      const data = await res.json();
-
-      if (data.success) {
-        setToastMsg(`Successfully queued store for update.`);
-        setTimingCache(prev => {
-          const next = { ...prev };
-          selectedStores.forEach(sid => {
-            next[sid] = JSON.parse(JSON.stringify(timings));
-          });
-          return next;
-        });
-        setTimeout(() => setToastMsg(""), 3000);
-        fetchLiveTasks();
-      } else {
-        setToastMsg("Failed to queue updates: " + data.error);
-        setTimeout(() => setToastMsg(""), 4000);
-      }
-    } catch (err) {
-      setToastMsg("Error: " + err.message);
-      setTimeout(() => setToastMsg(""), 4000);
-    }
-    setLoading(false);
-  };
-
+// Bordered dropdown trigger used by the per-store Platform and Day boxes.
+function BoxTrigger({ isOpen, children }) {
   return (
-    <div style={{ padding: 20, width: "100%", boxSizing: "border-box", fontFamily: "'Inter', -apple-system, sans-serif" }}>
-
-      {/* Top Controls: Zomato delivery tab */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 24, borderBottom: "1px solid #e8e8e8" }}>
-        {/* Platform Tabs */}
-        <div style={{ display: "flex", gap: 24 }}>
-          {["zomato", "swiggy"].map(p => {
-            const isActive = activePlatform === p;
-            return (
-              <div
-                key={p}
-                onClick={() => handlePlatformChange(p)}
-                style={{
-                  padding: "0 8px 12px",
-                  color: isActive ? (p === "zomato" ? ZOMATO_BLUE : "#fc8019") : "#6b7280",
-                  fontSize: 15,
-                  fontWeight: 500,
-                  cursor: "pointer",
-                  position: "relative",
-                  textTransform: "capitalize"
-                }}
-              >
-                {p === "zomato" ? "Zomato delivery" : "Swiggy delivery"}
-                {isActive && (
-                  <div style={{
-                    position: "absolute",
-                    bottom: -1,
-                    left: 0,
-                    right: 0,
-                    height: 2,
-                    backgroundColor: p === "zomato" ? ZOMATO_BLUE : "#fc8019"
-                  }}></div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-        <button
-          onClick={() => setShowAudit(true)}
-          style={{ padding: "8px 16px", backgroundColor: "#fff", border: `1px solid #d1d5db`, borderRadius: 6, fontSize: 13, fontWeight: 600, color: "#374151", cursor: "pointer", display: "flex", gap: 6, alignItems: "center", marginBottom: 12 }}
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
-          Audit Log
-        </button>
-      </div>
-
-      {/* Filters & Store Selection */}
-      <div style={{ display: "flex", gap: 16, marginBottom: 24, alignItems: "center", flexWrap: "wrap", zIndex: 11, position: "relative" }}>
-
-        <MultiSelect
-          options={allBrands.map(b => ({ label: b, value: b }))}
-          selected={selectedBrands}
-          onChange={(vals) => {
-            setSelectedBrands(vals);
-            setSelectedStores([]); // Reset stores when brands change
-          }}
-          placeholder="All Brands"
-          width={220}
-          hasSearch={false}
-        />
-
-        <MultiSelect
-          options={filteredStores.map(s => {
-            const parts = s.name.split(" - ");
-            const locality = parts.length >= 2 ? parts[0] : s.name;
-            const bName = parts.length >= 2 ? parts[1] : s.brand;
-            return {
-              value: s[currentIdField],
-              label: `${locality} | ${s[currentIdField]}`,
-              sublabel: bName
-            };
-          })}
-          selected={selectedStores}
-          onChange={setSelectedStores}
-          placeholder="Select stores to edit timings..."
-          width={320}
-          hasSearch={true}
-          singleSelect={true}
-        />
-
-        <button
-          onClick={() => setShowBulkModal(true)}
-          style={{ padding: "10px 20px", borderRadius: 8, border: "none", backgroundColor: "#111827", color: "#fff", fontSize: 14, fontWeight: 500, cursor: "pointer" }}
-        >
-          Apply to Multiple Stores
-        </button>
-
-        <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
-          <button
-            onClick={() => { /* Apply placeholder as requested */ }}
-            style={{ padding: "6px 12px", borderRadius: 6, border: "1px solid #10b981", backgroundColor: "#ecfdf5", color: "#059669", fontSize: 13, fontWeight: 600, cursor: "pointer" }}
-          >
-            Apply
-          </button>
-          <button
-            onClick={() => { setSelectedBrands([]); setSelectedStores([]); }}
-            style={{ padding: "6px 12px", borderRadius: 6, border: "1px solid #ef4444", backgroundColor: "#fef2f2", color: "#ef4444", fontSize: 13, fontWeight: 600, cursor: "pointer" }}
-          >
-            Clear
-          </button>
-        </div>
-      </div>
-
-      {/* Accordion List */}
-      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-        {DAYS.map((day) => {
-          const isExpanded = expandedDay === day;
-          const data = timings[day];
-          const platformColor = activePlatform === "zomato" ? ZOMATO_BLUE : "#fc8019";
-
-          return (
-            <div key={day} style={{
-              border: "1px solid #e5e7eb",
-              borderRadius: 8,
-              backgroundColor: "#fff",
-              overflow: "hidden"
-            }}>
-              {/* Header */}
-              <div
-                onClick={() => setExpandedDay(isExpanded ? null : day)}
-                style={{
-                  padding: "16px 20px",
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  backgroundColor: isExpanded ? platformColor : "#fff",
-                  color: isExpanded ? "#fff" : "#374151",
-                  fontWeight: 500,
-                  fontSize: 15,
-                  cursor: "pointer",
-                  transition: "background-color 0.2s"
-                }}
-              >
-                {day}
-                {isExpanded ? <ChevronUp /> : <ChevronDown />}
-              </div>
-
-              {/* Expanded Content */}
-              {isExpanded && (
-                <div style={{ padding: "24px 20px", backgroundColor: "#fff" }}>
-
-                  {/* Headers */}
-                  <div style={{ display: "flex", marginBottom: 12, fontSize: 13, color: "#6b7280" }}>
-                    <div style={{ width: 80 }}></div>
-                    <div style={{ width: 140, textAlign: "center" }}>Start time</div>
-                    <div style={{ width: 40 }}></div>
-                    <div style={{ width: 140, textAlign: "center" }}>End time</div>
-                  </div>
-
-                  {/* Time Slots */}
-                  <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-                    {data.slots.map((slot, idx) => (
-                      <div key={idx} style={{ display: "flex", alignItems: "center", position: "relative" }}>
-
-                        {/* Slot Label */}
-                        <div style={{ width: 80, fontSize: 13, fontWeight: 500, color: "#6b7280" }}>
-                          SLOT {idx + 1}
-                        </div>
-
-                        {/* Start Time Input */}
-                        <div style={{ position: "relative", width: 140 }}>
-                          <input
-                            type="time"
-                            value={slot.start}
-                            onChange={(e) => updateSlot(day, idx, "start", e.target.value)}
-                            style={{
-                              width: "100%",
-                              padding: "10px 14px",
-                              paddingRight: 32,
-                              borderRadius: 6,
-                              border: "1px solid #e5e7eb",
-                              fontSize: 14,
-                              color: "#374151",
-                              boxSizing: "border-box",
-                              outline: "none",
-                              cursor: "pointer"
-                            }}
-                          />
-                          <div style={{ position: "absolute", right: 10, top: 12, pointerEvents: "none" }}>
-                            <PencilIcon />
-                          </div>
-                        </div>
-
-                        {/* "to" separator */}
-                        <div style={{ width: 40, textAlign: "center", fontSize: 13, color: "#4b5563" }}>to</div>
-
-                        {/* End Time Input */}
-                        <div style={{ position: "relative", width: 140 }}>
-                          <input
-                            type="time"
-                            value={slot.end}
-                            onChange={(e) => updateSlot(day, idx, "end", e.target.value)}
-                            style={{
-                              width: "100%",
-                              padding: "10px 14px",
-                              paddingRight: 32,
-                              borderRadius: 6,
-                              border: "1px solid #e5e7eb",
-                              fontSize: 14,
-                              color: "#374151",
-                              boxSizing: "border-box",
-                              outline: "none",
-                              cursor: "pointer"
-                            }}
-                          />
-                          <div style={{ position: "absolute", right: 10, top: 12, pointerEvents: "none" }}>
-                            <PencilIcon />
-                          </div>
-                        </div>
-
-                        {/* Actions: Trash / Add */}
-                        <div style={{ display: "flex", alignItems: "center", marginLeft: 24, gap: 16, flex: 1 }}>
-                          {data.slots.length > 1 && (
-                            <div onClick={() => removeSlot(day, idx)}>
-                              <TrashIcon />
-                            </div>
-                          )}
-
-                          {/* Show "Add time slot" only on the last slot, if slots < 3 */}
-                          {idx === data.slots.length - 1 && data.slots.length < 3 && (
-                            <div style={{ flex: 1, display: "flex", justifyContent: "flex-end" }}>
-                              <div
-                                onClick={() => addSlot(day)}
-                                style={{ color: platformColor, fontSize: 14, fontWeight: 500, cursor: "pointer" }}
-                              >
-                                + Add time slot
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-
-                  {/* Divider */}
-                  <div style={{ height: 1, backgroundColor: "#f3f4f6", margin: "24px 0" }}></div>
-
-                  {/* Footer Actions */}
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-
-                    <div style={{ display: "flex", alignItems: "center", gap: 24 }}>
-                      {/* Copy to all days */}
-                      <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer", fontSize: 15, color: "#374151" }}>
-                        <input
-                          type="checkbox"
-                          checked={copyAll}
-                          onChange={(e) => handleCopyAllChange(e, day)}
-                          style={{ width: 18, height: 18, cursor: "pointer", accentColor: platformColor, margin: 0, padding: 0 }}
-                        />
-                        Copy above timings to all days
-                      </label>
-
-                      <div style={{ width: 1, height: 20, backgroundColor: "#e5e7eb" }}></div>
-
-                      {/* Outlet open toggle */}
-                      <label style={{ display: "flex", alignItems: "center", gap: 12, cursor: "pointer", fontSize: 15, color: "#374151" }}>
-                        <div style={{
-                          width: 44,
-                          height: 24,
-                          backgroundColor: data.open ? "#22c55e" : "#d1d5db",
-                          borderRadius: 12,
-                          position: "relative",
-                          transition: "background-color 0.2s"
-                        }}>
-                          <div style={{
-                            width: 20,
-                            height: 20,
-                            backgroundColor: "#fff",
-                            borderRadius: "50%",
-                            position: "absolute",
-                            top: 2,
-                            left: data.open ? 22 : 2,
-                            transition: "left 0.2s",
-                            boxShadow: "0 1px 3px rgba(0,0,0,0.2)"
-                          }}></div>
-                        </div>
-                        <input
-                          type="checkbox"
-                          checked={data.open}
-                          onChange={(e) => toggleOutletOpen(day, e.target.checked)}
-                          style={{ display: "none" }}
-                        />
-                        Outlet open
-                      </label>
-                    </div>
-
-                    {/* Save Button */}
-                    <button
-                      onClick={handleSave}
-                      disabled={loading || selectedStores.length === 0}
-                      style={{
-                        padding: "10px 24px",
-                        backgroundColor: loading || selectedStores.length === 0 ? "#d1d5db" : platformColor,
-                        color: "#fff",
-                        border: "none",
-                        borderRadius: 6,
-                        fontSize: 15,
-                        fontWeight: 500,
-                        cursor: loading || selectedStores.length === 0 ? "not-allowed" : "pointer",
-                        transition: "background-color 0.2s"
-                      }}
-                    >
-                      {loading ? "Saving..." : "Save"}
-                    </button>
-                  </div>
-
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
-
-      {/* Toast Notification */}
-      {toastMsg && (
-        <div style={{ position: "fixed", bottom: 40, left: "50%", transform: "translateX(-50%)", backgroundColor: "#333", color: "#fff", padding: "12px 24px", borderRadius: 8, zIndex: 9999, boxShadow: "0 4px 6px rgba(0,0,0,0.1)" }}>
-          {toastMsg}
-        </div>
-      )}
-
-      {/* Live Status Panel */}
-      {liveTasks.length > 0 && (
-        <div style={{ marginTop: 40, border: "1px solid #e5e7eb", borderRadius: 8, padding: 20, backgroundColor: "#fff" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-            <h3 style={{ margin: 0, fontSize: 16 }}>Live Queue Status</h3>
-            {liveTasks.some(t => t.status === "failed") && (
-              <button
-                onClick={() => {
-                  const failedStores = liveTasks.filter(t => t.status === "failed").map(t => t.store_id);
-                  alert(`Retrying ${failedStores.length} failed stores...`);
-                  // Future: hook this up to the bulk-update endpoint automatically
-                }}
-                style={{ padding: "6px 12px", backgroundColor: "#fef2f2", color: "#b91c1c", border: "1px solid #fca5a5", borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: "pointer" }}
-              >
-                Retry Failed Stores
-              </button>
-            )}
-          </div>
-          <div style={{ maxHeight: 400, overflowY: "auto", border: "1px solid #e5e7eb", borderRadius: 6 }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
-              <thead style={{ position: "sticky", top: 0, backgroundColor: "#f9fafb", zIndex: 5 }}>
-                <tr style={{ borderBottom: "2px solid #e5e7eb", textAlign: "left", color: "#6b7280" }}>
-                  <th style={{ padding: "12px 16px" }}>Store ID</th>
-                  <th style={{ padding: "12px 16px" }}>Brand</th>
-                  <th style={{ padding: "12px 16px" }}>Status</th>
-                  <th style={{ padding: "12px 16px" }}>Message</th>
-                </tr>
-              </thead>
-              <tbody>
-                {liveTasks.map(t => (
-                  <tr key={t.id} style={{ borderBottom: "1px solid #e5e7eb" }}>
-                    <td style={{ padding: "12px 16px", fontWeight: 500 }}>{t.store_id}</td>
-                    <td style={{ padding: "12px 16px" }}>{t.brand}</td>
-                    <td style={{ padding: "12px 16px" }}>
-                      <span style={{
-                        padding: "4px 8px", borderRadius: 4, fontSize: 12, fontWeight: 500,
-                        backgroundColor: t.status === "success" ? "#dcfce7" : t.status === "failed" ? "#fee2e2" : "#fef3c7",
-                        color: t.status === "success" ? "#166534" : t.status === "failed" ? "#991b1b" : "#92400e"
-                      }}>
-                        {t.status.toUpperCase()}
-                      </span>
-                    </td>
-                    <td style={{ padding: "12px 16px", color: "#6b7280" }}>{t.error_message || "-"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-      {/* Bulk Apply Modal */}
-      {showBulkModal && (
-        <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: "rgba(0,0,0,0.5)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <div style={{ backgroundColor: "#fff", borderRadius: 12, width: 600, maxWidth: "90vw", maxHeight: "90vh", display: "flex", flexDirection: "column" }}>
-            <div style={{ padding: "20px 24px", borderBottom: "1px solid #e5e7eb", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <h2 style={{ margin: 0, fontSize: 18, fontWeight: 600 }}>Bulk Apply Timings</h2>
-              <button onClick={() => setShowBulkModal(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "#6b7280" }}>
-                <X size={20} />
-              </button>
-            </div>
-
-            <div style={{ padding: 24, overflowY: "auto", display: "flex", flexDirection: "column", gap: 24 }}>
-              <div>
-                <h4 style={{ margin: "0 0 12px 0", fontSize: 14, color: "#374151" }}>1. Which days do you want to apply?</h4>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
-                  {DAYS.map(day => (
-                    <label key={day} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14, color: "#4b5563", cursor: "pointer" }}>
-                      <input
-                        type="checkbox"
-                        checked={bulkSelectedDays[day]}
-                        onChange={(e) => setBulkSelectedDays(prev => ({ ...prev, [day]: e.target.checked }))}
-                      />
-                      {day}
-                    </label>
-                  ))}
-                </div>
-              </div>
-
-              <div>
-                <h4 style={{ margin: "0 0 12px 0", fontSize: 14, color: "#374151" }}>2. Select the target stores</h4>
-                <MultiSelect
-                  options={currentStores.map(s => {
-                    const parts = s.name.split(" - ");
-                    const locality = parts.length >= 2 ? parts[0] : s.name;
-                    const bName = parts.length >= 2 ? parts[1] : s.brand;
-                    return {
-                      value: s[currentIdField],
-                      label: `${locality} | ${s[currentIdField]}`,
-                      sublabel: bName
-                    };
-                  })}
-                  selected={bulkSelectedStores}
-                  onChange={setBulkSelectedStores}
-                  placeholder="Select stores to overwrite..."
-                  width="100%"
-                  hasSearch={true}
-                />
-              </div>
-
-              <div>
-                <h4 style={{ margin: "0 0 12px 0", fontSize: 14, color: "#374151" }}>3. Preview of Timings to Apply</h4>
-                <div style={{ padding: 12, backgroundColor: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: 8, fontSize: 13, color: "#4b5563" }}>
-                  <p style={{ margin: "0 0 8px 0", fontStyle: "italic", color: "#6b7280" }}>
-                    The following timings (currently loaded on the main screen) will be copied to all selected stores:
-                  </p>
-                  {DAYS.filter(day => bulkSelectedDays[day]).length === 0 ? (
-                    <div style={{ color: "#ef4444", fontWeight: 500 }}>No days selected. Nothing will be saved!</div>
-                  ) : (
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                      {DAYS.filter(day => bulkSelectedDays[day]).map(day => {
-                        const dayData = timings[day];
-                        if (!dayData.open) {
-                          return <div key={day} style={{ display: "flex", gap: 8 }}><strong style={{ width: 80 }}>{day}:</strong> <span style={{ color: "#ef4444" }}>Closed</span></div>;
-                        }
-                        return (
-                          <div key={day} style={{ display: "flex", gap: 8 }}>
-                            <strong style={{ width: 80 }}>{day}:</strong>
-                            <span>{dayData.slots.map(s => `${s.start || "00:00"} - ${s.end || "00:00"}`).join(", ")}</span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            <div style={{ padding: "16px 24px", borderTop: "1px solid #e5e7eb", display: "flex", justifyContent: "flex-end", gap: 12, backgroundColor: "#f9fafb", borderRadius: "0 0 12px 12px" }}>
-              <button
-                onClick={() => setShowBulkModal(false)}
-                style={{ padding: "8px 16px", backgroundColor: "#fff", border: "1px solid #d1d5db", borderRadius: 6, cursor: "pointer", fontSize: 14, fontWeight: 500 }}
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleBulkSave}
-                disabled={loading || bulkSelectedStores.length === 0}
-                style={{ padding: "8px 16px", backgroundColor: loading ? "#d1d5db" : "#111827", color: "#fff", border: "none", borderRadius: 6, cursor: loading ? "not-allowed" : "pointer", fontSize: 14, fontWeight: 500 }}
-              >
-                {loading ? "Saving..." : "Confirm & Save"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {showAudit && <TimingAuditModal onClose={() => setShowAudit(false)} selectedBrands={selectedBrands} />}
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6, padding: "6px 10px", minHeight: 32, boxSizing: "border-box", border: `1.5px solid ${isOpen ? C.primary : C.border}`, borderRadius: 8, fontSize: 12, fontWeight: 700, color: C.primary }}>
+      <span style={{ display: "flex", alignItems: "center", gap: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{children}</span>
+      <span style={{ fontSize: 10, color: C.muted }}>▼</span>
     </div>
   );
 }
 
+function SlotInput({ label, slot, blockedReason, onChange, onSave }) {
+  const reason = blockedReason || (!(slot.start && slot.end) ? "Enter both times" : slot.start === slot.end ? "Opening and closing can't match" : "");
+  const busy = slot.status === "saving";
+  const clickable = !reason && !busy && slot.status !== "saved";
+  const look = {
+    saving: { bg: "#64748b", text: "Saving…" },
+    saved: { bg: C.ok, text: "Saved" },
+    failed: { bg: C.danger, text: "Retry" },
+  }[slot.status] || { bg: reason ? "#cbd5e1" : "#0a1945", text: "Save" };
+  // Editing a time after a save/failure makes it a fresh, unsaved change again.
+  const edit = patch => onChange({ ...patch, status: "idle", error: "" });
+
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+      <span style={{ fontSize: 12, fontWeight: 700, color: C.muted, width: 18 }}>{label}</span>
+      <input type="time" value={slot.start} disabled={busy} onChange={e => edit({ start: e.target.value })} style={timeInputStyle} aria-label={`${label} opens at`} />
+      <span style={{ fontSize: 12, color: C.muted }}>–</span>
+      <input type="time" value={slot.end} disabled={busy} onChange={e => edit({ end: e.target.value })} style={timeInputStyle} aria-label={`${label} closes at`} />
+      <button
+        type="button"
+        disabled={!clickable}
+        onClick={onSave}
+        title={slot.status === "failed" ? `Failed: ${slot.error}` : reason}
+        style={{
+          padding: "6px 12px", border: "none", borderRadius: 6, fontSize: 12, fontWeight: 600, fontFamily: FONT,
+          background: look.bg, color: "#fff", cursor: clickable ? "pointer" : "default", minWidth: 62,
+        }}
+      >
+        {look.text}
+      </button>
+    </div>
+  );
+}
+
+// One platform's line after the platform box: the day box and the S1 / S2 slots.
+function PlatformLine({ line, today, paused, onChange, onSave }) {
+  const days = line.days ?? [today];
+  const dayLabel = days.length === 0 ? "None" : days.length === DAYS.length ? "All days" : days.length === 1 ? days[0] : `${days.length} days`;
+  // Changing the days means a saved slot no longer matches what was sent.
+  const reset = s => (s.status === "saving" ? s : { ...s, status: "idle", error: "" });
+  const setDays = next => onChange({ days: next, s1: reset(line.s1), s2: reset(line.s2) });
+  const blockedReason = paused ? "Store is paused — resume it from the Status panel" : !days.length ? "Pick at least one day" : "";
+
+  return (
+    <>
+      <MultiSearchableSelect
+        options={DAYS}
+        selectedValues={days}
+        onChange={setDays}
+        placeholder="Day"
+        width={120}
+        customTrigger={(_, isOpen) => <BoxTrigger isOpen={isOpen}>{dayLabel}</BoxTrigger>}
+      />
+      {/* Side by side when there's room, S2 tucks under S1 when there isn't */}
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "8px 16px" }}>
+        <SlotInput label="S1" slot={line.s1} blockedReason={blockedReason} onChange={patch => onChange({ s1: { ...line.s1, ...patch } })} onSave={() => onSave("s1", days)} />
+        <SlotInput label="S2" slot={line.s2} blockedReason={blockedReason} onChange={patch => onChange({ s2: { ...line.s2, ...patch } })} onSave={() => onSave("s2", days)} />
+      </div>
+    </>
+  );
+}
+
+function StoreRow({ store, edit, onEdit, onSave, today, first }) {
+  const isMobile = useIsMobile();
+  const available = PLATFORMS.filter(p => store[p.rid]).map(p => p.name);
+  const selected = PLATFORMS.filter(p => edit.platforms.includes(p.name));
+  const lineFor = name => ({ days: null, s1: EMPTY_SLOT, s2: EMPTY_SLOT, ...edit.lines[name] });
+  const setLine = (name, patch) => onEdit({ lines: { ...edit.lines, [name]: { ...lineFor(name), ...patch } } });
+
+  // One box per line: shows that line's platform logo + RID, and opens the store's
+  // platform picker (every line's box edits the same selection).
+  const platformBox = p => (
+    <MultiSearchableSelect
+      options={available}
+      selectedValues={edit.platforms}
+      onChange={platforms => onEdit({ platforms })}
+      placeholder="Platform"
+      width={150}
+      renderOption={name => (
+        <span title={`${name} ${store[platformByName[name].rid]}`} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <PlatformLogo platform={platformByName[name]} size={18} />{name}
+        </span>
+      )}
+      customTrigger={(_, isOpen) => {
+        if (!p) return <BoxTrigger isOpen={isOpen}>None</BoxTrigger>;
+        const { rid, state, title } = ridStatus(p, store);
+        return (
+          <div title={title}>
+            <BoxTrigger isOpen={isOpen}>
+              <PlatformLogo platform={p} size={16} />
+              {rid}
+              <span style={{ width: 6, height: 6, borderRadius: "50%", flexShrink: 0, background: state === "ok" ? C.ok : state === "off" ? C.danger : "#c3c8d4" }} />
+            </BoxTrigger>
+          </div>
+        );
+      }}
+    />
+  );
+
+  // Fixed columns so every platform line (and every store) lines up: name | platform | day | slots.
+  const lineStyle = isMobile
+    ? { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }
+    : { display: "grid", gridTemplateColumns: "minmax(150px, 260px) 150px 120px minmax(290px, 1fr)", alignItems: "center", gap: 12 };
+  const nameCol = { minWidth: 0, fontSize: 13, fontWeight: 700, color: C.primary, flex: isMobile ? "1 1 100%" : undefined };
+
+  // Always at least one line, keyed by position, so line 1's platform box stays
+  // mounted (and its dropdown open) while platforms are ticked and unticked.
+  const lines = selected.length ? selected : [null];
+
+  return (
+    <div style={{ padding: "10px 14px", borderTop: first ? "none" : `1px solid ${C.borderSoft}` }}>
+      {lines.map((p, i) => (
+        // 2+ platforms: each gets its own full line underneath, with its own day box and slots.
+        <div key={i} style={{ ...lineStyle, marginTop: i ? 8 : 0 }}>
+          <div style={nameCol}>
+            {i === 0 ? storeTitle(store) : ""}
+            {i === 0 && store.paused && (
+              <span style={{ marginLeft: 8, padding: "2px 8px", borderRadius: 10, fontSize: 10, fontWeight: 800, background: "#fffbeb", color: "#b45309", border: "1px solid #fde68a" }}>PAUSED</span>
+            )}
+          </div>
+          {platformBox(p)}
+          {p ? (
+            <PlatformLine
+              line={lineFor(p.name)}
+              today={today}
+              paused={store.paused}
+              onChange={patch => setLine(p.name, patch)}
+              onSave={(slotKey, days) => onSave(p.name, slotKey, days)}
+            />
+          ) : (
+            <span style={{ fontSize: 12, color: C.muted, gridColumn: "3 / -1" }}>{available.length ? "Pick a platform" : "No platform RIDs for this store"}</span>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export default function TimingPage() {
+  const isMobile = useIsMobile();
+  const [stores, setStores] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  // Draft filters (what's ticked in the dropdowns) vs applied filters (what the list shows).
+  const [brands, setBrands] = useState([]);
+  const [platforms, setPlatforms] = useState([]);
+  const [storePicks, setStorePicks] = useState([]);
+  const [applied, setApplied] = useState(null);
+
+  // Per-store edits in the list, keyed by store id:
+  // { platforms: [names], lines: { [platform]: { days, s1: {start, end, status, error}, s2 } } }
+  const [edits, setEdits] = useState({});
+
+  // Bumped after the Status panel adds/deletes/pauses a store, or a save lands, so the
+  // list and the panel's audit refetch.
+  const [storesVersion, setStoresVersion] = useState(0);
+  const [changesVersion, setChangesVersion] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/timing/stores`, { headers: getAuthHeaders() });
+        if (handleApiError(res)) return;
+        const body = await res.json();
+        if (!body.success) throw new Error(body.error || "Failed to load stores");
+        if (!cancelled) setStores(body.stores);
+      } catch (err) {
+        if (!cancelled) setError(err.message);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [storesVersion]);
+
+  // Store dropdown only offers stores under the ticked brands + platforms.
+  const storeOptions = useMemo(
+    () => [...new Set(stores.filter(s => inBrands(s, brands) && onPlatforms(s, platforms)).map(storeOption))],
+    [stores, brands, platforms]
+  );
+
+  // Ticked stores that fall outside a narrowed brand/platform selection don't count.
+  const validStorePicks = useMemo(
+    () => storePicks.filter(p => storeOptions.includes(p)),
+    [storePicks, storeOptions]
+  );
+
+  const results = useMemo(() => {
+    if (!applied) return [];
+    return stores.filter(s =>
+      inBrands(s, applied.brands) &&
+      onPlatforms(s, applied.platforms) &&
+      (!applied.storePicks.length || applied.storePicks.includes(storeOption(s)))
+    );
+  }, [stores, applied]);
+
+  const today = useToday();
+  const baseEdit = (s, existing) => {
+    const first = defaultPlatform(s, applied?.platforms || []);
+    return { platforms: first ? [first] : [], lines: {}, ...existing };
+  };
+  const editFor = s => baseEdit(s, edits[s.id]);
+  const updateEdit = (s, patch) => setEdits(prev => ({ ...prev, [s.id]: { ...baseEdit(s, prev[s.id]), ...patch } }));
+
+  // Functional update of one slot — a save resolves after other edits may have landed.
+  const patchSlot = (s, platform, slotKey, patch) => setEdits(prev => {
+    const e = baseEdit(s, prev[s.id]);
+    const line = { days: null, s1: EMPTY_SLOT, s2: EMPTY_SLOT, ...e.lines[platform] };
+    return { ...prev, [s.id]: { ...e, lines: { ...e.lines, [platform]: { ...line, [slotKey]: { ...line[slotKey], ...patch } } } } };
+  });
+
+  // S1/S2 Save → the platform, via the server (which records it in the audit log).
+  const saveSlot = async (s, platform, slotKey, days) => {
+    const slot = { ...EMPTY_SLOT, ...edits[s.id]?.lines?.[platform]?.[slotKey] };
+    patchSlot(s, platform, slotKey, { status: "saving", error: "" });
+    try {
+      const res = await fetch(`${API_BASE}/api/timing/changes`, {
+        method: "POST",
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ storeId: s.id, platform, slot: slotKey.toUpperCase(), days, start: slot.start, end: slot.end }),
+      });
+      if (handleApiError(res)) return;
+      const body = await res.json();
+      patchSlot(s, platform, slotKey, body.success ? { status: "saved" } : { status: "failed", error: body.error || "Failed" });
+    } catch (err) {
+      patchSlot(s, platform, slotKey, { status: "failed", error: err.message });
+    }
+    setChangesVersion(v => v + 1);
+  };
+
+  const handleApply = () => {
+    setApplied({ brands, platforms, storePicks: validStorePicks });
+    setEdits({});
+  };
+  const handleClear = () => {
+    setBrands([]);
+    setPlatforms([]);
+    setStorePicks([]);
+    setApplied(null);
+    setEdits({});
+  };
+
+  const platformTriggerValue = platforms.length === 0 ? "None" : (
+    <span style={{ display: "flex", gap: 4 }}>
+      {PLATFORMS.filter(p => platforms.includes(p.name)).map(p => <PlatformLogo key={p.name} platform={p} size={20} />)}
+    </span>
+  );
+
+  return (
+    <div style={{ minHeight: "100%", background: "#fff", fontFamily: FONT, color: C.text }}>
+      {/* Filter Bar — same look as the Toggle tab's */}
+      <div style={{
+        display: "flex",
+        alignItems: isMobile ? "stretch" : "center",
+        flexDirection: isMobile ? "column" : "row",
+        background: "#fff",
+        border: "1px solid #e2e8f0",
+        borderRadius: 8,
+        padding: isMobile ? "10px 12px" : "12px 20px",
+        boxShadow: "0 2px 8px rgba(0,0,0,0.02)",
+        gap: isMobile ? 8 : 16,
+      }}>
+        <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", flex: 1, minWidth: 0, gap: isMobile ? 6 : 0 }}>
+          <MultiSearchableSelect options={BRANDS} selectedValues={brands} onChange={setBrands} placeholder="Brand"
+            customTrigger={(label) => <FilterItem icon={<IconBrand />} label="Brand" value={label === "Brand" ? "None" : label} />} width="100%" />
+          {!isMobile && <Divider />}
+          <MultiSearchableSelect options={PLATFORM_NAMES} selectedValues={platforms} onChange={setPlatforms} placeholder="Platform"
+            renderOption={name => (
+              <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <PlatformLogo platform={platformByName[name]} size={20} />{name}
+              </span>
+            )}
+            customTrigger={() => <FilterItem icon={<IconPlatform />} label="Platform" value={platformTriggerValue} />} width="100%" />
+          {!isMobile && <Divider />}
+          <MultiSearchableSelect options={storeOptions} selectedValues={validStorePicks} onChange={setStorePicks} placeholder="Store"
+            customTrigger={(label) => <FilterItem icon={<IconStore />} label="Store" value={label === "Store" ? "None" : label} />} width="100%" />
+        </div>
+
+        {!isMobile && <Divider />}
+        <div style={{ display: "flex", gap: isMobile ? 8 : 12 }}>
+          <button onClick={handleClear} style={buttonStyle}>Clear</button>
+          <button onClick={handleApply} disabled={loading} style={{ ...buttonStyle, opacity: loading ? 0.6 : 1 }}>Apply</button>
+        </div>
+      </div>
+
+      <div style={{ marginTop: 18 }}>
+        {error ? (
+          <div style={{ color: C.danger, fontSize: 13 }}>{error}</div>
+        ) : !applied ? null : results.length === 0 ? (
+          <div style={{ color: C.muted, fontSize: 13 }}>No stores match these filters.</div>
+        ) : (
+          <>
+            <div style={{ fontSize: 12, color: C.muted, marginBottom: 8 }}>{results.length} stores</div>
+            {/* No overflow:hidden here — it would clip each row's Days dropdown */}
+            <div style={{ border: `1px solid ${C.border}`, borderRadius: 10 }}>
+              {results.map((s, i) => (
+                <StoreRow
+                  key={s.id}
+                  store={s}
+                  first={i === 0}
+                  today={today}
+                  edit={editFor(s)}
+                  onEdit={patch => updateEdit(s, patch)}
+                  onSave={(platform, slotKey, days) => saveSlot(s, platform, slotKey, days)}
+                />
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+
+      <TimingSidebar
+        stores={stores}
+        brands={BRANDS}
+        changesVersion={changesVersion}
+        onStoresChanged={() => setStoresVersion(v => v + 1)}
+        onChangesChanged={() => setChangesVersion(v => v + 1)}
+      />
+    </div>
+  );
+}
+
+const buttonStyle = { padding: "10px 24px", background: "#0a1945", color: "#fff", border: "none", borderRadius: 6, fontWeight: 600, fontSize: 14, cursor: "pointer", boxShadow: "0 2px 4px rgba(0,0,0,0.1)" };
+
+const timeInputStyle = { padding: "5px 6px", border: `1.5px solid ${C.border}`, borderRadius: 8, fontSize: 12, color: C.primary, fontFamily: FONT, outline: "none" };
+
+function FilterItem({ icon, label, value }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 12, flex: 1, padding: "0 16px", cursor: "pointer", minWidth: 0 }}>
+      <div style={{ color: "#1e293b" }}>{icon}</div>
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", minWidth: 0 }}>
+        <span style={{ fontSize: 12, fontWeight: 700, color: "#1e293b", marginBottom: 2 }}>{label}</span>
+        <span style={{ fontSize: 13, fontWeight: 600, color: "#475569", maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{value}</span>
+      </div>
+    </div>
+  );
+}
+
+function Divider() {
+  return <div style={{ width: 1, height: 40, background: "#e2e8f0", flexShrink: 0 }} />;
+}
+
+function IconBrand() {
+  return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"></path><line x1="7" y1="7" x2="7.01" y2="7"></line></svg>;
+}
+function IconPlatform() {
+  return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>;
+}
+function IconStore() {
+  return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 9l1-5h16l1 5"></path><path d="M4 9v11h16V9"></path><path d="M9 20v-6h6v6"></path></svg>;
+}
