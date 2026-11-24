@@ -439,10 +439,16 @@ async function tryVerifyAction(ids, creds, brandKey) {
       if (response.status === 200) return { valid: true };
       if (response.status === 429) {
         errors.push(`${id}: UrbanPiper is rate-limited right now — try again in a minute.`);
+        actionUnsupported = true; // still worth trying the fallback check instead of giving up
         continue;
       }
       const text = await response.text();
-      if (response.status === 404 && text.trim().startsWith('<')) actionUnsupported = true;
+      // Any non-200 here — not just the originally-observed 404+HTML case — means
+      // "verify" didn't give us a real yes/no, so always fall through to the proven
+      // enable/disable check below rather than trusting verify's failure as the final
+      // word. A genuinely invalid ref_id still ends up correctly rejected: the
+      // fallback's own enable/disable call fails too, for its own clear reason.
+      actionUnsupported = true;
       errors.push(`${id}: ${text.slice(0, 200)}`);
     } catch (err) {
       // A timeout/network failure here is just as uninformative as the 404+HTML case
