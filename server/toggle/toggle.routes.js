@@ -138,18 +138,20 @@ export const UP_BRANDS = {
     biz_id   : process.env.UP_BIZ_ID_EATFIT,
     _counter : 0,
   },
-  // 2 keys, round-robin — mirrors eatfit's rotation pattern. Added after the original
-  // single cake_zone key (biz_adm_zzXEiLApvfel) started getting hard-401'd by
-  // UrbanPiper on 2026-11-24 with no change on our end — confirmed live, repeatedly,
-  // against both a brand-new store and an already-live one. Two independent keys
-  // means a future single-key revocation degrades this account instead of fully
-  // taking it down.
+  // Primary + failover, NOT round-robin — unlike eatfit's `.keys` (every key presumed
+  // equally valid, load-balanced across on purpose), cake_zone should always use key 6
+  // first. Keys 4/5 (UP_USERNAME/APIKEY_CAKEZONE and _2) only get used if 6 itself
+  // starts failing auth — same original keys added after UrbanPiper hard-401'd the
+  // single old cake_zone key on 2026-11-24 with no change on our end. _activeIndex is
+  // sticky: it only ever advances forward on a real 401/403 from the currently active
+  // key (see advanceCredPool below), never round-robins or resets back to 0 on its own.
   cake_zone: {
-    keys: [
-      { username: process.env.UP_USERNAME_CAKEZONE, apikey: process.env.UP_APIKEY_CAKEZONE },
-      { username: process.env.UP_USERNAME_CAKEZONE_2, apikey: process.env.UP_APIKEY_CAKEZONE_2 },
+    credPool: [
+      { username: process.env.UP_USERNAME_CAKEZONE_6, apikey: process.env.UP_APIKEY_CAKEZONE_6 }, // primary
+      { username: process.env.UP_USERNAME_CAKEZONE, apikey: process.env.UP_APIKEY_CAKEZONE },       // fallback 1
+      { username: process.env.UP_USERNAME_CAKEZONE_2, apikey: process.env.UP_APIKEY_CAKEZONE_2 },   // fallback 2
     ],
-    _counter : 0,
+    _activeIndex: 0,
   },
   olio: {
     username : process.env.UP_USERNAME_OLIO,
@@ -245,7 +247,10 @@ export async function performToggleAPI(location_id, action, brand, priority = fa
   const brandConfig = UP_BRANDS[brandKey];
   if (!brandConfig) return { success: false, error: `Unknown brand: ${brand}` };
 
-  const creds = resolveBrandCreds(brandConfig);
+  // Mutable: a credPool brand (cake_zone) can fail over to the next key mid-call (see
+  // the 401/403 handling below), so every subsequent id in this same call — and every
+  // future call, since brandConfig._activeIndex is shared module state — picks that up.
+  let creds = resolveBrandCreds(brandConfig);
 
   const ids = String(location_id).split(',').map(s => s.trim()).filter(Boolean);
   let successCount = 0;
@@ -294,11 +299,17 @@ export async function performToggleAPI(location_id, action, brand, priority = fa
       console.log("[UP] Raw Response for", id, ":", finalStatus, finalResponseText);
 
       // 401/403 means the API credentials themselves are the problem — invalid,
-      // revoked, or expired — not that this one store/ID is wrong. Every future call
-      // for this brand will fail the same way until someone fixes the credentials, so
-      // this is worth a distinct, urgent alert rather than looking like an ordinary
-      // per-store failure.
+      // revoked, or expired — not that this one store/ID is wrong. For a credPool
+      // brand (cake_zone), fail over to the next key and retry this same call instead
+      // of giving up — only alert once every key in the pool has been tried and failed.
+      // For every other brand, every future call will fail the same way until someone
+      // fixes the credentials, so it's worth a distinct, urgent alert rather than
+      // looking like an ordinary per-store failure.
       if (finalStatus === 401 || finalStatus === 403) {
+        if (advanceCredPool(brandConfig)) {
+          creds = resolveBrandCreds(brandConfig);
+          continue; // retry the same id/platforms with the newly active credential
+        }
         raiseAlert(`UP_AUTH_ERROR:${brand}`, 'CRITICAL',
           `UrbanPiper rejected our API credentials for "${brand}" (HTTP ${finalStatus}). Every toggle for this brand will fail until this is fixed.`,
           finalResponseText).catch(() => {});
@@ -409,11 +420,12 @@ async function waitForRateLimitRoom(brandKey) {
   }
 }
 
-async function tryVerifyAction(ids, creds, brandKey) {
+async function tryVerifyAction(ids, brandConfig, brandKey) {
   const errors = [];
   let actionUnsupported = false;
   for (const id of ids) {
     await waitForRateLimitRoom(brandKey);
+    let creds = resolveBrandCreds(brandConfig);
     try {
       let response = await fetchWithTimeout(UP_LOCATION_URL, {
         method: "POST",
@@ -424,6 +436,21 @@ async function tryVerifyAction(ids, creds, brandKey) {
         },
         body: JSON.stringify({ location_ref_id: String(id), action: "verify", platforms: platformsForBrand(brandKey) }),
       });
+      // A real UrbanPiper 401/403 means the active credential itself is bad — fail over
+      // to the next credPool key (cake_zone) and retry this same id before treating it
+      // as a real verify failure, same handling performToggleAPI already has.
+      if ((response.status === 401 || response.status === 403) && advanceCredPool(brandConfig)) {
+        creds = resolveBrandCreds(brandConfig);
+        response = await fetchWithTimeout(UP_LOCATION_URL, {
+          method: "POST",
+          headers: {
+            "Authorization": `apikey ${creds.username}:${creds.apikey}`,
+            "Content-Type": "application/json",
+            ...(creds.biz_id ? { "x-upr-biz-id": creds.biz_id } : {})
+          },
+          body: JSON.stringify({ location_ref_id: String(id), action: "verify", platforms: platformsForBrand(brandKey) }),
+        });
+      }
       // A real UrbanPiper 429 here used to fall straight into the generic "not found"
       // error below — misleading, since the store is very likely fine, UrbanPiper is
       // just busy. One wait-and-retry, same pattern performToggleAPI already uses.
@@ -477,12 +504,13 @@ async function tryVerifyAction(ids, creds, brandKey) {
 // is several brand storefronts sharing one kitchen, and stopping early would leave the
 // rest of the group untouched (never reconciled to the declared status) instead of
 // matching performToggleAPI's behavior, which always attempts every id in the group.
-async function tryStatusAction(ids, creds, currentStatus, brandKey) {
+async function tryStatusAction(ids, brandConfig, currentStatus, brandKey) {
   const action = currentStatus === 'online' ? 'enable' : 'disable';
   const errors = [];
   let anySucceeded = false;
   for (const id of ids) {
     await waitForRateLimitRoom(brandKey);
+    let creds = resolveBrandCreds(brandConfig);
     try {
       let response = await fetchWithTimeout(UP_LOCATION_URL, {
         method: "POST",
@@ -493,6 +521,18 @@ async function tryStatusAction(ids, creds, currentStatus, brandKey) {
         },
         body: JSON.stringify({ location_ref_id: String(id), action, platforms: platformsForBrand(brandKey) }),
       });
+      if ((response.status === 401 || response.status === 403) && advanceCredPool(brandConfig)) {
+        creds = resolveBrandCreds(brandConfig);
+        response = await fetchWithTimeout(UP_LOCATION_URL, {
+          method: "POST",
+          headers: {
+            "Authorization": `apikey ${creds.username}:${creds.apikey}`,
+            "Content-Type": "application/json",
+            ...(creds.biz_id ? { "x-upr-biz-id": creds.biz_id } : {})
+          },
+          body: JSON.stringify({ location_ref_id: String(id), action, platforms: platformsForBrand(brandKey) }),
+        });
+      }
       if (response.status === 429) {
         await new Promise(r => setTimeout(r, 61000));
         response = await fetchWithTimeout(UP_LOCATION_URL, {
@@ -523,32 +563,50 @@ async function tryStatusAction(ids, creds, currentStatus, brandKey) {
   return { valid: false, error: `Not found in UrbanPiper. ${errors.join(' | ')}` };
 }
 
-// Resolves a brand's UP_BRANDS entry to a flat {username, apikey, biz_id} credential —
-// picks the next key round-robin for a brand with a `.keys` rotation pool (eatfit,
-// cake_zone), or returns the entry as-is for a brand with a single flat credential.
-// Shared by every caller that needs to actually authenticate a UrbanPiper call, so a
-// brand can never be migrated to `.keys` in one place and missed in another (that gap
-// is exactly what silently broke Add Store's verify check for eatfit, unnoticed until
-// cake_zone was moved to the same pattern).
+// Resolves a brand's UP_BRANDS entry to a flat {username, apikey, biz_id} credential.
+// Three shapes: `.credPool` (sticky primary + failover — only ever uses the key at
+// _activeIndex, advanced by advanceCredPool on a real auth failure, never round-robin),
+// `.keys` (eatfit's rotation — every key presumed equally valid, load-balanced across
+// on purpose), or a single flat credential used as-is. Shared by every caller that
+// needs to actually authenticate a UrbanPiper call, so a brand can never be migrated to
+// one of these shapes in one place and missed in another (that gap is exactly what
+// silently broke Add Store's verify check for eatfit, unnoticed until cake_zone was
+// moved to a similar pattern).
 function resolveBrandCreds(brandConfig) {
-  if (!brandConfig.keys) return brandConfig;
-  const picked = brandConfig.keys[brandConfig._counter % brandConfig.keys.length];
-  brandConfig._counter++;
-  return { ...picked, biz_id: brandConfig.biz_id };
+  if (brandConfig.credPool) return { ...brandConfig.credPool[brandConfig._activeIndex], biz_id: brandConfig.biz_id };
+  if (brandConfig.keys) {
+    const picked = brandConfig.keys[brandConfig._counter % brandConfig.keys.length];
+    brandConfig._counter++;
+    return { ...picked, biz_id: brandConfig.biz_id };
+  }
+  return brandConfig;
+}
+
+// Called when a call using the brand's currently active credPool key gets a real
+// 401/403 back from UrbanPiper — advances the sticky pointer to the next key in the
+// pool so every subsequent call (this one's retry, and every future call until someone
+// fixes the old key) stops hammering a revoked credential. Never wraps back to an
+// earlier key on its own — only a restart (fresh _activeIndex: 0) or fixing the env var
+// in place resets it. Returns false once the pool is exhausted, so the caller falls
+// through to its normal failure handling instead of retrying forever.
+function advanceCredPool(brandConfig) {
+  if (!brandConfig.credPool || brandConfig._activeIndex >= brandConfig.credPool.length - 1) return false;
+  brandConfig._activeIndex++;
+  console.warn(`[UP] Credential at index ${brandConfig._activeIndex - 1} failed auth — failing over to index ${brandConfig._activeIndex}`);
+  return true;
 }
 
 async function verifyLocationExists(location_id, brand, currentStatus) {
   const brandKey = normalizeBrandKey(brand);
   const brandConfig = UP_BRANDS[brandKey];
   if (!brandConfig) return { valid: false, error: `Unknown brand "${brand}" — no UrbanPiper credentials configured for it.` };
-  const creds = resolveBrandCreds(brandConfig);
 
   const ids = String(location_id).split(',').map(s => s.trim()).filter(Boolean);
 
-  const verifyResult = await tryVerifyAction(ids, creds, brandKey);
+  const verifyResult = await tryVerifyAction(ids, brandConfig, brandKey);
   if (verifyResult.valid || !verifyResult.actionUnsupported) return verifyResult;
 
-  return await tryStatusAction(ids, creds, currentStatus, brandKey);
+  return await tryStatusAction(ids, brandConfig, currentStatus, brandKey);
 }
 
 // ─── SINGLE TOGGLE ENDPOINT ──────────────────────────────────
