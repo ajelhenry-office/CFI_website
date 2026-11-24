@@ -4,6 +4,7 @@ import { API_BASE, getAuthHeaders, handleApiError } from "../../api";
 import MultiSearchableSelect from "../toggle/MultiSearchableSelect";
 import useIsMobile from "../../useIsMobile";
 import TimingSidebar from "./TimingSidebar";
+import TimingConnectionAlerts from "./TimingConnectionAlerts";
 import PlatformLogo from "./PlatformLogo";
 import { BRANDS, PLATFORMS, PLATFORM_NAMES, platformByName, DAYS, storeTitle } from "./platforms";
 
@@ -283,22 +284,101 @@ export default function TimingPage() {
   });
 
   // S1/S2 Save → the platform, via the server (which records it in the audit log).
-  const saveSlot = async (s, platform, slotKey, days) => {
-    const slot = { ...EMPTY_SLOT, ...edits[s.id]?.lines?.[platform]?.[slotKey] };
+  // `times` lets Save all pass the copied times directly (state may not have caught up);
+  // resolves true when the platform accepted the change.
+  const saveSlot = async (s, platform, slotKey, days, times) => {
+    const slot = times || { ...EMPTY_SLOT, ...edits[s.id]?.lines?.[platform]?.[slotKey] };
     patchSlot(s, platform, slotKey, { status: "saving", error: "" });
+    let ok = false;
     try {
       const res = await fetch(`${API_BASE}/api/timing/changes`, {
         method: "POST",
         headers: getAuthHeaders(),
         body: JSON.stringify({ storeId: s.id, platform, slot: slotKey.toUpperCase(), days, start: slot.start, end: slot.end }),
       });
-      if (handleApiError(res)) return;
+      if (handleApiError(res)) return false;
       const body = await res.json();
-      patchSlot(s, platform, slotKey, body.success ? { status: "saved" } : { status: "failed", error: body.error || "Failed" });
+      ok = !!body.success;
+      patchSlot(s, platform, slotKey, ok ? { status: "saved" } : { status: "failed", error: body.error || "Failed" });
     } catch (err) {
       patchSlot(s, platform, slotKey, { status: "failed", error: err.message });
     }
     setChangesVersion(v => v + 1);
+    return ok;
+  };
+
+  // ── Same timing for all listed stores ───────────────────────
+  // One platform/day/S1/S2 choice copied into every listed store (to review row by row),
+  // or copied and saved for all of them at once.
+  const [common, setCommon] = useState({ platforms: [], days: null, s1: { start: "", end: "" }, s2: { start: "", end: "" } });
+  const [bulk, setBulk] = useState(null); // { running, done, total, failed }
+  const commonDays = common.days ?? [today];
+  const filledSlots = ["s1", "s2"].filter(k => common[k].start && common[k].end);
+  const commonPlatforms = PLATFORMS.filter(p => results.some(s => s[p.rid]));
+
+  // Which listed stores take which platforms, and the saves that adds up to (cheap: one
+  // pass over the listed stores).
+  const plan = (() => {
+    const stores = [];
+    let paused = 0, noRid = 0;
+    for (const s of results) {
+      const plats = common.platforms.filter(p => s[platformByName[p].rid]);
+      if (!plats.length) { noRid++; continue; }
+      if (s.paused) { paused++; continue; }
+      stores.push({ store: s, plats });
+    }
+    const jobs = stores.flatMap(({ store, plats }) => plats.flatMap(p => filledSlots.map(k => ({ store, platform: p, slotKey: k }))));
+    return { stores, jobs, paused, noRid };
+  })();
+
+  const commonProblem = !common.platforms.length ? "Pick at least one platform"
+    : !commonDays.length ? "Pick at least one day"
+    : !filledSlots.length ? "Enter S1 and/or S2 times"
+    : filledSlots.some(k => common[k].start === common[k].end) ? "Opening and closing can't match"
+    : !plan.stores.length ? "None of the listed stores can take these platforms"
+    : "";
+
+  const copyToAll = () => {
+    setEdits(prev => {
+      const next = { ...prev };
+      for (const { store, plats } of plan.stores) {
+        const e = baseEdit(store, prev[store.id]);
+        const lines = { ...e.lines };
+        for (const p of plats) {
+          const line = { days: null, s1: EMPTY_SLOT, s2: EMPTY_SLOT, ...lines[p] };
+          lines[p] = {
+            ...line,
+            days: commonDays,
+            s1: filledSlots.includes("s1") ? { ...EMPTY_SLOT, ...common.s1 } : line.s1,
+            s2: filledSlots.includes("s2") ? { ...EMPTY_SLOT, ...common.s2 } : line.s2,
+          };
+        }
+        next[store.id] = { ...e, platforms: plats, lines };
+      }
+      return next;
+    });
+  };
+
+  const saveAll = async () => {
+    const what = filledSlots.map(k => `${k.toUpperCase()} ${common[k].start}–${common[k].end}`).join(" and ");
+    const dayText = commonDays.length === DAYS.length ? "all days" : commonDays.join(", ");
+    if (!confirm(`Save ${what} on ${common.platforms.join(" + ")} for ${dayText} to ${plan.stores.length} stores?\n\nThat's ${plan.jobs.length} changes on the live platforms.`)) return;
+    copyToAll();
+    const jobs = plan.jobs;
+    let done = 0, failed = 0, next = 0;
+    setBulk({ running: true, done, total: jobs.length, failed });
+    // A few at a time — fast enough, without hammering Swiggy/Zomato.
+    const worker = async () => {
+      while (next < jobs.length) {
+        const { store, platform, slotKey } = jobs[next++];
+        const ok = await saveSlot(store, platform, slotKey, commonDays, { ...EMPTY_SLOT, ...common[slotKey] });
+        done++;
+        if (!ok) failed++;
+        setBulk({ running: true, done, total: jobs.length, failed });
+      }
+    };
+    await Promise.all([worker(), worker(), worker()]);
+    setBulk({ running: false, done, total: jobs.length, failed });
   };
 
   const handleApply = () => {
@@ -363,6 +443,75 @@ export default function TimingPage() {
           <div style={{ color: C.muted, fontSize: 13 }}>No stores match these filters.</div>
         ) : (
           <>
+            {/* Same timing for all listed stores */}
+            <div style={{ border: `1.5px dashed ${C.border}`, borderRadius: 10, padding: "12px 14px", marginBottom: 14, background: "#f8faff" }}>
+              <div style={{ fontSize: 12.5, fontWeight: 800, color: C.primary, marginBottom: 8 }}>Same timing for all {results.length} stores</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                <MultiSearchableSelect
+                  options={commonPlatforms.map(p => p.name)}
+                  selectedValues={common.platforms}
+                  onChange={platforms => setCommon(c => ({ ...c, platforms }))}
+                  placeholder="Platform"
+                  width={150}
+                  renderOption={name => (
+                    <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <PlatformLogo platform={platformByName[name]} size={18} />{name}
+                    </span>
+                  )}
+                  customTrigger={(_, isOpen) => (
+                    <BoxTrigger isOpen={isOpen}>
+                      {common.platforms.length
+                        ? PLATFORMS.filter(p => common.platforms.includes(p.name)).map(p => <PlatformLogo key={p.name} platform={p} size={18} />)
+                        : "Platform: none"}
+                    </BoxTrigger>
+                  )}
+                />
+                <MultiSearchableSelect
+                  options={DAYS}
+                  selectedValues={commonDays}
+                  onChange={days => setCommon(c => ({ ...c, days }))}
+                  placeholder="Day"
+                  width={130}
+                  customTrigger={(_, isOpen) => (
+                    <BoxTrigger isOpen={isOpen}>
+                      {commonDays.length === 0 ? "Days: none" : commonDays.length === DAYS.length ? "All days" : commonDays.length === 1 ? commonDays[0] : `${commonDays.length} days`}
+                    </BoxTrigger>
+                  )}
+                />
+                {["s1", "s2"].map(k => (
+                  <div key={k} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: C.muted }}>{k.toUpperCase()}</span>
+                    <input type="time" value={common[k].start} onChange={e => setCommon(c => ({ ...c, [k]: { ...c[k], start: e.target.value } }))} style={timeInputStyle} aria-label={`All stores ${k.toUpperCase()} opens at`} />
+                    <span style={{ fontSize: 12, color: C.muted }}>–</span>
+                    <input type="time" value={common[k].end} onChange={e => setCommon(c => ({ ...c, [k]: { ...c[k], end: e.target.value } }))} style={timeInputStyle} aria-label={`All stores ${k.toUpperCase()} closes at`} />
+                  </div>
+                ))}
+                <div style={{ display: "flex", gap: 8, marginLeft: "auto" }}>
+                  <button type="button" disabled={!!commonProblem || bulk?.running} onClick={copyToAll} title={commonProblem || "Fill these settings into every listed store, to review before saving"}
+                    style={{ ...smallActionStyle, background: "#fff", color: "#0a1945", border: "1.5px solid #0a1945", opacity: commonProblem || bulk?.running ? 0.5 : 1 }}>
+                    Copy to all
+                  </button>
+                  <button type="button" disabled={!!commonProblem || bulk?.running} onClick={saveAll} title={commonProblem || "Copy and save for every listed store now"}
+                    style={{ ...smallActionStyle, opacity: commonProblem || bulk?.running ? 0.5 : 1 }}>
+                    {bulk?.running ? `Saving ${bulk.done}/${bulk.total}…` : "Save all"}
+                  </button>
+                </div>
+              </div>
+              <div style={{ marginTop: 8, fontSize: 11.5, color: commonProblem ? C.muted : C.text }}>
+                {commonProblem || `${plan.jobs.length} change${plan.jobs.length === 1 ? "" : "s"} across ${plan.stores.length} stores`}
+                {!commonProblem && (plan.noRid > 0 || plan.paused > 0) && (
+                  <span style={{ color: C.muted }}>
+                    {" · skipped "}{[plan.noRid && `${plan.noRid} without a ${common.platforms.join("/")} RID`, plan.paused && `${plan.paused} paused`].filter(Boolean).join(", ")}
+                  </span>
+                )}
+                {bulk && !bulk.running && (
+                  <span style={{ marginLeft: 8, fontWeight: 700, color: bulk.failed ? "#b02a37" : "#1e7e34" }}>
+                    Done: {bulk.done - bulk.failed} saved{bulk.failed ? `, ${bulk.failed} failed — see Status → Failed` : ""}
+                  </span>
+                )}
+              </div>
+            </div>
+
             <div style={{ fontSize: 12, color: C.muted, marginBottom: 8 }}>{results.length} stores</div>
             {/* No overflow:hidden here — it would clip each row's Days dropdown */}
             <div style={{ border: `1px solid ${C.border}`, borderRadius: 10 }}>
@@ -382,6 +531,8 @@ export default function TimingPage() {
         )}
       </div>
 
+      <TimingConnectionAlerts />
+
       <TimingSidebar
         stores={stores}
         brands={BRANDS}
@@ -394,6 +545,8 @@ export default function TimingPage() {
 }
 
 const buttonStyle = { padding: "10px 24px", background: "#0a1945", color: "#fff", border: "none", borderRadius: 6, fontWeight: 600, fontSize: 14, cursor: "pointer", boxShadow: "0 2px 4px rgba(0,0,0,0.1)" };
+
+const smallActionStyle = { padding: "7px 14px", background: "#0a1945", color: "#fff", border: "none", borderRadius: 6, fontWeight: 700, fontSize: 12, fontFamily: FONT, cursor: "pointer" };
 
 const timeInputStyle = { padding: "5px 6px", border: `1.5px solid ${C.border}`, borderRadius: 8, fontSize: 12, color: C.primary, fontFamily: FONT, outline: "none" };
 

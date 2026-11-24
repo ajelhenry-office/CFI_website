@@ -2,7 +2,7 @@ import express from "express";
 import { pool } from "../ratings/db.js";
 import { listConnections } from "./sessionStore.js";
 import { runTimingConnectionCheck } from "./connectionCheck.js";
-import { listStores, addStore, deleteStore, setStorePaused } from "./storeMap.js";
+import { listStores, addStore, deleteStore, setStorePaused, storesOnConnection } from "./storeMap.js";
 import { applyTimingChange, listTimingChanges, retryTimingChange } from "./timingChanges.js";
 
 const router = express.Router();
@@ -179,7 +179,12 @@ function canManageTiming(req, res, next) {
 
 router.get("/timing/connections", canManageTiming, async (req, res) => {
   try {
-    res.json({ success: true, connections: await listConnections() });
+    const connections = await listConnections();
+    // Anything not connected carries the brands/stores it affects, for the tab's alerts.
+    for (const c of connections) {
+      if (c.status !== "connected") c.affected = await storesOnConnection(c.platform, c.account);
+    }
+    res.json({ success: true, connections });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }

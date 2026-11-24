@@ -4,7 +4,7 @@
 // with phone + password; a dead Zomato session needs a human (2-step verification),
 // so it raises an alert instead.
 
-import { getSession, saveSession, recordCheck } from "./sessionStore.js";
+import { getSession, saveSession, recordCheck, getConnection } from "./sessionStore.js";
 import { getZomatoOutlets, ZOMATO_ACCOUNT } from "./zomatoSession.js";
 import { loginSwiggy, checkSwiggy, SWIGGY_ACCOUNTS } from "./swiggySession.js";
 import { raiseAlert, resolveAlert } from "../alerts/alertService.js";
@@ -16,7 +16,17 @@ const ALERT_ROLES = ["super_admin"];
 async function checkZomato() {
   const category = `TIMING_SESSION:zomato:${ZOMATO_ACCOUNT}`;
   try {
+    const previous = await getConnection("zomato", ZOMATO_ACCOUNT);
     const outlets = await getZomatoOutlets();
+    // Same email can be a different Zomato user with far fewer outlets (857 vs 140) —
+    // a sudden big drop means the session landed on the wrong account.
+    const before = previous?.outlet_count;
+    if (before >= 50 && outlets.length < before * 0.7) {
+      const message = `Zomato now sees ${outlets.length} outlets instead of ${before} — the saved login may have switched to a different Zomato account`;
+      await recordCheck("zomato", ZOMATO_ACCOUNT, { status: "changed", outletCount: outlets.length, error: message });
+      await raiseAlert(category, "CRITICAL", `${message}. Log in again with server/timing/zomato_login.py ("Continue with Email").`, null, ALERT_ROLES);
+      return { platform: "zomato", account: ZOMATO_ACCOUNT, status: "changed", outlets: outlets.length };
+    }
     await recordCheck("zomato", ZOMATO_ACCOUNT, { status: "connected", outletCount: outlets.length });
     await resolveAlert(category, "The Zomato timing session is working again.", ALERT_ROLES);
     return { platform: "zomato", account: ZOMATO_ACCOUNT, status: "connected", outlets: outlets.length };

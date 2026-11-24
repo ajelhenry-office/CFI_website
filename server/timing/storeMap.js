@@ -134,6 +134,22 @@ export async function listStores(brand) {
   return rows;
 }
 
+// Brands and store counts that depend on one platform login — for the Timing tab's
+// "this connection has a problem" alerts. Swiggy stores are tied to an account by the
+// last successful link refresh (s_account).
+export async function storesOnConnection(platform, account) {
+  await ensureStoreTable();
+  const where = platform === "zomato" ? "z_res_id IS NOT NULL"
+    : platform === "swiggy" ? "s_res_id IS NOT NULL AND s_account = $1"
+    : "false";
+  const { rows } = await pool.query(`
+    SELECT brand_name, initcap(lower(coalesce(sub_brand_name, brand_name))) AS sub_brand, count(*)::int AS stores
+    FROM timing_stores WHERE ${where}
+    GROUP BY 1, 2 ORDER BY 3 DESC
+  `, platform === "swiggy" ? [String(account)] : []);
+  return rows;
+}
+
 export async function getStore(id) {
   await ensureStoreTable();
   const { rows } = await pool.query(`SELECT * FROM timing_stores WHERE id = $1`, [id]);

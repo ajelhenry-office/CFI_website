@@ -4,9 +4,9 @@
 // kept for 48 hours, then deleted automatically.
 
 import { pool } from "../ratings/db.js";
-import { getSession, saveSession } from "./sessionStore.js";
+import { getSession, saveSession, recordCheck } from "./sessionStore.js";
 import { getStore } from "./storeMap.js";
-import { updateZomatoSlot } from "./zomatoSession.js";
+import { updateZomatoSlot, ZOMATO_ACCOUNT } from "./zomatoSession.js";
 import { loginSwiggy, updateSwiggySlot } from "./swiggySession.js";
 
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
@@ -90,6 +90,21 @@ async function pushToPlatform(store, platform, slot, days, start, end) {
   throw new Error(`${platform} timing changes aren't connected yet`);
 }
 
+// A save that finds a dead login marks that connection straight away, so the Timing tab
+// shows the alert now rather than after the next daily check. Swiggy only gets here once
+// its automatic re-login has also failed (e.g. the password changed).
+async function flagConnection(store, platform, err) {
+  try {
+    if (platform === "Zomato" && err.message.startsWith("SESSION_EXPIRED")) {
+      await recordCheck("zomato", ZOMATO_ACCOUNT, { status: "expired", error: err.message });
+    } else if (platform === "Swiggy" && store.s_account && /^SESSION_EXPIRED|login/i.test(err.message)) {
+      await recordCheck("swiggy", store.s_account, { status: "error", error: err.message });
+    }
+  } catch (e) {
+    console.error("[TIMING CHANGE] couldn't flag connection:", e.message);
+  }
+}
+
 // Returns the timing_changes row (status success | failed). Validation problems and
 // paused/missing stores throw before anything is recorded or sent.
 export async function applyTimingChange({ storeId, platform, slot, days, start, end, userEmail }) {
@@ -115,6 +130,7 @@ export async function applyTimingChange({ storeId, platform, slot, days, start, 
     );
   } catch (err) {
     console.error(`[TIMING CHANGE] #${row.id} ${platform} ${rid} failed:`, err.message);
+    await flagConnection(store, platform, err);
     await pool.query(
       `UPDATE timing_changes SET status = 'failed', error = $2, finished_at = NOW() WHERE id = $1`,
       [row.id, err.message]

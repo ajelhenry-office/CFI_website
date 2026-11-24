@@ -53,6 +53,15 @@ export async function recordCheck(platform, account, { status, outletCount = nul
   `, [platform, String(account), status, outletCount, error]);
 }
 
+export async function getConnection(platform, account) {
+  await ensureSessionTable();
+  const { rows } = await pool.query(
+    `SELECT status, outlet_count, last_error, checked_at FROM timing_platform_sessions WHERE platform = $1 AND account = $2`,
+    [platform, String(account)]
+  );
+  return rows[0] || null;
+}
+
 export async function listConnections() {
   await ensureSessionTable();
   const { rows } = await pool.query(`
