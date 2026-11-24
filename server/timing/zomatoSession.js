@@ -38,7 +38,9 @@ async function mergeSetCookies(cookies, res, host) {
     if (existing) existing.value = value;
     else cookies.push({ name, value, domain, path: "/", expires: -1 });
   }
-  await saveSession("zomato", ZOMATO_ACCOUNT, { cookies });
+  // Keep the rest of the session (e.g. the pinned userId) — only the cookies roll forward.
+  const session = await getSession("zomato", ZOMATO_ACCOUNT);
+  await saveSession("zomato", ZOMATO_ACCOUNT, { ...session, cookies });
 }
 
 async function zrequest(url, { method = "GET", body, headers = {} } = {}) {
@@ -64,6 +66,11 @@ async function zrequest(url, { method = "GET", body, headers = {} } = {}) {
   });
   await mergeSetCookies(cookies, res, host);
   const text = await res.text();
+  // www.zomato.com sits behind Akamai, which turns away cloud/datacenter addresses
+  // (e.g. our EC2 server) with an HTML "Access Denied" — the login itself is fine.
+  if (res.status === 403 && (/akamai/i.test(res.headers.get("server") || "") || text.includes("Access Denied"))) {
+    throw new Error(`BLOCKED: Zomato's website firewall (Akamai) refused this server's network address for ${new URL(url).pathname} — the Zomato login is still valid`);
+  }
   // A live session asking for an outlet it has no access to — not a dead login.
   if (res.status === 403 && text.includes('"code":1020')) {
     throw new Error(`NOT_AUTHORISED: this Zomato account has no access to ${new URL(url).search}`);

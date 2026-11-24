@@ -57,7 +57,9 @@ def main():
 
         expected = expected_email()
         print("\n" + "=" * 60)
-        print(f"1. Log in with Google as {expected or 'the ZOMATO_TIMING_EMAIL account'} + 2-step code")
+        print(f"1. Click 'Continue with Email' (NOT 'Sign in with Google'), enter")
+        print(f"   {expected or 'the ZOMATO_TIMING_EMAIL account'} and the one-time code Zomato emails to it")
+        print("   (Google sign-in opens a different Zomato user with the same email and fewer outlets.)")
         print("2. Wait for the Zomato partner dashboard to fully load")
         print("3. Open the outlet switcher once so the outlet list loads")
         print("4. Press Enter here")
@@ -77,7 +79,8 @@ def main():
                 print(f"Logged in as {email}, but expected {expected}.")
                 print("Log out in the browser, log in with the right Google account, then press Enter again.")
                 continue
-            print(f"Logged in as {email}.")
+            # Same email can be two Zomato users — show which one, so a wrong one is obvious.
+            print(f"Logged in as {email} — Zomato user {user.get('userId')} ({user.get('userName')}).")
             break
 
         cookies = [
