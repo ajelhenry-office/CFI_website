@@ -138,9 +138,18 @@ export const UP_BRANDS = {
     biz_id   : process.env.UP_BIZ_ID_EATFIT,
     _counter : 0,
   },
+  // 2 keys, round-robin — mirrors eatfit's rotation pattern. Added after the original
+  // single cake_zone key (biz_adm_zzXEiLApvfel) started getting hard-401'd by
+  // UrbanPiper on 2026-11-24 with no change on our end — confirmed live, repeatedly,
+  // against both a brand-new store and an already-live one. Two independent keys
+  // means a future single-key revocation degrades this account instead of fully
+  // taking it down.
   cake_zone: {
-    username : process.env.UP_USERNAME_CAKEZONE,
-    apikey   : process.env.UP_APIKEY_CAKEZONE,
+    keys: [
+      { username: process.env.UP_USERNAME_CAKEZONE, apikey: process.env.UP_APIKEY_CAKEZONE },
+      { username: process.env.UP_USERNAME_CAKEZONE_2, apikey: process.env.UP_APIKEY_CAKEZONE_2 },
+    ],
+    _counter : 0,
   },
   olio: {
     username : process.env.UP_USERNAME_OLIO,
@@ -236,13 +245,7 @@ export async function performToggleAPI(location_id, action, brand, priority = fa
   const brandConfig = UP_BRANDS[brandKey];
   if (!brandConfig) return { success: false, error: `Unknown brand: ${brand}` };
 
-  // eatfit rotates across its 3 keys (see UP_BRANDS above); every other brand is a
-  // single flat credential object, used as-is.
-  let creds = brandConfig;
-  if (brandConfig.keys) {
-    creds = { ...brandConfig.keys[brandConfig._counter % brandConfig.keys.length], biz_id: brandConfig.biz_id };
-    brandConfig._counter++;
-  }
+  const creds = resolveBrandCreds(brandConfig);
 
   const ids = String(location_id).split(',').map(s => s.trim()).filter(Boolean);
   let successCount = 0;
@@ -520,10 +523,25 @@ async function tryStatusAction(ids, creds, currentStatus, brandKey) {
   return { valid: false, error: `Not found in UrbanPiper. ${errors.join(' | ')}` };
 }
 
+// Resolves a brand's UP_BRANDS entry to a flat {username, apikey, biz_id} credential —
+// picks the next key round-robin for a brand with a `.keys` rotation pool (eatfit,
+// cake_zone), or returns the entry as-is for a brand with a single flat credential.
+// Shared by every caller that needs to actually authenticate a UrbanPiper call, so a
+// brand can never be migrated to `.keys` in one place and missed in another (that gap
+// is exactly what silently broke Add Store's verify check for eatfit, unnoticed until
+// cake_zone was moved to the same pattern).
+function resolveBrandCreds(brandConfig) {
+  if (!brandConfig.keys) return brandConfig;
+  const picked = brandConfig.keys[brandConfig._counter % brandConfig.keys.length];
+  brandConfig._counter++;
+  return { ...picked, biz_id: brandConfig.biz_id };
+}
+
 async function verifyLocationExists(location_id, brand, currentStatus) {
   const brandKey = normalizeBrandKey(brand);
-  const creds = UP_BRANDS[brandKey];
-  if (!creds) return { valid: false, error: `Unknown brand "${brand}" — no UrbanPiper credentials configured for it.` };
+  const brandConfig = UP_BRANDS[brandKey];
+  if (!brandConfig) return { valid: false, error: `Unknown brand "${brand}" — no UrbanPiper credentials configured for it.` };
+  const creds = resolveBrandCreds(brandConfig);
 
   const ids = String(location_id).split(',').map(s => s.trim()).filter(Boolean);
 
