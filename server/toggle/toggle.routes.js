@@ -445,6 +445,13 @@ async function tryVerifyAction(ids, creds, brandKey) {
       if (response.status === 404 && text.trim().startsWith('<')) actionUnsupported = true;
       errors.push(`${id}: ${text.slice(0, 200)}`);
     } catch (err) {
+      // A timeout/network failure here is just as uninformative as the 404+HTML case
+      // above — UrbanPiper never actually answered "verify" either way. Without this,
+      // a "verify" call that hangs (rather than cleanly 404ing) skips the fallback
+      // below entirely and fails Add Store for a perfectly real, live store — caught
+      // live against the cake_zone account, where "verify" times out for every store,
+      // old and new alike, not just newly-added ones.
+      actionUnsupported = true;
       errors.push(`${id}: ${err.message}`);
     }
   }
