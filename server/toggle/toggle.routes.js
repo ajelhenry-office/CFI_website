@@ -1169,22 +1169,34 @@ router.get("/toggle/stores", async (req, res) => {
   }
 });
 
-router.post("/toggle/stores", canManageStores, blockIfPaused, blockIfFrozen, async (req, res) => {
-  const { id, name, brand, city, zone, location_id, status } = req.body;
+// Shared by the single-store route below and the bulk route right after it, so
+// adding "1 store" and "1 of several stores" always go through the exact same
+// validation + insert logic. Returns a result object instead of touching `res`
+// directly — the bulk route needs one result per store, not a single response.
+async function addOneStore(storeData, actorEmail) {
+  const { id, name, brand, city, zone, location_id, status } = storeData;
   if (!name || !brand || !location_id) {
-    return res.status(400).json({ error: "name, brand, and location_id required" });
+    return { success: false, name: name || location_id || "(unnamed)", location_id, error: "name, brand, and location_id required" };
   }
   if (!["online", "offline"].includes(status)) {
-    return res.status(400).json({ error: "Current status in UrbanPiper (online/offline) is required" });
+    return { success: false, name, location_id, error: "Current status in UrbanPiper (online/offline) is required" };
   }
-  const storeId = id || `ST-${Date.now()}`;
-  const actorEmail = req.user?.email || 'Unknown';
+
+  // Single-store route already has blockIfFrozen (it reads req.body.brand directly),
+  // but the bulk route's req.body only has a `stores` array — no single top-level
+  // brand for that middleware to check. Checking here too, in the one function both
+  // routes funnel through, means a frozen brand can't slip in via a bulk batch either.
+  if (await isToggleFrozen(brand)) {
+    return { success: false, name, location_id, error: frozenMessage(brand) };
+  }
+
+  const storeId = id || `ST-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
 
   // Must actually exist in UrbanPiper before we let it into our system — catches typos
   // and unconfigured brands at add-time instead of the first time someone toggles it.
   const check = await verifyLocationExists(location_id, brand, status);
   if (!check.valid) {
-    return res.status(400).json({ success: false, error: check.error });
+    return { success: false, name, location_id, error: check.error };
   }
 
   // Normalize to the canonical key for the 3 real brands only — this is the one place a
@@ -1209,10 +1221,48 @@ router.post("/toggle/stores", canManageStores, blockIfPaused, blockIfFrozen, asy
     `, [location_id, storedBrand, desiredState]);
     await pool.query(`INSERT INTO toggle_activity (store_name, store_id, brand, email, action, result, is_automated, source) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
       [`${name} (${location_id})`, location_id, storedBrand, actorEmail, 'ADD_STORE', 'SUCCESS', false, 'MANUAL_ADD_STORE']);
-    res.json({ success: true, message: "Store saved and confirmed in UrbanPiper" });
+    return { success: true, name, location_id };
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    return { success: false, name, location_id, error: err.message };
   }
+}
+
+router.post("/toggle/stores", canManageStores, blockIfPaused, blockIfFrozen, async (req, res) => {
+  const result = await addOneStore(req.body, req.user?.email || 'Unknown');
+  if (result.success) {
+    res.json({ success: true, message: "Store saved and confirmed in UrbanPiper" });
+  } else {
+    res.status(400).json({ success: false, error: result.error });
+  }
+});
+
+// Adds several stores in one request instead of one round-trip per store — the
+// per-store live UrbanPiper verify (and its 429 backoff, when it happens) is what
+// actually makes adding stores one-at-a-time slow, so running a handful in parallel
+// (not fully sequential, not fully unbounded) is what actually speeds it up. Each
+// store is fully independent: one failing (bad ref_id, rate limit, whatever) never
+// blocks or rolls back any other — the response always reports every store's own
+// result so the caller can show a clear per-store success/fail summary, same shape
+// for 1 brand or several different brands in the same batch.
+const ADD_STORES_CONCURRENCY = 4;
+router.post("/toggle/stores/bulk", canManageStores, blockIfPaused, blockIfFrozen, async (req, res) => {
+  const { stores } = req.body;
+  if (!Array.isArray(stores) || stores.length === 0) {
+    return res.status(400).json({ success: false, error: "stores (non-empty array) required" });
+  }
+  const actorEmail = req.user?.email || 'Unknown';
+  const results = new Array(stores.length);
+  let cursor = 0;
+  async function worker() {
+    while (cursor < stores.length) {
+      const i = cursor++;
+      results[i] = await addOneStore(stores[i], actorEmail);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(ADD_STORES_CONCURRENCY, stores.length) }, worker));
+
+  const successCount = results.filter(r => r.success).length;
+  res.json({ success: true, results, successCount, failCount: results.length - successCount });
 });
 
 // Deliberately one-way: removes the store from our tracking only. We never try to

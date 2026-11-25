@@ -15,11 +15,19 @@ async function post(path, body) {
   return res.json();
 }
 
+const emptyStoreRow = (lockedBrand) => ({ name: "", brand: lockedBrand || "", city: "", zone: "", location_id: "", status: "offline" });
+
 export default function ManageStoresModal({ onClose, refreshStores, stores = [], lockedBrand = null }) {
   const isMobile = useIsMobile();
   const [loading, setLoading] = useState(false);
-  const [addForm, setAddForm] = useState({ name: "", brand: lockedBrand || "", city: "", zone: "", location_id: "", status: "offline" });
+  // One row per store being added — starts at 1, grows via "+ Add Another Store".
+  // Submitting always goes through the bulk endpoint, whether there's 1 row or 10, so
+  // there's only one code path to keep working instead of a separate single-store one.
+  const [addRows, setAddRows] = useState([emptyStoreRow(lockedBrand)]);
   const [addError, setAddError] = useState("");
+  // Per-store pass/fail from the last submit — shown instead of the form until
+  // dismissed, so "which of these 4 actually went in" is never left to guesswork.
+  const [addResults, setAddResults] = useState(null);
   const [search, setSearch] = useState("");
   const [pausingId, setPausingId] = useState(null); // location_id currently showing the reason prompt
   const [pauseReason, setPauseReason] = useState("");
@@ -29,21 +37,32 @@ export default function ManageStoresModal({ onClose, refreshStores, stores = [],
   const zonesList = useMemo(() => [...new Set(stores.map(s => s.zone).filter(Boolean))].sort(), [stores]);
   const citiesList = useMemo(() => [...new Set(stores.map(s => s.city).filter(Boolean))].sort(), [stores]);
 
+  const updateRow = (i, patch) => setAddRows(rows => rows.map((r, idx) => idx === i ? { ...r, ...patch } : r));
+  const addRow = () => setAddRows(rows => [...rows, emptyStoreRow(lockedBrand)]);
+  const removeRow = (i) => setAddRows(rows => rows.filter((_, idx) => idx !== i));
+
   const handleAdd = async (e) => {
     e.preventDefault();
     setAddError("");
-    if (!addForm.name || !addForm.brand || !addForm.location_id || !addForm.city || !addForm.zone) {
-      setAddError("All fields are required, including the current UrbanPiper status.");
+    setAddResults(null);
+    const incomplete = addRows.some(r => !r.name || !r.brand || !r.location_id || !r.city || !r.zone);
+    if (incomplete) {
+      setAddError("Every store needs all fields filled in, including the current UrbanPiper status.");
       return;
     }
     setLoading(true);
     try {
-      const data = await post("/api/toggle/stores", addForm);
+      const data = await post("/api/toggle/stores/bulk", { stores: addRows });
       if (data.success) {
-        setAddForm({ name: "", brand: "", city: "", zone: "", location_id: "", status: "offline" });
+        setAddResults(data.results); // shown in place of the form until dismissed
+        // Keep only the rows that failed, pre-filled — fixing and resubmitting
+        // shouldn't mean retyping the ones that already went in fine. Falls back to
+        // one empty row once everything succeeded.
+        const stillNeeded = addRows.filter((_, i) => !data.results[i].success);
+        setAddRows(stillNeeded.length > 0 ? stillNeeded : [emptyStoreRow(lockedBrand)]);
         refreshStores();
       } else {
-        setAddError(data.error || "Failed to save store.");
+        setAddError(data.error || "Failed to save stores.");
       }
     } catch (err) {
       setAddError("Could not reach the server.");
@@ -117,88 +136,128 @@ export default function ManageStoresModal({ onClose, refreshStores, stores = [],
 
         <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", gap: isMobile ? 16 : 24, flex: 1, overflow: isMobile ? "auto" : "hidden" }}>
 
-          {/* Add Store Form */}
-          <div style={{ flex: isMobile ? "0 0 auto" : "0 0 320px", display: "flex", flexDirection: "column", gap: 16, borderRight: isMobile ? "none" : `1px solid ${C.border}`, borderBottom: isMobile ? `1px solid ${C.border}` : "none", paddingRight: isMobile ? 0 : 24, paddingBottom: isMobile ? 16 : 0, overflowY: isMobile ? "visible" : "auto" }}>
+          {/* Add Store Form — one or more rows, submitted together via the bulk endpoint */}
+          <div style={{ flex: isMobile ? "0 0 auto" : "0 0 340px", display: "flex", flexDirection: "column", gap: 16, borderRight: isMobile ? "none" : `1px solid ${C.border}`, borderBottom: isMobile ? `1px solid ${C.border}` : "none", paddingRight: isMobile ? 0 : 24, paddingBottom: isMobile ? 16 : 0, overflowY: isMobile ? "visible" : "auto" }}>
             <div>
-              <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0, color: C.primary }}>Add New Store</h3>
+              <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0, color: C.primary }}>Add New Store{addRows.length > 1 ? `s (${addRows.length})` : ""}</h3>
               <div style={{ fontSize: 11.5, color: C.muted, marginTop: 4, lineHeight: 1.5 }}>
-                Create the store in UrbanPiper first — the Location ID is checked live against UrbanPiper before it's saved here.
+                Create the store in UrbanPiper first — each Location ID is checked live against UrbanPiper before it's saved here. Add several at once with "+ Add Another Store" below.
               </div>
             </div>
-            <form onSubmit={handleAdd} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-                <div>
-                  <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: C.muted, marginBottom: 6 }}>Store Name</label>
-                  <input required value={addForm.name} onChange={e => setAddForm({...addForm, name: e.target.value})} style={inputStyle} placeholder="e.g. Indiranagar Kitchen" />
+
+            {addResults ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>
+                  {addResults.filter(r => r.success).length} added, {addResults.filter(r => !r.success).length} failed
                 </div>
-                <div>
-                  <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: C.muted, marginBottom: 6 }}>Brand</label>
-                  {lockedBrand ? (
-                    <div style={{ ...inputStyle, backgroundColor: "#f1f5f9", color: C.muted, cursor: "not-allowed" }}>
-                      {lockedBrand}
+                <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: isMobile ? "none" : 420, overflowY: "auto", paddingRight: 4 }}>
+                  {addResults.map((r, i) => (
+                    <div key={i} style={{
+                      padding: "8px 10px", borderRadius: 8, fontSize: 12,
+                      backgroundColor: r.success ? "#dcfce7" : "#fee2e2",
+                      border: `1px solid ${r.success ? "#86efac" : "#fca5a5"}`,
+                      color: r.success ? "#15803d" : "#b91c1c",
+                    }}>
+                      <div style={{ fontWeight: 700 }}>{r.success ? "✅" : "❌"} {r.name || r.location_id}</div>
+                      {!r.success && <div style={{ marginTop: 2 }}>{r.error}</div>}
                     </div>
-                  ) : (
-                    <SearchableSelect
-                      options={brandsList}
-                      value={addForm.brand}
-                      onChange={v => setAddForm({...addForm, brand: v})}
-                      placeholder="Select or Type"
-                      allowCustom={true}
-                    />
-                  )}
-                </div>
-              </div>
-              <div>
-                <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: C.muted, marginBottom: 6 }}>UrbanPiper Location ID</label>
-                <input required value={addForm.location_id} onChange={e => setAddForm({...addForm, location_id: e.target.value})} style={inputStyle} placeholder="e.g. STP-L-114623" />
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-                <div>
-                  <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: C.muted, marginBottom: 6 }}>City</label>
-                  <SearchableSelect
-                    options={citiesList}
-                    value={addForm.city}
-                    onChange={v => setAddForm({...addForm, city: v})}
-                    placeholder="Select or Type"
-                    allowCustom={true}
-                  />
-                </div>
-                <div>
-                  <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: C.muted, marginBottom: 6 }}>Zone</label>
-                  <SearchableSelect
-                    options={zonesList}
-                    value={addForm.zone}
-                    onChange={v => setAddForm({...addForm, zone: v})}
-                    placeholder="Select or Type"
-                    allowCustom={true}
-                  />
-                </div>
-              </div>
-              <div>
-                <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: C.muted, marginBottom: 6 }}>Current status in UrbanPiper</label>
-                <div style={{ display: "flex", gap: 8 }}>
-                  {["offline", "online"].map(s => (
-                    <button
-                      type="button"
-                      key={s}
-                      onClick={() => setAddForm({...addForm, status: s})}
-                      style={{
-                        flex: 1, padding: "9px 0", borderRadius: 8, fontSize: 12, fontWeight: 800, fontFamily: FONT, cursor: "pointer",
-                        border: `1.5px solid ${addForm.status === s ? (s === "online" ? "#15803d" : "#b91c1c") : C.border}`,
-                        backgroundColor: addForm.status === s ? (s === "online" ? "#dcfce7" : "#fee2e2") : "#fff",
-                        color: addForm.status === s ? (s === "online" ? "#15803d" : "#b91c1c") : C.muted,
-                      }}
-                    >
-                      {s === "online" ? "Online" : "Offline"}
-                    </button>
                   ))}
                 </div>
+                <button type="button" onClick={() => setAddResults(null)} style={{ ...pillButton(true), padding: "8px 14px", fontSize: 12 }}>
+                  {addRows.some(r => r.location_id) ? "Fix Failed Stores" : "Add More Stores"}
+                </button>
               </div>
-              {addError && <div style={{ fontSize: 12, color: "#b91c1c", fontWeight: 600, lineHeight: 1.5 }}>{addError}</div>}
-              <button disabled={loading} type="submit" style={{ ...pillButton(false), marginTop: 8, padding: "10px 16px", backgroundColor: C.primary, color: "#fff", opacity: loading ? 0.7 : 1 }}>
-                {loading ? "Validating with UrbanPiper…" : "Add Store"}
-              </button>
-            </form>
+            ) : (
+              <form onSubmit={handleAdd} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: 14, maxHeight: isMobile ? "none" : 420, overflowY: isMobile ? "visible" : "auto", paddingRight: 4 }}>
+                  {addRows.map((row, i) => (
+                    <div key={i} style={{ border: `1px solid ${C.border}`, borderRadius: 10, padding: 12, display: "flex", flexDirection: "column", gap: 10, position: "relative" }}>
+                      {addRows.length > 1 && (
+                        <>
+                          <div style={{ fontSize: 11, fontWeight: 800, color: C.muted }}>Store {i + 1}</div>
+                          <button type="button" onClick={() => removeRow(i)} style={{ position: "absolute", top: 6, right: 8, background: "none", border: "none", color: C.muted, cursor: "pointer", fontSize: 18, lineHeight: 1 }}>&times;</button>
+                        </>
+                      )}
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+                        <div>
+                          <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: C.muted, marginBottom: 6 }}>Store Name</label>
+                          <input required value={row.name} onChange={e => updateRow(i, { name: e.target.value })} style={inputStyle} placeholder="e.g. Indiranagar Kitchen" />
+                        </div>
+                        <div>
+                          <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: C.muted, marginBottom: 6 }}>Brand</label>
+                          {lockedBrand ? (
+                            <div style={{ ...inputStyle, backgroundColor: "#f1f5f9", color: C.muted, cursor: "not-allowed" }}>
+                              {lockedBrand}
+                            </div>
+                          ) : (
+                            <SearchableSelect
+                              options={brandsList}
+                              value={row.brand}
+                              onChange={v => updateRow(i, { brand: v })}
+                              placeholder="Select or Type"
+                              allowCustom={true}
+                            />
+                          )}
+                        </div>
+                      </div>
+                      <div>
+                        <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: C.muted, marginBottom: 6 }}>UrbanPiper Location ID</label>
+                        <input required value={row.location_id} onChange={e => updateRow(i, { location_id: e.target.value })} style={inputStyle} placeholder="e.g. STP-L-114623" />
+                      </div>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+                        <div>
+                          <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: C.muted, marginBottom: 6 }}>City</label>
+                          <SearchableSelect
+                            options={citiesList}
+                            value={row.city}
+                            onChange={v => updateRow(i, { city: v })}
+                            placeholder="Select or Type"
+                            allowCustom={true}
+                          />
+                        </div>
+                        <div>
+                          <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: C.muted, marginBottom: 6 }}>Zone</label>
+                          <SearchableSelect
+                            options={zonesList}
+                            value={row.zone}
+                            onChange={v => updateRow(i, { zone: v })}
+                            placeholder="Select or Type"
+                            allowCustom={true}
+                          />
+                        </div>
+                      </div>
+                      <div>
+                        <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: C.muted, marginBottom: 6 }}>Current status in UrbanPiper</label>
+                        <div style={{ display: "flex", gap: 8 }}>
+                          {["offline", "online"].map(s => (
+                            <button
+                              type="button"
+                              key={s}
+                              onClick={() => updateRow(i, { status: s })}
+                              style={{
+                                flex: 1, padding: "9px 0", borderRadius: 8, fontSize: 12, fontWeight: 800, fontFamily: FONT, cursor: "pointer",
+                                border: `1.5px solid ${row.status === s ? (s === "online" ? "#15803d" : "#b91c1c") : C.border}`,
+                                backgroundColor: row.status === s ? (s === "online" ? "#dcfce7" : "#fee2e2") : "#fff",
+                                color: row.status === s ? (s === "online" ? "#15803d" : "#b91c1c") : C.muted,
+                              }}
+                            >
+                              {s === "online" ? "Online" : "Offline"}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <button type="button" onClick={addRow} style={{ ...pillButton(true), padding: "8px 14px", fontSize: 12 }}>
+                  + Add Another Store
+                </button>
+                {addError && <div style={{ fontSize: 12, color: "#b91c1c", fontWeight: 600, lineHeight: 1.5 }}>{addError}</div>}
+                <button disabled={loading} type="submit" style={{ ...pillButton(false), marginTop: 8, padding: "10px 16px", backgroundColor: C.primary, color: "#fff", opacity: loading ? 0.7 : 1 }}>
+                  {loading ? `Adding ${addRows.length} store${addRows.length > 1 ? "s" : ""}…` : `Add ${addRows.length} Store${addRows.length > 1 ? "s" : ""}`}
+                </button>
+              </form>
+            )}
           </div>
 
           {/* Store List */}

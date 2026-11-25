@@ -140,24 +140,25 @@ export function startWorkers() {
     }
   }, 60 * 60 * 1000); // 60 minutes
 
-  // Problem Stores Retention (runs hourly) — clears a row a day after it FIRST
-  // appeared (first_seen_at, set once at creation — see logProblemStore), regardless of
-  // whether it's been fixed. Deliberate: a store that's still genuinely, actively
-  // failing every cycle used to sit in the list forever, since nothing ever marks it
-  // resolved and last_attempt_at keeps refreshing on every repeat failure. One day is
-  // enough to notice and act on it without it cluttering the view indefinitely — if
-  // it's still broken after that, the very next failed attempt inserts a fresh row
-  // (and starts a new day-long clock), so a genuinely unresolved problem still comes
-  // back, it just isn't a single entry sitting there forever. Runs hourly (not daily)
-  // so the actual delay past the 1-day mark stays small.
+  // Problem Stores Retention (runs every 15 min) — clears a row 5 hours after it
+  // FIRST appeared (first_seen_at, set once at creation — see logProblemStore),
+  // regardless of whether it's been fixed, for every brand (no brand filter here).
+  // Deliberate: a store that's still genuinely, actively failing every cycle used to
+  // sit in the list forever, since nothing ever marks it resolved and last_attempt_at
+  // keeps refreshing on every repeat failure. 5 hours is enough to notice and act on
+  // it without it cluttering the view indefinitely — if it's still broken after that,
+  // the very next failed attempt inserts a fresh row (and starts a new 5-hour clock),
+  // so a genuinely unresolved problem still comes back, it just isn't a single entry
+  // sitting there forever. Runs every 15 min (not hourly) so the actual delay past the
+  // 5-hour mark stays small.
   setInterval(async () => {
     try {
-      const res = await pool.query(`DELETE FROM problem_stores WHERE first_seen_at < NOW() - INTERVAL '1 day'`);
-      if (res.rowCount > 0) console.log(`[WORKERS] Purged ${res.rowCount} problem_stores rows older than 1 day.`);
+      const res = await pool.query(`DELETE FROM problem_stores WHERE first_seen_at < NOW() - INTERVAL '5 hours'`);
+      if (res.rowCount > 0) console.log(`[WORKERS] Purged ${res.rowCount} problem_stores rows older than 5h.`);
     } catch (err) {
       console.error("[WORKERS] Problem Stores retention purge failed:", err);
     }
-  }, 60 * 60 * 1000); // 1 hour
+  }, 15 * 60 * 1000); // 15 minutes
 
   // Warmup Ops Cache (Runs every 1 hour)
   setInterval(() => {
