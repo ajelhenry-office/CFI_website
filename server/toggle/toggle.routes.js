@@ -130,8 +130,15 @@ export const UP_BRANDS = {
   // multiply the account's real rate ceiling (see the paceEatfitCall() comment below
   // for what actually keeps this account within its limit).
   eatfit: {
+    // Key 1 (biz_adm_QXJeFIgABXFq) started getting hard-401'd by UrbanPiper on
+    // 2026-11-25 — confirmed live, directly, against a long-known-good eatfit store
+    // that keys 2 and 3 still handle fine. Round-robin was sending it roughly 1/3 of
+    // all eatfit calls, each one a guaranteed failure — explains the scattered,
+    // seemingly-random store failures across the audit log. Pulled out of rotation
+    // entirely rather than left in as a 3rd option: a dead key can't be "occasionally
+    // skipped", only every call through it fails, so there's no upside to keeping it.
+    // Re-add it here (with a comment on why) if it's ever confirmed working again.
     keys: [
-      { username: 'biz_adm_QXJeFIgABXFq', apikey: 'a7d35eac21f5e6eab9d760d25d71a899c3ba2178' },
       { username: 'biz_adm_mLXRJIVALmwM', apikey: 'c80e49a57e9df60cb9f40763c964cec89155bebb' },
       { username: 'biz_adm_yZZqaclsncvO', apikey: '88a50190a747df000407aadd1faf588d175c5f5a' },
     ],
